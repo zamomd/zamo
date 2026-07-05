@@ -6,12 +6,27 @@
 # Build output
 /bin/
 /dist/
+.task/
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 
 # Coverage profile
 cover.out
 
 # Frontend
 node_modules/
+frontend/dist/*
+!frontend/dist/.gitkeep
+vite.config.ts.timestamp-*
+npm-debug.log*
+
+# Environment / secrets
+.env
+*.local
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
 
 # macOS
 .DS_Store

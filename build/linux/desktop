@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A comind-wails application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/comind-wails %u
+Terminal=false
+Type=Application
+Icon=comind-wails
+Categories=Utility;
+StartupWMClass=comind-wails
+
+ 

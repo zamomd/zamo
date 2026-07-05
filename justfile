@@ -2,6 +2,14 @@
 default:
     @just --list --unsorted
 
+# run the app in development mode (hot reload; needs the wails3 CLI)
+dev:
+    wails3 task dev
+
+# build the desktop application into bin/
+app:
+    wails3 task build
+
 # build all packages
 build:
     go build ./...
