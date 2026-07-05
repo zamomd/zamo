@@ -1,0 +1,23 @@
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Build output
+/bin/
+/dist/
+
+# Coverage profile
+cover.out
+
+# Frontend
+node_modules/
+
+# macOS
+.DS_Store
+
+# JetBrains IDEs
+.idea/
+
+# Claude Code
+.claude/settings.local.json
