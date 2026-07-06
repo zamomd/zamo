@@ -8,7 +8,7 @@ dev:
 
 # build the desktop application into bin/
 app:
-    wails3 task build
+    wails3 task build VERSION=$(git describe --tags --always --dirty)
 
 # build all packages
 build:
