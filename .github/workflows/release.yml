@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the Release and upload the bundle
+
+jobs:
+  release:
+    name: macOS (arm64)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history + tags, so --generate-notes can diff against the previous tag
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install the wails3 CLI
+        # Must match the wails/v3 version pinned in go.mod.
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.114
+
+      - name: Derive version from the tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp the bundle version into build/config.yml
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i.bak -E 's|^  version: "[^"]*" # The application version|  version: "'"$VERSION"'" # The application version|' build/config.yml
+          rm build/config.yml.bak
+          grep 'The application version' build/config.yml
+
+      - name: Package the .app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: wails3 task package VERSION="$VERSION"
+
+      - name: Zip the bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        # ditto preserves the bundle's symlinks and metadata; a plain zip does not.
+        run: ditto -c -k --keepParent bin/comind.app "comind-${VERSION}-darwin-arm64.zip"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes ./comind-*.zip
