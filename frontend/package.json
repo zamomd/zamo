@@ -17,7 +17,7 @@
 		"@wailsio/runtime": "latest"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.2",
+		"@biomejs/biome": "2.5.1",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tsconfig/svelte": "^5.0.8",
 		"svelte": "^5.46.4",

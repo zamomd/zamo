@@ -23,7 +23,7 @@
               go
               golangci-lint
               just
-              nodejs
+              bun
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkg-config

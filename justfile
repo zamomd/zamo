@@ -28,11 +28,11 @@ fmt:
 
 # lint + format-check the frontend
 web-lint:
-    npm --prefix frontend run lint
+    cd frontend && bun run lint
 
 # apply frontend formatting and safe fixes
 web-fmt:
-    npm --prefix frontend run lint:fix
+    cd frontend && bun run lint:fix
 
 # everything CI checks
 check: lint web-lint test

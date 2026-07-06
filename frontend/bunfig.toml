@@ -1,0 +1,6 @@
+[install]
+# Refuse to install npm package versions published less than 7 days
+# (604800 seconds) ago, reducing exposure to freshly compromised or
+# malicious releases. Bun-native equivalent of pnpm's minimum-release-age;
+# the value is in seconds
+minimumReleaseAge = 604800
