@@ -1,8 +1,8 @@
 <script lang="ts">
+  import type { Block } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
   // Raw skeleton screen: proves the frontend reaches the Go core through
   // the generated bindings. The real tree view arrives with slice #1.
   import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
-  import type { Block } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 
   let status: string = $state("calling TopicMap()…");
 

@@ -1,4 +1,7 @@
-import { mount } from 'svelte'
-import App from './App.svelte'
+import { mount } from "svelte";
+import App from "./App.svelte";
 
-mount(App, { target: document.getElementById('app')! })
+const target = document.getElementById("app");
+if (!target) throw new Error("mount target #app not found");
+
+mount(App, { target });

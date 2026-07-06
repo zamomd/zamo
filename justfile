@@ -26,8 +26,16 @@ lint:
 fmt:
     golangci-lint fmt
 
+# lint + format-check the frontend
+web-lint:
+    npm --prefix frontend run lint
+
+# apply frontend formatting and safe fixes
+web-fmt:
+    npm --prefix frontend run lint:fix
+
 # everything CI checks
-check: lint test
+check: lint web-lint test
     go mod tidy -diff
 
 # per-package coverage (atomic mode: the only one correct under -race)
