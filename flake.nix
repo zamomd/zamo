@@ -27,8 +27,8 @@
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkg-config
-              gtk3
-              webkitgtk_4_1
+              gtk4
+              webkitgtk_6_0
             ];
 
           # The wails3 CLI is not in nixpkgs (v3 is alpha).
