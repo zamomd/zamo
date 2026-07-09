@@ -91,6 +91,24 @@ func TestParseOps(t *testing.T) {
 			want: []knowledge.Op{add("t1", "", "First")},
 		},
 		{
+			name: "leading empty object does not shadow the real tree",
+			raw:  `{} {"content": "Root"}`,
+			want: []knowledge.Op{add("t1", "", "Root")},
+		},
+		{
+			name: "preamble brace pair does not shadow the real tree",
+			raw:  "Use {} for an empty struct.\n{\"content\": \"Root\"}",
+			want: []knowledge.Op{add("t1", "", "Root")},
+		},
+		{
+			name: "leading object with only unknown fields is skipped",
+			raw:  "{\"note\": \"thinking...\"}\n{\"content\": \"Root\", \"children\": [{\"content\": \"Child\"}]}",
+			want: []knowledge.Op{
+				add("t1", "", "Root"),
+				add("t2", "t1", "Child"),
+			},
+		},
+		{
 			name:    "malformed json",
 			raw:     `{"content": "Root", "children": [`,
 			wantErr: knowledge.ErrLLMBadResponse,
