@@ -7,15 +7,25 @@ All notable changes to Comind are recorded here. Entries are generated from
 
 ## [Unreleased]
 
+### Features
+
+- Implement ParseOps for topic-expansion replies (#22)
+
 ### CI & Build
 
 - Sync nix devShell to GTK4/WebKit6
 - Add Biome frontend linting to the check gate
 - Migrate frontend tooling from npm to bun
+- Add gitleaks, english-only check, and Dependabot (#23)
+- Derive wails3 CLI version from go.mod in release workflow (#28)
+- Generate CHANGELOG.md from Conventional Commits via git-cliff
+- Use git-cliff for GitHub Release notes
 
 ### Miscellaneous
 
 - Bump Go to 1.26.5 to fix GO-2026-5856 (crypto/tls) (#24)
+- Bump github.com/wailsapp/wails/v3 (#27)
+- Add gremlins mutation-testing config and recipe (#26)
 
 ## [0.0.1] - 2026-07-06
 
