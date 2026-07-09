@@ -197,6 +197,38 @@ func TestParseOpsRejectsOversizedReply(t *testing.T) {
 	}
 }
 
+func TestParseOpsAcceptsReplyAtSizeLimit(t *testing.T) {
+	// A reply exactly at the size limit is valid; only a strictly larger one is refused.
+	overhead := len(`{"content":""}`)
+	raw := `{"content":"` + strings.Repeat("x", maxReplyBytes-overhead) + `"}`
+	if len(raw) != maxReplyBytes {
+		t.Fatalf("test setup: raw is %d bytes, want %d", len(raw), maxReplyBytes)
+	}
+	got, err := ParseOps([]byte(raw))
+	if err != nil {
+		t.Fatalf("reply at the size limit was rejected: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("kept %d blocks, want 1", len(got))
+	}
+}
+
+func TestParseOpsIgnoresBracesInsideContent(t *testing.T) {
+	// The nesting guard tracks string literals: braces, escaped quotes and backslashes
+	// inside a block's content are data, not structure, and must not count toward the
+	// nesting cap. Broken string tracking would either miscount these braces as nesting
+	// (false rejection) or let an escaped quote end the string early.
+	content := `a \" b \\ c ` + strings.Repeat("{", 4*maxNestDepth)
+	raw := `{"content":"` + content + `"}`
+	got, err := ParseOps([]byte(raw))
+	if err != nil {
+		t.Fatalf("in-content braces were miscounted as nesting: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("kept %d blocks, want 1", len(got))
+	}
+}
+
 func TestParseOpsRejectsDeeplyNestedReply(t *testing.T) {
 	// A chain of deeply nested nodes must not be decoded and walked: without a nesting
 	// bound, degenerate input drives O(nesting) recursion in both the JSON decoder and
