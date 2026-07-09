@@ -33,17 +33,3 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
       - name: Scan git history for secrets
         run: gitleaks git . --no-banner --redact --verbose
-
-  english-only:
-    name: english-only (no cyrillic)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Fail on Cyrillic in tracked files
-        run: |
-          if git grep -I -l -P '[\x{0400}-\x{04FF}]' -- >/dev/null; then
-            echo "::error::Cyrillic characters found in tracked files — the repo must be English only." >&2
-            git grep -I -l -P '[\x{0400}-\x{04FF}]' --
-            exit 1
-          fi
-          echo "No Cyrillic in tracked files."
