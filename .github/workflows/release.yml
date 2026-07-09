@@ -29,8 +29,7 @@ jobs:
           node-version: 22
 
       - name: Install the wails3 CLI
-        # Must match the wails/v3 version pinned in go.mod.
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.114
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
 
       - name: Derive version from the tag
         id: version
