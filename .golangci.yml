@@ -10,7 +10,10 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - depguard
+    - lll
   settings:
+    lll:
+      line-length: 120
     depguard:
       rules:
         domain-stdlib-only:

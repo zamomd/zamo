@@ -22,7 +22,12 @@ type TreeReader interface {
 // ProposalSubmitter puts a proposal into the review queue — the only
 // write path available over MCP.
 type ProposalSubmitter interface {
-	SubmitProposal(ctx context.Context, source knowledge.Source, title string, ops []knowledge.Op) (knowledge.Proposal, error)
+	SubmitProposal(
+		ctx context.Context,
+		source knowledge.Source,
+		title string,
+		ops []knowledge.Op,
+	) (knowledge.Proposal, error)
 }
 
 // Server exposes the base over MCP: read tools plus proposal submission.

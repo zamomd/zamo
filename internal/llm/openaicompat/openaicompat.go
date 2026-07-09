@@ -40,6 +40,10 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 }
 
 // GenerateEdit implements knowledge.LLMClient.
-func (c *Client) GenerateEdit(ctx context.Context, scope []knowledge.Block, instruction string) ([]knowledge.Op, error) {
+func (c *Client) GenerateEdit(
+	ctx context.Context,
+	scope []knowledge.Block,
+	instruction string,
+) ([]knowledge.Op, error) {
 	return nil, knowledge.ErrNotImplemented
 }
