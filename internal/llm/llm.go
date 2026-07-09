@@ -21,6 +21,8 @@ var Prompts embed.FS
 
 // Tree limits. A single expansion must stay reviewable, so the parser caps how deep
 // and how wide a proposal can grow; anything past the caps is dropped, not an error.
+// Depth counts emitted blocks, not raw JSON nesting: blank nodes are skipped without
+// adding a level (see the walk in ParseOps).
 const (
 	maxDepth  = 5
 	maxBlocks = 60
@@ -42,14 +44,9 @@ type treeNode struct {
 // re-parented; the tree is capped at maxDepth levels and maxBlocks blocks. A reply
 // with no usable JSON, or no block carrying real content, yields ErrLLMBadResponse.
 func ParseOps(raw []byte) ([]knowledge.Op, error) {
-	obj, ok := extractJSONObject(raw)
+	root, ok := firstJSONObject(raw)
 	if !ok {
 		return nil, fmt.Errorf("%w: no JSON object in reply", knowledge.ErrLLMBadResponse)
-	}
-
-	var root treeNode
-	if err := json.Unmarshal(obj, &root); err != nil {
-		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMBadResponse, err)
 	}
 
 	var ops []knowledge.Op
@@ -88,14 +85,19 @@ func ParseOps(raw []byte) ([]knowledge.Op, error) {
 	return ops, nil
 }
 
-// extractJSONObject returns the slice from the first '{' to the last '}', stripping
-// markdown fences and prose that weak local models wrap around the JSON. It does not
-// validate the JSON — json.Unmarshal does that.
-func extractJSONObject(raw []byte) ([]byte, bool) {
-	start := bytes.IndexByte(raw, '{')
-	end := bytes.LastIndexByte(raw, '}')
-	if start < 0 || end < start {
-		return nil, false
+// firstJSONObject scans for the first '{' that begins a complete JSON object and decodes
+// it into a treeNode, ignoring markdown fences, prose and trailing text around it — even
+// prose that itself contains braces. The first decodable object wins, so the model is
+// expected to emit exactly one root object (pinned by the expansion prompt).
+func firstJSONObject(raw []byte) (treeNode, bool) {
+	for i := range raw {
+		if raw[i] != '{' {
+			continue
+		}
+		var node treeNode
+		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&node) == nil {
+			return node, true
+		}
 	}
-	return raw[start : end+1], true
+	return treeNode{}, false
 }
