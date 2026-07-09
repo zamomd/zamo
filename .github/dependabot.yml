@@ -1,7 +1,5 @@
 version: 2
 updates:
-  # Go module dependencies. Grouped into one PR/week to keep review light; freshness is
-  # still judged by hand (do not auto-merge brand-new releases blindly).
   - package-ecosystem: gomod
     directory: "/"
     schedule:
@@ -13,7 +11,6 @@ updates:
       go-dependencies:
         patterns: ["*"]
 
-  # GitHub Actions used in workflows.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
