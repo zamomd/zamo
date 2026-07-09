@@ -61,3 +61,8 @@ cover-html: cover
 # scan dependencies for known vulnerabilities
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+# mutation testing over a package that has tests (config in .gremlins.yaml)
+# install: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+mutation package='./internal/llm/':
+    gremlins unleash --timeout-coefficient 8 {{package}}
