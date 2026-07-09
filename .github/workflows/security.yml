@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Gitleaks scans history, so stacked pushes on a PR would pile up; cancel superseded
+# runs like ci.yml does.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -19,7 +25,7 @@ jobs:
       GITLEAKS_VERSION: "8.30.1"
       GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
-      # fetch-depth: 0 → full history, so the scan covers every commit on a PR.
+      # fetch-depth: 0 → full history, so origin/<base> exists for the PR range scan.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -31,5 +37,16 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
-      - name: Scan git history for secrets
-        run: gitleaks git . --no-banner --redact --verbose
+      - name: Scan for secrets
+        run: |
+          set -euo pipefail
+          # On a PR, scan only the commits it adds (origin/<base>..HEAD); on a push to
+          # main there is no base ref, so scan the full history. A secret added then
+          # removed inside the PR still trips this — the fix is key rotation plus a
+          # squash/rebase merge, not a follow-up commit.
+          if [ -n "${{ github.base_ref }}" ]; then
+            gitleaks git . --no-banner --redact --verbose \
+              --log-opts="origin/${{ github.base_ref }}..HEAD"
+          else
+            gitleaks git . --no-banner --redact --verbose
+          fi
