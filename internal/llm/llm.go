@@ -87,17 +87,22 @@ func ParseOps(raw []byte) ([]knowledge.Op, error) {
 
 // firstJSONObject scans for the first '{' that begins a complete JSON object and decodes
 // it into a treeNode, ignoring markdown fences, prose and trailing text around it — even
-// prose that itself contains braces. The first decodable object wins, so the model is
-// expected to emit exactly one root object (pinned by the expansion prompt).
+// prose that itself contains braces. It returns the first object that carries usable data:
+// an object with neither content nor children (a bare "{}" or one with only unknown fields,
+// which models routinely emit in a preamble) is skipped so it cannot shadow the real tree.
 func firstJSONObject(raw []byte) (treeNode, bool) {
 	for i := range raw {
 		if raw[i] != '{' {
 			continue
 		}
 		var node treeNode
-		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&node) == nil {
-			return node, true
+		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&node) != nil {
+			continue
 		}
+		if strings.TrimSpace(node.Content) == "" && len(node.Children) == 0 {
+			continue
+		}
+		return node, true
 	}
 	return treeNode{}, false
 }
