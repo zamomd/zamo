@@ -1,0 +1,26 @@
+# Mutation-testing config (gremlins). Enables the behaviour-changing mutator set we
+# rely on; the rest are off to keep runs focused and cheap. Note: "remove_return" is
+# not a gremlins mutator (it exists only in go-mutesting), so it cannot be enabled here.
+mutants:
+  arithmetic_base:
+    enabled: true
+  conditionals_boundary:
+    enabled: true
+  conditionals_negation:
+    enabled: true
+  increment_decrement:
+    enabled: true
+  invert_negatives:
+    enabled: true
+  invert_assignments:
+    enabled: false
+  invert_bitwise:
+    enabled: false
+  invert_bwassign:
+    enabled: false
+  invert_logical:
+    enabled: false
+  invert_loopctrl:
+    enabled: false
+  remove_self_assignments:
+    enabled: false
