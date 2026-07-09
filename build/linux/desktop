@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A comind-wails application
+Name=Comind
+Comment=Living knowledge base: AI proposes, the human reviews
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/comind-wails %u
+Exec=/usr/local/bin/comind %u
 Terminal=false
 Type=Application
-Icon=comind-wails
+Icon=comind
 Categories=Utility;
-StartupWMClass=comind-wails
+StartupWMClass=comind
 
  

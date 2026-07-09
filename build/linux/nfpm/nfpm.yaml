@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "comind-wails"
+name: "comind"
 arch: ${GOARCH}
 platform: "linux"
-version: "${VERSION}"
+version: "0.0.1"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A comind-wails application"
-vendor: "My Company"
+description: "Living knowledge base: AI proposes, the human reviews"
+vendor: "Comind"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/comind-wails"
-    dst: "/usr/local/bin/comind-wails"
+  - src: "./bin/comind"
+    dst: "/usr/local/bin/comind"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/comind-wails.png"
-  - src: "./build/linux/comind-wails.desktop"
-    dst: "/usr/share/applications/comind-wails.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/comind.png"
+  - src: "./build/linux/comind.desktop"
+    dst: "/usr/share/applications/comind.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:
