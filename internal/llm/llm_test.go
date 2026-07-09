@@ -62,6 +62,35 @@ func TestParseOps(t *testing.T) {
 			},
 		},
 		{
+			name: "blank node re-parents a sibling group",
+			raw:  `{"content":"Root","children":[{"content":"  ","children":[{"content":"A"},{"content":"B"}]}]}`,
+			want: []knowledge.Op{
+				add("t1", "", "Root"),
+				add("t2", "t1", "A"),
+				add("t3", "t1", "B"),
+			},
+		},
+		{
+			name: "trailing prose containing a brace",
+			raw:  "Here you go:\n{\"content\": \"Root\"}\nUse {} for an empty struct.",
+			want: []knowledge.Op{add("t1", "", "Root")},
+		},
+		{
+			name: "leading prose containing a brace",
+			raw:  "As requested {see note}: {\"content\": \"Root\"}",
+			want: []knowledge.Op{add("t1", "", "Root")},
+		},
+		{
+			name: "fenced block then trailing note with a brace",
+			raw:  "```json\n{\"content\": \"Root\"}\n```\nLet me know if you want {more}.",
+			want: []knowledge.Op{add("t1", "", "Root")},
+		},
+		{
+			name: "multiple top-level objects: first wins",
+			raw:  "{\"content\": \"First\"}\n{\"content\": \"Second\"}",
+			want: []knowledge.Op{add("t1", "", "First")},
+		},
+		{
 			name:    "malformed json",
 			raw:     `{"content": "Root", "children": [`,
 			wantErr: knowledge.ErrLLMBadResponse,
