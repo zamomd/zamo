@@ -45,6 +45,10 @@ web-lint:
 web-fmt:
     cd frontend && bun run lint:fix
 
+# regenerate CHANGELOG.md from Conventional Commits (git-cliff comes from nix develop)
+changelog:
+    git-cliff -o CHANGELOG.md
+
 # everything CI checks
 check: lint web-lint english-only test
     go mod tidy -diff

@@ -24,6 +24,7 @@
               golangci-lint
               just
               bun
+              git-cliff
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkg-config
