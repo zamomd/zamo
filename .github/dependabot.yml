@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Go module dependencies. Grouped into one PR/week to keep review light; freshness is
+  # still judged by hand (do not auto-merge brand-new releases blindly).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+
+  # GitHub Actions used in workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
