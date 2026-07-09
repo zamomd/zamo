@@ -26,6 +26,17 @@ var Prompts embed.FS
 const (
 	maxDepth  = 5
 	maxBlocks = 60
+
+	// maxReplyBytes bounds the raw reply. The reply crosses the untrusted model
+	// boundary and a reviewable expansion is a few KB; a multi-megabyte reply is
+	// hostile or broken and is refused before it is decoded or allocated.
+	maxReplyBytes = 1 << 20 // 1 MiB
+
+	// maxNestDepth bounds raw JSON nesting so a degenerate reply cannot drive deep
+	// recursion in the decoder and the walk. It sits far above any legitimate tree
+	// (maxDepth emitted levels, two JSON levels each), so crossing it means hostile
+	// input, not an over-long expansion — the latter is capped silently, this is not.
+	maxNestDepth = 64
 )
 
 // treeNode is the shape ParseOps expects from the model: a topic tree of markdown
@@ -44,6 +55,12 @@ type treeNode struct {
 // re-parented; the tree is capped at maxDepth levels and maxBlocks blocks. A reply
 // with no usable JSON, or no block carrying real content, yields ErrLLMBadResponse.
 func ParseOps(raw []byte) ([]knowledge.Op, error) {
+	if len(raw) > maxReplyBytes {
+		return nil, fmt.Errorf("%w: reply too large (%d bytes)", knowledge.ErrLLMBadResponse, len(raw))
+	}
+	if tooDeeplyNested(raw) {
+		return nil, fmt.Errorf("%w: reply nested past %d levels", knowledge.ErrLLMBadResponse, maxNestDepth)
+	}
 	root, ok := firstJSONObject(raw)
 	if !ok {
 		return nil, fmt.Errorf("%w: no JSON object in reply", knowledge.ErrLLMBadResponse)
@@ -83,6 +100,43 @@ func ParseOps(raw []byte) ([]knowledge.Op, error) {
 		return nil, fmt.Errorf("%w: reply had no usable blocks", knowledge.ErrLLMBadResponse)
 	}
 	return ops, nil
+}
+
+// tooDeeplyNested reports whether raw carries JSON structural nesting deeper than
+// maxNestDepth. It scans the raw bytes before decoding — so a degenerate reply is
+// refused without building the tree — and tracks string literals so braces inside
+// block content do not count toward the depth.
+func tooDeeplyNested(raw []byte) bool {
+	depth := 0
+	inString := false
+	escaped := false
+	for _, b := range raw {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case b == '\\':
+				escaped = true
+			case b == '"':
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > maxNestDepth {
+				return true
+			}
+		case '}', ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return false
 }
 
 // firstJSONObject scans for the first '{' that begins a complete JSON object and decodes
