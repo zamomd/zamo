@@ -26,6 +26,17 @@ lint:
 fmt:
     golangci-lint fmt
 
+# fail on non-Latin letters in tracked files (Cyrillic, CJK, Arabic, …), keeping the
+# repo English-only. Typographic symbols (— → ↔ …) and accented Latin are allowed, so
+# this is a language guard, not an ASCII guard; generated/template files pass naturally.
+english-only:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if git grep -I -n -P '(?=\p{L})[^\p{Latin}\x00-\x7F]' --; then
+        echo "error: non-Latin letters in tracked files (repo is English-only; see above)" >&2
+        exit 1
+    fi
+
 # lint + format-check the frontend
 web-lint:
     cd frontend && bun run lint
@@ -35,7 +46,7 @@ web-fmt:
     cd frontend && bun run lint:fix
 
 # everything CI checks
-check: lint web-lint test
+check: lint web-lint english-only test
     go mod tidy -diff
 
 # per-package coverage (atomic mode: the only one correct under -race)
