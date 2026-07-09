@@ -186,3 +186,25 @@ func TestParseOpsCapsCount(t *testing.T) {
 		t.Fatalf("kept %d blocks, want 60 (count cap)", len(got))
 	}
 }
+
+func TestParseOpsRejectsOversizedReply(t *testing.T) {
+	// The reply crosses the untrusted boundary; a reviewable expansion is a few KB.
+	// A multi-megabyte "block" is hostile, not content, and must be refused up front
+	// rather than parsed and allocated.
+	raw := `{"content":"` + strings.Repeat("x", 2<<20) + `"}`
+	if _, err := ParseOps([]byte(raw)); !errors.Is(err, knowledge.ErrLLMBadResponse) {
+		t.Fatalf("oversized reply error = %v, want errors.Is %v", err, knowledge.ErrLLMBadResponse)
+	}
+}
+
+func TestParseOpsRejectsDeeplyNestedReply(t *testing.T) {
+	// A chain of deeply nested nodes must not be decoded and walked: without a nesting
+	// bound, degenerate input drives O(nesting) recursion in both the JSON decoder and
+	// the walk, burning CPU and stack on garbage. Extreme nesting is refused, not capped.
+	const depth = 500
+	raw := strings.Repeat(`{"content":"x","children":[`, depth) +
+		`{"content":"leaf"}` + strings.Repeat(`]}`, depth)
+	if _, err := ParseOps([]byte(raw)); !errors.Is(err, knowledge.ErrLLMBadResponse) {
+		t.Fatalf("deeply nested reply error = %v, want errors.Is %v", err, knowledge.ErrLLMBadResponse)
+	}
+}
