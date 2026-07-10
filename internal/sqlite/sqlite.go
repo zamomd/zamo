@@ -287,12 +287,13 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 
 // applyEdit replaces a block's content, refreshing updated_at.
 func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
-	if _, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		op.Content, now, string(op.BlockID)); err != nil {
+		op.Content, now, string(op.BlockID))
+	if err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
 	}
-	return nil
+	return affectedOne(res, op.Kind, op.BlockID)
 }
 
 // applyMove reparents a block, appending it after its new siblings.
@@ -307,21 +308,36 @@ func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 		parent).Scan(&pos); err != nil {
 		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, now, string(op.BlockID)); err != nil {
+		parent, pos, now, string(op.BlockID))
+	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
-	return nil
+	return affectedOne(res, op.Kind, op.BlockID)
 }
 
 // applyDelete removes a block. The schema has no ON DELETE CASCADE, so a block
 // with surviving children or edges trips a foreign-key error and rolls the
 // apply back; the domain must delete descendants and links in the same ops.
 func applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM blocks WHERE id = ?`, string(op.BlockID)); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM blocks WHERE id = ?`, string(op.BlockID))
+	if err != nil {
 		return fmt.Errorf("apply delete %s: %w", op.BlockID, err)
+	}
+	return affectedOne(res, op.Kind, op.BlockID)
+}
+
+// affectedOne maps a no-op edit/move/delete to ErrStale: the target block
+// vanished between the proposal and its apply, so the proposal is out of date.
+func affectedOne(res sql.Result, kind knowledge.OpKind, id knowledge.ID) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("apply %s %s: %w", kind, id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("apply %s %s: %w", kind, id, knowledge.ErrStale)
 	}
 	return nil
 }
