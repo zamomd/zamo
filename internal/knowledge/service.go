@@ -45,7 +45,10 @@ func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string)
 // SubmitProposal puts ready-made operations into the review queue.
 // The entry point for sources that bring their own operations.
 func (s *Service) SubmitProposal(ctx context.Context, source Source, title string, ops []Op) (Proposal, error) {
-	p := NewProposal(s.newID(), source, title, ops, s.now())
+	p, err := NewProposal(s.newID(), source, title, ops, s.now())
+	if err != nil {
+		return Proposal{}, err
+	}
 	if err := s.repo.SaveProposal(ctx, p); err != nil {
 		return Proposal{}, err
 	}

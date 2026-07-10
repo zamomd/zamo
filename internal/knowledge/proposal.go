@@ -58,9 +58,13 @@ type Op struct {
 }
 
 // NewProposal builds a proposal from ready-made ops. Every new proposal starts
-// pending — only an explicit decision moves it on — so that invariant is stamped
-// here rather than trusted to each call site.
-func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Time) Proposal {
+// pending — only an explicit decision moves it on — and must carry at least one
+// operation; both invariants are enforced here rather than trusted to each call
+// site. An op-less proposal is rejected with ErrEmptyProposal.
+func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Time) (Proposal, error) {
+	if len(ops) == 0 {
+		return Proposal{}, ErrEmptyProposal
+	}
 	return Proposal{
 		ID:        id,
 		Source:    source,
@@ -68,7 +72,7 @@ func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Ti
 		Title:     title,
 		Ops:       ops,
 		CreatedAt: createdAt,
-	}
+	}, nil
 }
 
 // Proposal is a change proposal: the only way any AI (from any input)
