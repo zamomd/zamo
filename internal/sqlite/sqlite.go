@@ -190,7 +190,16 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 
 // RejectProposal implements knowledge.Repository.
 func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
-	return knowledge.ErrNotImplemented
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE proposals SET status = ?, decided_at = ?
+		 WHERE id = ? AND status = ?`,
+		string(knowledge.StatusRejected), formatTime(r.now()),
+		string(id), string(knowledge.StatusPending),
+	)
+	if err != nil {
+		return fmt.Errorf("reject proposal %s: %w", id, err)
+	}
+	return nil
 }
 
 // Search implements knowledge.Repository.
