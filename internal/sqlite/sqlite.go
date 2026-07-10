@@ -190,7 +190,7 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 
 // RejectProposal implements knowledge.Repository.
 func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
-	_, err := r.db.ExecContext(ctx,
+	res, err := r.db.ExecContext(ctx,
 		`UPDATE proposals SET status = ?, decided_at = ?
 		 WHERE id = ? AND status = ?`,
 		string(knowledge.StatusRejected), formatTime(r.now()),
@@ -198,6 +198,23 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 	)
 	if err != nil {
 		return fmt.Errorf("reject proposal %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reject proposal %s: %w", id, err)
+	}
+	if n == 0 {
+		// No pending row matched: report whether the proposal is gone
+		// (ErrNotFound) or was already decided (ErrNotPending).
+		var exists bool
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM proposals WHERE id = ?)`, string(id)).Scan(&exists); err != nil {
+			return fmt.Errorf("reject proposal %s: %w", id, err)
+		}
+		if !exists {
+			return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotFound)
+		}
+		return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotPending)
 	}
 	return nil
 }
