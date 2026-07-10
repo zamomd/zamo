@@ -67,14 +67,16 @@ func isBusy(err error) bool {
 
 // Repo implements knowledge.Repository.
 type Repo struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 var _ knowledge.Repository = (*Repo)(nil)
 
 // NewRepo wraps an opened database (see Open) in the Repository
-// implementation. Method semantics are documented on the interface.
-func NewRepo(db *sql.DB) *Repo { return &Repo{db: db} }
+// implementation. now supplies decision timestamps (decided_at); inject a
+// fixed clock in tests. Method semantics are documented on the interface.
+func NewRepo(db *sql.DB, now func() time.Time) *Repo { return &Repo{db: db, now: now} }
 
 // GetTopics implements knowledge.Repository.
 func (r *Repo) GetTopics(ctx context.Context) ([]knowledge.Block, error) {

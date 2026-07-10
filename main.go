@@ -99,7 +99,7 @@ func buildService(ctx context.Context) (*knowledge.Service, func(), error) {
 	}
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	svc := knowledge.NewService(llmClient, sqlite.NewRepo(db), newID, time.Now)
+	svc := knowledge.NewService(llmClient, sqlite.NewRepo(db, time.Now), newID, time.Now)
 	return svc, func() { db.Close() }, nil
 }
 
