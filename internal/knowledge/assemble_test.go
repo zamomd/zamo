@@ -19,6 +19,36 @@ func addOp(temp, parent, content string) Op {
 	return Op{Kind: OpAdd, TempID: temp, Parent: parent, Content: content}
 }
 
+func TestAssembleOrdersParentsBeforeChildren(t *testing.T) {
+	// The ops arrive child-first (an MCP client need not pre-order them); assemble
+	// must topologically order parents before children and assign ids in that
+	// order, so a parent always exists when its child is written.
+	p := Proposal{
+		Ops: []Op{
+			addOp("t3", "t2", "Grandchild"),
+			addOp("t2", "t1", "Child"),
+			addOp("t1", "", "# Root"),
+		},
+	}
+	got, err := assemble(p, []int{0, 1, 2}, seqIDs())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	order := []string{"# Root", "Child", "Grandchild"}
+	for i, want := range order {
+		if got[i].Content != want {
+			t.Fatalf("op %d = %q, want %q (whole: %+v)", i, got[i].Content, want, got)
+		}
+	}
+	// Ids follow the emitted order, and each child points at its parent's id.
+	if string(got[0].BlockID) != "U1" || got[0].Parent != "" {
+		t.Errorf("root = %+v, want BlockID U1, no parent", got[0])
+	}
+	if got[1].Parent != "U1" || got[2].Parent != string(got[1].BlockID) {
+		t.Errorf("child chain not linked to resolved parents: %+v", got)
+	}
+}
+
 func TestAssembleResolvesAndOrders(t *testing.T) {
 	// A small add-tree, fully selected. temp ids resolve to fresh ULIDs in add
 	// order, parents keep pointing at their (now resolved) parent, and the result
