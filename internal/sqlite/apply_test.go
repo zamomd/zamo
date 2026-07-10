@@ -68,6 +68,15 @@ func TestApplyProposalEditMoveDelete(t *testing.T) {
 	if parent, _, ok := blockRow(t, repo, "01B"); !ok || parent != "01A" {
 		t.Errorf("B parent after move = %q (ok=%v), want 01A", parent, ok)
 	}
+	// B is A's first child, so it appends at position 0 under its new parent.
+	var pos int
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT position FROM blocks WHERE id = '01B'`).Scan(&pos); err != nil {
+		t.Fatalf("read B position: %v", err)
+	}
+	if pos != 0 {
+		t.Errorf("B position after move = %d, want 0", pos)
+	}
 
 	// Delete B.
 	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
@@ -78,6 +87,41 @@ func TestApplyProposalEditMoveDelete(t *testing.T) {
 	}
 	if _, _, ok := blockRow(t, repo, "01B"); ok {
 		t.Errorf("B still present after delete")
+	}
+}
+
+func TestApplyProposalDeleteWithChildFails(t *testing.T) {
+	// Deleting a block whose child still references it violates the foreign key
+	// (no ON DELETE CASCADE): the apply must fail and roll back, leaving the tree
+	// and the proposal untouched, so the domain is forced to delete descendants
+	// in the same op list.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "01KID", Parent: "01ROOT", Content: "Kid"},
+	}); err != nil {
+		t.Fatalf("setup apply: %v", err)
+	}
+
+	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
+	if err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01ROOT"},
+	}); err == nil {
+		t.Fatal("deleting a block with a surviving child must fail, got nil")
+	}
+
+	// Rolled back: the parent is still there and the proposal is still pending.
+	if _, _, ok := blockRow(t, repo, "01ROOT"); !ok {
+		t.Error("root deleted despite the foreign-key violation")
+	}
+	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != "01DEL" {
+		t.Errorf("delete proposal not left pending after FK failure: %+v", pending)
 	}
 }
 
@@ -161,6 +205,7 @@ func TestApplyProposalAddsBlocks(t *testing.T) {
 	ops := []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "# Contexts in Go", Origin: "anthropic"},
 		{Kind: knowledge.OpAdd, BlockID: "01CHILD", Parent: "01ROOT", Content: "Why context.Context"},
+		{Kind: knowledge.OpAdd, BlockID: "01SIB", Parent: "01ROOT", Content: "Cancellation"},
 	}
 	if err := repo.ApplyProposal(ctx, "01PROP", ops); err != nil {
 		t.Fatalf("ApplyProposal: %v", err)
@@ -191,14 +236,26 @@ func TestApplyProposalAddsBlocks(t *testing.T) {
 	if err := q.Err(); err != nil {
 		t.Fatalf("iterate blocks: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("blocks table has %d rows, want 2", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("blocks table has %d rows, want 3", len(rows))
 	}
 	if rows["01ROOT"].parent != "" || rows["01ROOT"].content != "# Contexts in Go" {
 		t.Errorf("root block wrong: %+v", rows["01ROOT"])
 	}
 	if rows["01CHILD"].parent != "01ROOT" {
 		t.Errorf("child parent = %q, want 01ROOT", rows["01CHILD"].parent)
+	}
+	// Positions: the root is first among roots (0); the two children append in op
+	// order (0, then 1) — this is the COALESCE(MAX(position)+1, 0) logic that
+	// ORDER BY position later depends on.
+	if got := rows["01ROOT"].pos; got != 0 {
+		t.Errorf("root position = %d, want 0", got)
+	}
+	if got := rows["01CHILD"].pos; got != 0 {
+		t.Errorf("first child position = %d, want 0", got)
+	}
+	if got := rows["01SIB"].pos; got != 1 {
+		t.Errorf("second child position = %d, want 1", got)
 	}
 	// Provenance: AI authorship, the proposal source, and the op's origin are all
 	// recorded in metadata; a block with no origin carries no origin key.
