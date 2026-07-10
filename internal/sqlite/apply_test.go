@@ -200,9 +200,14 @@ func TestApplyProposalAddsBlocks(t *testing.T) {
 	if rows["01CHILD"].parent != "01ROOT" {
 		t.Errorf("child parent = %q, want 01ROOT", rows["01CHILD"].parent)
 	}
-	// Provenance: AI authorship and the proposal source are recorded in metadata.
-	if m := rows["01ROOT"].meta; !strings.Contains(m, `"ai"`) || !strings.Contains(m, "gui_expand") {
+	// Provenance: AI authorship, the proposal source, and the op's origin are all
+	// recorded in metadata; a block with no origin carries no origin key.
+	if m := rows["01ROOT"].meta; !strings.Contains(m, `"ai"`) ||
+		!strings.Contains(m, "gui_expand") || !strings.Contains(m, "anthropic") {
 		t.Errorf("root metadata missing provenance: %s", m)
+	}
+	if m := rows["01CHILD"].meta; strings.Contains(m, "origin") {
+		t.Errorf("child block has no origin, but metadata records one: %s", m)
 	}
 
 	// The proposal is now applied, with decided_at stamped.
