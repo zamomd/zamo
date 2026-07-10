@@ -57,6 +57,20 @@ type Op struct {
 	Origin    string `json:"origin,omitzero"`
 }
 
+// NewProposal builds a proposal from ready-made ops. Every new proposal starts
+// pending — only an explicit decision moves it on — so that invariant is stamped
+// here rather than trusted to each call site.
+func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Time) Proposal {
+	return Proposal{
+		ID:        id,
+		Source:    source,
+		Status:    StatusPending,
+		Title:     title,
+		Ops:       ops,
+		CreatedAt: createdAt,
+	}
+}
+
 // Proposal is a change proposal: the only way any AI (from any input)
 // modifies the base. Only an explicit user action applies it; manual
 // human edits bypass the queue.
