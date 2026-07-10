@@ -112,6 +112,109 @@ func TestAssembleCascadesOutDependents(t *testing.T) {
 	}
 }
 
+func TestAssembleRejectsSelfParent(t *testing.T) {
+	// A block claiming itself as parent is a one-node ring.
+	p := Proposal{Ops: []Op{addOp("t1", "t1", "self")}}
+	if _, err := assemble(p, []int{0}, seqIDs()); !errors.Is(err, ErrCycle) {
+		t.Errorf("self-parent: got %v, want ErrCycle", err)
+	}
+}
+
+func TestAssembleAllowsDiamondUnderExistingParent(t *testing.T) {
+	// Two new children of the same existing block X share a parent — a diamond in
+	// id-space, but no ring, so it must not be flagged as a cycle.
+	p := Proposal{Ops: []Op{addOp("t1", "X", "c1"), addOp("t2", "X", "c2")}}
+	got, err := assemble(p, []int{0, 1}, seqIDs())
+	if err != nil {
+		t.Fatalf("diamond wrongly rejected: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d ops, want 2", len(got))
+	}
+}
+
+func TestAssembleOrdersMoveAfterItsNewParent(t *testing.T) {
+	// A move onto a block created in the same proposal must be emitted after that
+	// add and carry the resolved parent id, even when it comes first in the input.
+	p := Proposal{Ops: []Op{
+		{Kind: OpMove, BlockID: "X", Parent: "t1"},
+		addOp("t1", "", "new parent"),
+	}}
+	got, err := assemble(p, []int{0, 1}, seqIDs())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if got[0].Kind != OpAdd || got[1].Kind != OpMove {
+		t.Fatalf("want add before move, got %+v", got)
+	}
+	if string(got[0].BlockID) != "U1" || got[1].Parent != "U1" {
+		t.Errorf("move parent not resolved to the new id: %+v", got)
+	}
+}
+
+func TestAssembleResolvesLinkEndpoints(t *testing.T) {
+	// A link between two new blocks is emitted after both adds, with From/To
+	// resolved to their new ids.
+	p := Proposal{Ops: []Op{
+		addOp("t1", "", "A"),
+		addOp("t2", "", "B"),
+		{Kind: OpLink, From: "t1", To: "t2", Relation: RelationRelated},
+	}}
+	got, err := assemble(p, []int{0, 1, 2}, seqIDs())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	link := got[2]
+	if link.Kind != OpLink || link.From != "U1" || link.To != "U2" {
+		t.Errorf("link endpoints not resolved: %+v", link)
+	}
+}
+
+func TestAssembleCascadesOutLinkWithDroppedEndpoint(t *testing.T) {
+	// A link whose endpoint block is deselected has nothing to point at, so it
+	// drops with the block.
+	p := Proposal{Ops: []Op{
+		addOp("t1", "", "A"),
+		addOp("t2", "", "B"),
+		{Kind: OpLink, From: "t1", To: "t2", Relation: RelationRelated},
+	}}
+	got, err := assemble(p, []int{0, 2}, seqIDs()) // t2 dropped
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "A" {
+		t.Errorf("link with a dropped endpoint survived: %+v", got)
+	}
+}
+
+func TestAssembleCascadesOutMoveOntoDroppedParent(t *testing.T) {
+	// A move onto a new block that is deselected drops with it.
+	p := Proposal{Ops: []Op{
+		addOp("t1", "", "new parent"),
+		{Kind: OpMove, BlockID: "X", Parent: "t1"},
+	}}
+	got, err := assemble(p, []int{1}, seqIDs()) // the add is dropped
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("move onto a dropped parent survived: %+v", got)
+	}
+}
+
+func TestAssembleEmptySelectionYieldsNoOps(t *testing.T) {
+	// Accepting nothing assembles to nothing — a conscious no-op, not an error;
+	// storage decides what an empty apply means for the proposal's status.
+	p := Proposal{Ops: []Op{addOp("t1", "", "A")}}
+	got, err := assemble(p, nil, seqIDs())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty selection produced %+v, want no ops", got)
+	}
+}
+
 func TestAssembleOrdersParentsBeforeChildren(t *testing.T) {
 	// The ops arrive child-first (an MCP client need not pre-order them); assemble
 	// must topologically order parents before children and assign ids in that

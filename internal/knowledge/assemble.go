@@ -8,6 +8,10 @@ import "slices"
 // cycle detection, parent-before-child ordering, and temp_id → ID resolution via
 // newID. The result carries resolved ids only (adds gain a BlockID, references
 // point at real ids), so storage can write it without further interpretation.
+//
+// A reference to an id that is not a temp block of this proposal is taken to be
+// an existing block and passed through unresolved; whether that block actually
+// exists is storage's concern (a foreign-key check), not assemble's.
 func assemble(p Proposal, selected []int, newID IDGenerator) ([]Op, error) {
 	chosen := selectOps(p.Ops, selected)
 	chosen = cascade(chosen, proposalTempIDs(p.Ops))
