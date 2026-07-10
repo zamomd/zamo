@@ -17,12 +17,12 @@ type fakeRepo struct {
 	applyCalls int
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)          { return nil, nil }
-func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)     { return nil, nil }
-func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error  { return nil }
-func (f *fakeRepo) SaveProposal(context.Context, Proposal) error        { return nil }
-func (f *fakeRepo) RejectProposal(context.Context, ID) error            { return nil }
-func (f *fakeRepo) Search(context.Context, string) ([]Block, error)     { return nil, nil }
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)         { return nil, nil }
+func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)    { return nil, nil }
+func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
+func (f *fakeRepo) SaveProposal(context.Context, Proposal) error       { return nil }
+func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
+func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
 
 func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
 	return f.pending, f.listErr
