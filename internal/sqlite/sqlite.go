@@ -243,6 +243,12 @@ func applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.
 	switch op.Kind {
 	case knowledge.OpAdd:
 		return applyAdd(ctx, tx, op, source, now)
+	case knowledge.OpEdit:
+		return applyEdit(ctx, tx, op, now)
+	case knowledge.OpMove:
+		return applyMove(ctx, tx, op, now)
+	case knowledge.OpDelete:
+		return applyDelete(ctx, tx, op)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
@@ -275,6 +281,47 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		string(op.BlockID), parent, pos, op.Content, string(payload), now, now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
+	}
+	return nil
+}
+
+// applyEdit replaces a block's content, refreshing updated_at.
+func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
+		op.Content, now, string(op.BlockID)); err != nil {
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
+	}
+	return nil
+}
+
+// applyMove reparents a block, appending it after its new siblings.
+func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+	var parent any
+	if op.Parent != "" {
+		parent = string(op.Parent)
+	}
+	var pos int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(position)+1, 0) FROM blocks WHERE parent_id IS ?`,
+		parent).Scan(&pos); err != nil {
+		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, now, string(op.BlockID)); err != nil {
+		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
+	}
+	return nil
+}
+
+// applyDelete removes a block. The schema has no ON DELETE CASCADE, so a block
+// with surviving children or edges trips a foreign-key error and rolls the
+// apply back; the domain must delete descendants and links in the same ops.
+func applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM blocks WHERE id = ?`, string(op.BlockID)); err != nil {
+		return fmt.Errorf("apply delete %s: %w", op.BlockID, err)
 	}
 	return nil
 }
