@@ -1,5 +1,7 @@
 package knowledge
 
+import "slices"
+
 // assemble turns a proposal and the user's selection into the final operation
 // list handed to Repository.ApplyProposal. It is pure: no storage, no clock. The
 // steps are selection, cascade removal of ops that depend on unselected ones,
@@ -141,10 +143,8 @@ func hasCycle(ops []Op) bool {
 			return false
 		}
 		state[node] = visiting
-		for _, parent := range parents[node] {
-			if walk(parent) {
-				return true
-			}
+		if slices.ContainsFunc(parents[node], walk) {
+			return true
 		}
 		state[node] = done
 		return false
