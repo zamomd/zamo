@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -76,6 +77,48 @@ func TestSaveAndListProposals(t *testing.T) {
 	g.CreatedAt, g.DecidedAt = want.CreatedAt, want.DecidedAt
 	if !reflect.DeepEqual(g, want) {
 		t.Errorf("round-trip mismatch:\n got %#v\nwant %#v", g, want)
+	}
+}
+
+func TestListProposalsChronologicalOrder(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	// Same second, fractional parts chosen to expose a layout that trims trailing
+	// zeros: stored as TEXT, ".120" would sort before ".100", and a whole second
+	// (no fraction) would sort after any fractional one.
+	base := time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC)
+	byIndex := []time.Time{
+		base.Add(0),                    // .000000000
+		base.Add(1),                    // .000000001
+		base.Add(100 * time.Millisecond), // .100
+		base.Add(120 * time.Millisecond), // .120
+	}
+	// Insert scrambled; the queue must still come back oldest-first.
+	for i, idx := range []int{3, 1, 0, 2} {
+		p := knowledge.Proposal{
+			ID:        knowledge.ID(fmt.Sprintf("01P%d", i)),
+			Source:    knowledge.SourceMCP,
+			Status:    knowledge.StatusPending,
+			CreatedAt: byIndex[idx],
+		}
+		if err := repo.SaveProposal(ctx, p); err != nil {
+			t.Fatalf("SaveProposal: %v", err)
+		}
+	}
+
+	got, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("ListProposals: %v", err)
+	}
+	if len(got) != len(byIndex) {
+		t.Fatalf("got %d proposals, want %d", len(got), len(byIndex))
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].CreatedAt.Before(got[i-1].CreatedAt) {
+			t.Errorf("queue is out of order at %d: %s comes before %s",
+				i, got[i-1].CreatedAt.Format(time.RFC3339Nano), got[i].CreatedAt.Format(time.RFC3339Nano))
+		}
 	}
 }
 
