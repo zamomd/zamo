@@ -38,7 +38,7 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"content":[{"type":"text","text":`+
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":`+
 			jsonString(`{"content":"# Go contexts","children":[`+
 				`{"content":"context.Context carries deadlines","children":[]}]}`)+
 			`}]}`)
