@@ -1,7 +1,6 @@
 package knowledge
 
 import (
-	"errors"
 	"strconv"
 	"testing"
 )
@@ -61,5 +60,3 @@ func TestAssembleResolvesAndOrders(t *testing.T) {
 		}
 	}
 }
-
-var _ = errors.Is
