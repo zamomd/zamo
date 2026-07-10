@@ -51,6 +51,54 @@ func TestAssembleRejectsMoveIntoOwnSubtree(t *testing.T) {
 	}
 }
 
+func TestAssembleCascadesOutDependents(t *testing.T) {
+	// Root/Child/Grandchild plus a block hanging off an existing block X.
+	ops := []Op{
+		addOp("t1", "", "Root"),
+		addOp("t2", "t1", "Child"),
+		addOp("t3", "t2", "Grandchild"),
+		addOp("t4", "X", "child of existing X"),
+	}
+	cases := []struct {
+		name     string
+		selected []int
+		want     []string // surviving contents, in emitted order
+	}{
+		{
+			// Child selected without its parent: nothing to hang it on, so it drops.
+			name: "child without parent", selected: []int{1}, want: nil,
+		},
+		{
+			// The drop cascades: grandchild depends on the dropped child.
+			name: "transitive drop", selected: []int{1, 2}, want: nil,
+		},
+		{
+			// An independent branch survives; only the orphaned grandchild drops.
+			name: "keeps independent branch", selected: []int{0, 2}, want: []string{"Root"},
+		},
+		{
+			// A parent that is an existing block (not a temp id) is never dangling.
+			name: "existing parent is not a temp dep", selected: []int{3}, want: []string{"child of existing X"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := assemble(Proposal{Ops: ops}, tc.selected, seqIDs())
+			if err != nil {
+				t.Fatalf("assemble: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d ops %+v, want %d", len(got), got, len(tc.want))
+			}
+			for i, w := range tc.want {
+				if got[i].Content != w {
+					t.Errorf("op %d = %q, want %q", i, got[i].Content, w)
+				}
+			}
+		})
+	}
+}
+
 func TestAssembleOrdersParentsBeforeChildren(t *testing.T) {
 	// The ops arrive child-first (an MCP client need not pre-order them); assemble
 	// must topologically order parents before children and assign ids in that
