@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
+
+// clockAt returns a now-source pinned to a fixed instant.
+func clockAt(ts time.Time) func() time.Time { return func() time.Time { return ts } }
 
 // fakeRepo is a Repository double: it serves a fixed pending queue and records
 // what ApplyProposal was handed, so tests can assert the assembled op list.
@@ -15,14 +19,40 @@ type fakeRepo struct {
 	appliedID  ID
 	appliedOps []Op
 	applyCalls int
+	saveErr    error
+	saved      *Proposal // the last proposal handed to SaveProposal
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)         { return nil, nil }
 func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)    { return nil, nil }
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
-func (f *fakeRepo) SaveProposal(context.Context, Proposal) error       { return nil }
 func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
+
+func (f *fakeRepo) SaveProposal(_ context.Context, p Proposal) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.saved = &p
+	return nil
+}
+
+// fakeLLM is an LLMClient double: it returns a canned tree (or error) and
+// records the topic/hint it was asked to expand.
+type fakeLLM struct {
+	tree              []Op
+	treeErr           error
+	gotTopic, gotHint string
+}
+
+func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, error) {
+	l.gotTopic, l.gotHint = topic, hint
+	return l.tree, l.treeErr
+}
+
+func (l *fakeLLM) GenerateEdit(context.Context, []Block, string) ([]Op, error) {
+	return nil, nil
+}
 
 func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
 	return f.pending, f.listErr
@@ -32,6 +62,49 @@ func (f *fakeRepo) ApplyProposal(_ context.Context, id ID, ops []Op) error {
 	f.applyCalls++
 	f.appliedID, f.appliedOps = id, ops
 	return f.applyErr
+}
+
+func TestServiceSubmitProposalQueuesPending(t *testing.T) {
+	repo := &fakeRepo{}
+	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	svc := NewService(nil, repo, seqIDs(), clockAt(at))
+
+	ops := []Op{addOp("t1", "", "A")}
+	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "My topic", ops)
+	if err != nil {
+		t.Fatalf("SubmitProposal: %v", err)
+	}
+	// A fresh pending proposal, stamped with a generated id and the clock.
+	if got.Status != StatusPending {
+		t.Errorf("status = %q, want pending", got.Status)
+	}
+	if got.ID != "U1" {
+		t.Errorf("id = %q, want a generated id U1", got.ID)
+	}
+	if got.Source != SourceMCP || got.Title != "My topic" || len(got.Ops) != 1 {
+		t.Errorf("proposal fields wrong: %+v", got)
+	}
+	if !got.CreatedAt.Equal(at) {
+		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, at)
+	}
+	if got.DecidedAt != (time.Time{}) {
+		t.Errorf("DecidedAt = %v, want zero for a pending proposal", got.DecidedAt)
+	}
+	// It was persisted, exactly as returned.
+	if repo.saved == nil || repo.saved.ID != got.ID {
+		t.Errorf("proposal not persisted: %+v", repo.saved)
+	}
+}
+
+func TestServiceSubmitProposalPropagatesSaveError(t *testing.T) {
+	sentinel := errors.New("disk full")
+	repo := &fakeRepo{saveErr: sentinel}
+	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	_, err := svc.SubmitProposal(context.Background(), SourceMCP, "t", []Op{addOp("t1", "", "A")})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error = %v, want the storage error", err)
+	}
 }
 
 func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
