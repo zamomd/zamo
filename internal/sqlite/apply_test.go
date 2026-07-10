@@ -1,6 +1,8 @@
 package sqlite
 
 import (
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,62 @@ func savePending(t *testing.T, repo *Repo, id knowledge.ID, source knowledge.Sou
 	}
 	if err := repo.SaveProposal(t.Context(), p); err != nil {
 		t.Fatalf("SaveProposal: %v", err)
+	}
+}
+
+// blockRow reads a block's parent and content; ok is false if it is gone.
+func blockRow(t *testing.T, repo *Repo, id string) (parent, content string, ok bool) {
+	t.Helper()
+	err := repo.db.QueryRowContext(t.Context(),
+		`SELECT COALESCE(parent_id, ''), content FROM blocks WHERE id = ?`, id).Scan(&parent, &content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false
+	}
+	if err != nil {
+		t.Fatalf("read block %s: %v", id, err)
+	}
+	return parent, content, true
+}
+
+func TestApplyProposalEditMoveDelete(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	// Base: root with children A and B.
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	setup := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "01A", Parent: "01ROOT", Content: "A old"},
+		{Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ROOT", Content: "B"},
+	}
+	if err := repo.ApplyProposal(ctx, "01SETUP", setup); err != nil {
+		t.Fatalf("setup apply: %v", err)
+	}
+
+	// Edit A's text and move B under A.
+	savePending(t, repo, "01EDIT", knowledge.SourceGUIEdit)
+	if err := repo.ApplyProposal(ctx, "01EDIT", []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "01A", Content: "A new"},
+		{Kind: knowledge.OpMove, BlockID: "01B", Parent: "01A"},
+	}); err != nil {
+		t.Fatalf("edit/move apply: %v", err)
+	}
+	if _, content, ok := blockRow(t, repo, "01A"); !ok || content != "A new" {
+		t.Errorf("A after edit = %q (ok=%v), want \"A new\"", content, ok)
+	}
+	if parent, _, ok := blockRow(t, repo, "01B"); !ok || parent != "01A" {
+		t.Errorf("B parent after move = %q (ok=%v), want 01A", parent, ok)
+	}
+
+	// Delete B.
+	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
+	if err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01B"},
+	}); err != nil {
+		t.Fatalf("delete apply: %v", err)
+	}
+	if _, _, ok := blockRow(t, repo, "01B"); ok {
+		t.Errorf("B still present after delete")
 	}
 }
 
