@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -90,9 +91,9 @@ func TestServiceSubmitProposalQueuesPending(t *testing.T) {
 	if got.DecidedAt != (time.Time{}) {
 		t.Errorf("DecidedAt = %v, want zero for a pending proposal", got.DecidedAt)
 	}
-	// It was persisted, exactly as returned.
-	if repo.saved == nil || repo.saved.ID != got.ID {
-		t.Errorf("proposal not persisted: %+v", repo.saved)
+	// It was persisted, exactly as returned (not just the id).
+	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
+		t.Errorf("persisted %+v, want the returned proposal %+v", repo.saved, got)
 	}
 }
 
@@ -101,9 +102,30 @@ func TestServiceSubmitProposalPropagatesSaveError(t *testing.T) {
 	repo := &fakeRepo{saveErr: sentinel}
 	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
-	_, err := svc.SubmitProposal(context.Background(), SourceMCP, "t", []Op{addOp("t1", "", "A")})
+	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "t", []Op{addOp("t1", "", "A")})
 	if !errors.Is(err, sentinel) {
 		t.Errorf("error = %v, want the storage error", err)
+	}
+	if !reflect.DeepEqual(got, Proposal{}) {
+		t.Errorf("got %+v, want a zero proposal when the save fails", got)
+	}
+}
+
+func TestServiceSubmitProposalRejectsEmptyOps(t *testing.T) {
+	// A proposal that changes nothing is not a proposal; it must be refused and
+	// never reach the queue.
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "empty", nil)
+	if !errors.Is(err, ErrEmptyProposal) {
+		t.Errorf("error = %v, want ErrEmptyProposal", err)
+	}
+	if !reflect.DeepEqual(got, Proposal{}) {
+		t.Errorf("got %+v, want a zero proposal on error", got)
+	}
+	if repo.saved != nil {
+		t.Errorf("an empty proposal was queued: %+v", repo.saved)
 	}
 }
 
@@ -128,8 +150,8 @@ func TestServiceExpandTopicQueuesProposal(t *testing.T) {
 	if len(got.Ops) != 1 {
 		t.Errorf("ops = %+v, want the tree from the model", got.Ops)
 	}
-	if repo.saved == nil || repo.saved.ID != got.ID {
-		t.Errorf("expansion not persisted: %+v", repo.saved)
+	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
+		t.Errorf("expansion persisted %+v, want the returned proposal %+v", repo.saved, got)
 	}
 }
 
