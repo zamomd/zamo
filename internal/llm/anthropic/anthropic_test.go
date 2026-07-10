@@ -35,6 +35,9 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 		if r.Header.Get("Anthropic-Version") == "" {
 			t.Error("Anthropic-Version header is missing")
 		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", ct)
+		}
 		body, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(body, &gotBody); err != nil {
 			t.Fatalf("request body is not JSON: %v", err)
@@ -61,10 +64,14 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 		t.Errorf("child parent = %q, want the root temp id %q", ops[1].Parent, ops[0].TempID)
 	}
 
-	// The rendered prompt (carrying the topic) must reach the model.
+	// The rendered prompt (carrying the topic) must reach the model, with a
+	// token budget for the reply.
 	model, _ := gotBody["model"].(string)
 	if model == "" {
 		t.Error("request omitted the model")
+	}
+	if mt, _ := gotBody["max_tokens"].(float64); mt <= 0 {
+		t.Errorf("max_tokens = %v, want a positive budget", gotBody["max_tokens"])
 	}
 	if !strings.Contains(bodyText(gotBody), "Go contexts") {
 		t.Errorf("request did not carry the topic to the model: %v", gotBody["messages"])
@@ -83,17 +90,26 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 		name    string
 		handler http.HandlerFunc
 		want    error
+		wantMsg string // when set, the API's error message must reach the caller
 	}{
 		{
 			// A server-side failure is transient — the caller may retry.
 			name:    "server error",
 			handler: respond(http.StatusInternalServerError, apiErrBody("overloaded_error", "overloaded")),
 			want:    knowledge.ErrLLMUnavailable,
+			wantMsg: "overloaded",
 		},
 		{
 			// A bad key is an availability problem, not a content one.
 			name:    "unauthorized",
 			handler: respond(http.StatusUnauthorized, apiErrBody("authentication_error", "invalid x-api-key")),
+			want:    knowledge.ErrLLMUnavailable,
+			wantMsg: "invalid x-api-key",
+		},
+		{
+			// The 2xx boundary: even a 300 is not success and must not be parsed.
+			name:    "non-2xx boundary",
+			handler: respond(http.StatusMultipleChoices, apiErrBody("redirect", "choose")),
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
@@ -118,6 +134,9 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 			}
 			if ops != nil {
 				t.Errorf("ops = %+v, want nil on error", ops)
+			}
+			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("error %q does not surface the API message %q", err, tc.wantMsg)
 			}
 		})
 	}
