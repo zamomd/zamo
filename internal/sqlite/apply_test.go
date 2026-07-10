@@ -115,6 +115,42 @@ func TestApplyProposalStaleTarget(t *testing.T) {
 	}
 }
 
+func TestApplyProposalAtomicRollback(t *testing.T) {
+	// A proposal whose first op succeeds but whose second op fails must leave no
+	// trace: the whole transaction rolls back, so the added block is absent, FTS
+	// never sees it, and the proposal stays pending for the human to retry.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01P", knowledge.SourceGUIExpand)
+
+	err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01NEW", Content: "half-applied"},
+		{Kind: knowledge.OpEdit, BlockID: "01GONE", Content: "never lands"},
+	})
+	if !errors.Is(err, knowledge.ErrStale) {
+		t.Fatalf("apply with a stale op: got %v, want ErrStale", err)
+	}
+
+	if _, _, ok := blockRow(t, repo, "01NEW"); ok {
+		t.Error("the first op's block survived a rolled-back apply")
+	}
+	var n int
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM blocks_fts WHERE blocks_fts MATCH 'applied'`).Scan(&n); err != nil {
+		t.Fatalf("fts search: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("FTS indexed a block from a rolled-back apply: %d hits", n)
+	}
+	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Errorf("proposal not left pending after failed apply: %d pending", len(pending))
+	}
+}
+
 func TestApplyProposalAddsBlocks(t *testing.T) {
 	repo := newTestRepo(t)
 	ctx := t.Context()
