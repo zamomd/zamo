@@ -8,6 +8,7 @@ package knowledge
 // point at real ids), so storage can write it without further interpretation.
 func assemble(p Proposal, selected []int, newID IDGenerator) ([]Op, error) {
 	chosen := selectOps(p.Ops, selected)
+	chosen = cascade(chosen, proposalTempIDs(p.Ops))
 
 	if hasCycle(chosen) {
 		return nil, ErrCycle
@@ -60,6 +61,51 @@ func selectOps(ops []Op, selected []int) []Op {
 		chosen = append(chosen, ops[i])
 	}
 	return chosen
+}
+
+// proposalTempIDs is the set of every temp id the proposal's adds introduce,
+// used to tell a reference to a (possibly unselected) new block apart from a
+// reference to an existing block.
+func proposalTempIDs(ops []Op) map[string]bool {
+	temps := make(map[string]bool)
+	for _, op := range ops {
+		if op.Kind == OpAdd && op.TempID != "" {
+			temps[op.TempID] = true
+		}
+	}
+	return temps
+}
+
+// cascade drops ops that reference a temp block no surviving add creates: a
+// reference to an unselected add's temp id would dangle. Removal repeats to a
+// fixpoint, so dropping a block also drops everything hanging off it. A
+// reference to an existing block (an id not in allTemp) is always kept.
+func cascade(chosen []Op, allTemp map[string]bool) []Op {
+	for {
+		created := make(map[string]bool, len(chosen))
+		for _, op := range chosen {
+			if op.Kind == OpAdd && op.TempID != "" {
+				created[op.TempID] = true
+			}
+		}
+		kept := make([]Op, 0, len(chosen))
+		for _, op := range chosen {
+			dangling := false
+			for _, ref := range tempRefs(op) {
+				if allTemp[ref] && !created[ref] {
+					dangling = true
+					break
+				}
+			}
+			if !dangling {
+				kept = append(kept, op)
+			}
+		}
+		if len(kept) == len(chosen) {
+			return kept
+		}
+		chosen = kept
+	}
 }
 
 // hasCycle reports whether the ops' parent relationships form a ring. Edges run
