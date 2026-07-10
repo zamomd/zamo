@@ -92,7 +92,9 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 	}
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
-		return nil, err
+		// The prompt template is embedded, so this only fails on a build defect;
+		// map it to unavailable so the request-cannot-be-made contract holds.
+		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	text, err := c.complete(ctx, prompt)
 	if err != nil {
@@ -137,7 +139,11 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 
 	var parsed messagesResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMBadResponse, err)
+		// A 2xx body that isn't the Messages envelope means something between us
+		// and the model (proxy, CDN) answered — the model did not. That is an
+		// availability failure; only the model's own text failing to parse (in
+		// ParseOps, downstream) is a bad response.
+		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	var text bytes.Buffer
 	for _, block := range parsed.Content {
