@@ -113,6 +113,14 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
+			// A 200 whose body is not the Messages JSON envelope (a proxy or CDN
+			// returning an HTML page) is an infrastructure failure, not the model
+			// answering with bad content.
+			name:    "non-JSON envelope",
+			handler: respond(http.StatusOK, "<html>gateway</html>"),
+			want:    knowledge.ErrLLMUnavailable,
+		},
+		{
 			// The model answered, but the text is not the expected JSON tree.
 			name:    "unparsable text",
 			handler: respond(http.StatusOK, `{"content":[{"type":"text","text":"sorry, I cannot help with that"}]}`),
