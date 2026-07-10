@@ -94,11 +94,13 @@ func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content st
 	return knowledge.ErrNotImplemented
 }
 
-// timeLayout is the on-disk format for proposal timestamps: RFC3339 with
-// nanoseconds, always stored in UTC so lexicographic order matches chronological
-// order. The DSN does not enable the driver's TEXT-to-time conversion, so times
-// are formatted and parsed explicitly.
-const timeLayout = time.RFC3339Nano
+// timeLayout is the on-disk format for proposal timestamps: RFC3339 with a
+// fixed-width, zero-padded nanosecond field, always in UTC. Fixed width is what
+// makes lexicographic order match chronological order for the TEXT column that
+// ORDER BY created_at relies on — time.RFC3339Nano trims trailing zeros, which
+// breaks that ordering. The DSN does not enable the driver's TEXT-to-time
+// conversion, so times are formatted and parsed explicitly.
+const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
 
