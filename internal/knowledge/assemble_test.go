@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"errors"
 	"strconv"
 	"testing"
 )
@@ -17,6 +18,37 @@ func seqIDs() IDGenerator {
 
 func addOp(temp, parent, content string) Op {
 	return Op{Kind: OpAdd, TempID: temp, Parent: parent, Content: content}
+}
+
+func TestAssembleRejectsCycleAmongTempIDs(t *testing.T) {
+	// Two adds each claiming the other as parent form a ring with no root — the
+	// tree cannot be built, so assemble must refuse it with ErrCycle.
+	p := Proposal{
+		Ops: []Op{
+			addOp("t1", "t2", "A"),
+			addOp("t2", "t1", "B"),
+		},
+	}
+	_, err := assemble(p, []int{0, 1}, seqIDs())
+	if !errors.Is(err, ErrCycle) {
+		t.Errorf("error = %v, want ErrCycle", err)
+	}
+}
+
+func TestAssembleRejectsMoveIntoOwnSubtree(t *testing.T) {
+	// A new block is parented under an existing block X, and the same proposal
+	// moves X under that new block: X would sit inside its own subtree. The ring
+	// runs through an existing id, so it is still ErrCycle.
+	p := Proposal{
+		Ops: []Op{
+			addOp("t1", "X", "new child of X"),
+			{Kind: OpMove, BlockID: "X", Parent: "t1"},
+		},
+	}
+	_, err := assemble(p, []int{0, 1}, seqIDs())
+	if !errors.Is(err, ErrCycle) {
+		t.Errorf("error = %v, want ErrCycle", err)
+	}
 }
 
 func TestAssembleOrdersParentsBeforeChildren(t *testing.T) {
