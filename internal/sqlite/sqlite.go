@@ -207,7 +207,10 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 	}
 	if n == 0 {
 		// No pending row matched: report whether the proposal is gone
-		// (ErrNotFound) or was already decided (ErrNotPending).
+		// (ErrNotFound) or was already decided (ErrNotPending). This second
+		// statement is not in the same transaction as the UPDATE, so under a
+		// concurrent writer the two reasons could swap — harmless, as only the
+		// error message differs, and proposals are never deleted in the MVP.
 		var exists bool
 		if err := r.db.QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM proposals WHERE id = ?)`, string(id)).Scan(&exists); err != nil {
