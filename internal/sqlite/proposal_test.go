@@ -89,8 +89,8 @@ func TestListProposalsChronologicalOrder(t *testing.T) {
 	// (no fraction) would sort after any fractional one.
 	base := time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC)
 	byIndex := []time.Time{
-		base.Add(0),                    // .000000000
-		base.Add(1),                    // .000000001
+		base.Add(0),                      // .000000000
+		base.Add(1),                      // .000000001
 		base.Add(100 * time.Millisecond), // .100
 		base.Add(120 * time.Millisecond), // .120
 	}
@@ -159,6 +159,80 @@ func TestRejectProposalDecides(t *testing.T) {
 	}
 	if !rejected[0].DecidedAt.Equal(fixedClock) {
 		t.Errorf("DecidedAt = %v, want %v (the injected clock)", rejected[0].DecidedAt, fixedClock)
+	}
+}
+
+func TestSaveProposalRoundTripsDecidedAt(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	decided := time.Date(2026, 7, 6, 10, 15, 30, 250_000_000, time.UTC)
+	p := knowledge.Proposal{
+		ID:        "01APPLIED",
+		Source:    knowledge.SourceGUIExpand,
+		Status:    knowledge.StatusApplied,
+		Title:     "done",
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+		DecidedAt: decided,
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("SaveProposal: %v", err)
+	}
+
+	got, err := repo.ListProposals(ctx, knowledge.StatusApplied)
+	if err != nil {
+		t.Fatalf("ListProposals: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d applied proposals, want 1", len(got))
+	}
+	if !got[0].DecidedAt.Equal(decided) {
+		t.Errorf("DecidedAt round-trip = %v, want %v", got[0].DecidedAt, decided)
+	}
+}
+
+func TestSaveProposalZeroOps(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	// nil Ops must survive the JSON round-trip (marshals to "null", back to nil).
+	p := knowledge.Proposal{
+		ID:        "01EMPTY",
+		Source:    knowledge.SourceMCP,
+		Status:    knowledge.StatusPending,
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("SaveProposal: %v", err)
+	}
+
+	got, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("ListProposals: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d proposals, want 1", len(got))
+	}
+	if len(got[0].Ops) != 0 {
+		t.Errorf("Ops = %#v, want empty", got[0].Ops)
+	}
+}
+
+func TestSaveProposalDuplicateID(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	p := knowledge.Proposal{
+		ID:        "01DUP",
+		Source:    knowledge.SourceMCP,
+		Status:    knowledge.StatusPending,
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("first SaveProposal: %v", err)
+	}
+	if err := repo.SaveProposal(ctx, p); err == nil {
+		t.Fatal("saving a duplicate id must fail on the primary key, got nil")
 	}
 }
 
