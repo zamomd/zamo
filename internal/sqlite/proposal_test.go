@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -115,5 +116,33 @@ func TestRejectProposalDecides(t *testing.T) {
 	}
 	if !rejected[0].DecidedAt.Equal(fixedClock) {
 		t.Errorf("DecidedAt = %v, want %v (the injected clock)", rejected[0].DecidedAt, fixedClock)
+	}
+}
+
+func TestRejectProposalGuards(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	// A proposal that does not exist cannot be rejected.
+	if err := repo.RejectProposal(ctx, "01MISSING"); !errors.Is(err, knowledge.ErrNotFound) {
+		t.Errorf("reject missing proposal: got %v, want ErrNotFound", err)
+	}
+
+	p := knowledge.Proposal{
+		ID:        "01P",
+		Source:    knowledge.SourceMCP,
+		Status:    knowledge.StatusPending,
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("SaveProposal: %v", err)
+	}
+	if err := repo.RejectProposal(ctx, p.ID); err != nil {
+		t.Fatalf("first RejectProposal: %v", err)
+	}
+
+	// Deciding an already-decided proposal is refused.
+	if err := repo.RejectProposal(ctx, p.ID); !errors.Is(err, knowledge.ErrNotPending) {
+		t.Errorf("re-reject decided proposal: got %v, want ErrNotPending", err)
 	}
 }
