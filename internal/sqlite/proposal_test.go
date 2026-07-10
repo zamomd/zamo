@@ -77,3 +77,43 @@ func TestSaveAndListProposals(t *testing.T) {
 		t.Errorf("round-trip mismatch:\n got %#v\nwant %#v", g, want)
 	}
 }
+
+func TestRejectProposalDecides(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := t.Context()
+
+	p := knowledge.Proposal{
+		ID:        "01P",
+		Source:    knowledge.SourceGUIExpand,
+		Status:    knowledge.StatusPending,
+		Title:     "t",
+		Ops:       []knowledge.Op{{Kind: knowledge.OpAdd, TempID: "t1", Content: "x"}},
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("SaveProposal: %v", err)
+	}
+
+	if err := repo.RejectProposal(ctx, p.ID); err != nil {
+		t.Fatalf("RejectProposal: %v", err)
+	}
+
+	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending queue has %d proposals, want 0 after reject", len(pending))
+	}
+
+	rejected, err := repo.ListProposals(ctx, knowledge.StatusRejected)
+	if err != nil {
+		t.Fatalf("list rejected: %v", err)
+	}
+	if len(rejected) != 1 {
+		t.Fatalf("rejected has %d proposals, want 1", len(rejected))
+	}
+	if !rejected[0].DecidedAt.Equal(fixedClock) {
+		t.Errorf("DecidedAt = %v, want %v (the injected clock)", rejected[0].DecidedAt, fixedClock)
+	}
+}
