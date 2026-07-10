@@ -51,6 +51,19 @@ func TestAssembleRejectsMoveIntoOwnSubtree(t *testing.T) {
 	}
 }
 
+func TestAssembleIgnoresInvalidSelectionIndexes(t *testing.T) {
+	// Out-of-range (== len and beyond), negative, and duplicate indexes are all
+	// ignored; only the one valid op survives, once.
+	p := Proposal{Ops: []Op{addOp("t1", "", "Root")}}
+	got, err := assemble(p, []int{0, 1, 9, -1, 0}, seqIDs())
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "Root" {
+		t.Fatalf("got %+v, want exactly the one valid op", got)
+	}
+}
+
 func TestAssembleCascadesOutDependents(t *testing.T) {
 	// Root/Child/Grandchild plus a block hanging off an existing block X.
 	ops := []Op{
