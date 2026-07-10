@@ -171,6 +171,21 @@ func TestServiceExpandTopicSurfacesLLMError(t *testing.T) {
 	}
 }
 
+func TestServiceExpandTopicRejectsEmptyTree(t *testing.T) {
+	// A provider that returns no ops (nil error) must not queue an empty proposal;
+	// the empty-proposal invariant surfaces instead.
+	llm := &fakeLLM{tree: nil}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	if _, err := svc.ExpandTopic(context.Background(), "Go contexts", ""); !errors.Is(err, ErrEmptyProposal) {
+		t.Errorf("error = %v, want ErrEmptyProposal", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("an empty expansion was queued: %+v", repo.saved)
+	}
+}
+
 func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
 	repo := &fakeRepo{pending: []Proposal{{
 		ID:     "P1",
