@@ -81,6 +81,40 @@ func TestApplyProposalEditMoveDelete(t *testing.T) {
 	}
 }
 
+func TestApplyProposalStaleTarget(t *testing.T) {
+	// edit/move/delete each target a block that no longer exists (a concurrent
+	// apply removed it). The proposal is stale and must fail with ErrStale, not
+	// silently no-op, and must not mark itself applied.
+	stale := []struct {
+		name string
+		op   knowledge.Op
+	}{
+		{"edit", knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01GONE", Content: "x"}},
+		{"move", knowledge.Op{Kind: knowledge.OpMove, BlockID: "01GONE", Parent: "01ROOT"}},
+		{"delete", knowledge.Op{Kind: knowledge.OpDelete, BlockID: "01GONE"}},
+	}
+	for _, tc := range stale {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestRepo(t)
+			ctx := t.Context()
+			savePending(t, repo, "01P", knowledge.SourceGUIEdit)
+
+			err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{tc.op})
+			if !errors.Is(err, knowledge.ErrStale) {
+				t.Fatalf("apply on vanished block: got %v, want ErrStale", err)
+			}
+			// The failed apply must roll back: the proposal stays pending.
+			pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+			if err != nil {
+				t.Fatalf("list pending: %v", err)
+			}
+			if len(pending) != 1 {
+				t.Errorf("proposal not left pending after stale apply: %d pending", len(pending))
+			}
+		})
+	}
+}
+
 func TestApplyProposalAddsBlocks(t *testing.T) {
 	repo := newTestRepo(t)
 	ctx := t.Context()
