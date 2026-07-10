@@ -107,6 +107,48 @@ func TestServiceSubmitProposalPropagatesSaveError(t *testing.T) {
 	}
 }
 
+func TestServiceExpandTopicQueuesProposal(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
+	repo := &fakeRepo{}
+	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	svc := NewService(llm, repo, seqIDs(), clockAt(at))
+
+	got, err := svc.ExpandTopic(context.Background(), "Go contexts", "cancellation")
+	if err != nil {
+		t.Fatalf("ExpandTopic: %v", err)
+	}
+	// The topic and hint reach the model.
+	if llm.gotTopic != "Go contexts" || llm.gotHint != "cancellation" {
+		t.Errorf("LLM asked for (%q, %q), want (Go contexts, cancellation)", llm.gotTopic, llm.gotHint)
+	}
+	// The expansion is queued as a pending gui_expand proposal titled by the topic.
+	if got.Status != StatusPending || got.Source != SourceGUIExpand || got.Title != "Go contexts" {
+		t.Errorf("proposal = %+v, want pending gui_expand titled 'Go contexts'", got)
+	}
+	if len(got.Ops) != 1 {
+		t.Errorf("ops = %+v, want the tree from the model", got.Ops)
+	}
+	if repo.saved == nil || repo.saved.ID != got.ID {
+		t.Errorf("expansion not persisted: %+v", repo.saved)
+	}
+}
+
+func TestServiceExpandTopicSurfacesLLMError(t *testing.T) {
+	// When the model is unavailable, the error surfaces as its domain sentinel and
+	// nothing is queued.
+	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	_, err := svc.ExpandTopic(context.Background(), "Go contexts", "")
+	if !errors.Is(err, ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("a proposal was queued despite the LLM failure: %+v", repo.saved)
+	}
+}
+
 func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
 	repo := &fakeRepo{pending: []Proposal{{
 		ID:     "P1",
