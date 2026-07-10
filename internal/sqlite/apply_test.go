@@ -60,6 +60,9 @@ func TestApplyProposalAddsBlocks(t *testing.T) {
 		}
 		rows[id] = r
 	}
+	if err := q.Err(); err != nil {
+		t.Fatalf("iterate blocks: %v", err)
+	}
 	if len(rows) != 2 {
 		t.Fatalf("blocks table has %d rows, want 2", len(rows))
 	}
