@@ -121,6 +121,13 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
+			// Valid JSON, but without the envelope's "content" key: a proxy or
+			// gateway answered with its own JSON, not the model.
+			name:    "valid JSON, not an envelope",
+			handler: respond(http.StatusOK, `{"foo":"bar"}`),
+			want:    knowledge.ErrLLMUnavailable,
+		},
+		{
 			// The model answered, but the text is not the expected JSON tree.
 			name:    "unparsable text",
 			handler: respond(http.StatusOK, `{"content":[{"type":"text","text":"sorry, I cannot help with that"}]}`),

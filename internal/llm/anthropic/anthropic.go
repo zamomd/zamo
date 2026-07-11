@@ -50,11 +50,10 @@ func New(apiKey, model string) *Client {
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: defaultBaseURL,
-		http:    &http.Client{Timeout: 5 * time.Minute},
+		http:    &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-// messagesRequest is the subset of the Messages API request we send.
 type messagesRequest struct {
 	Model     string         `json:"model"`
 	MaxTokens int            `json:"max_tokens"`
@@ -66,18 +65,21 @@ type messagesTurn struct {
 	Content string `json:"content"`
 }
 
-// messagesResponse is the subset of the 200 body we read: the text blocks.
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// messagesResponse is the subset of the 200 body we read. Content is a pointer
+// so a body missing the "content" key (a proxy or CDN page, not the Messages
+// envelope) is distinguishable from an envelope whose content list is empty.
 type messagesResponse struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	Content *[]contentBlock `json:"content"`
 }
 
 // apiError is the shape of a non-2xx Messages API error body.
 type apiError struct {
 	Error struct {
-		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
 }
@@ -139,14 +141,16 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 
 	var parsed messagesResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		// A 2xx body that isn't the Messages envelope means something between us
-		// and the model (proxy, CDN) answered — the model did not. That is an
-		// availability failure; only the model's own text failing to parse (in
-		// ParseOps, downstream) is a bad response.
 		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
+	if parsed.Content == nil {
+		// A 2xx body that isn't the Messages envelope means something between us
+		// and the model (proxy, CDN) answered — the model did not. Only the
+		// model's own text failing to parse (ParseOps, downstream) is a bad response.
+		return "", fmt.Errorf("%w: response is not a Messages envelope", knowledge.ErrLLMUnavailable)
+	}
 	var text bytes.Buffer
-	for _, block := range parsed.Content {
+	for _, block := range *parsed.Content {
 		if block.Type == "text" {
 			text.WriteString(block.Text)
 		}
