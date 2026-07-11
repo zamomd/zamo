@@ -66,7 +66,79 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 		Description: "Submit block operations as a proposal into the review queue — the only " +
 			"write path; nothing reaches the base until the human approves it.",
 	}, s.proposeBlocks)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "search",
+		Description: "Full-text search over block content; returns matching blocks.",
+	}, s.searchBlocks)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "get_subtree",
+		Description: "Fetch a block and all of its descendants, in tree order.",
+	}, s.getSubtree)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "topic_map",
+		Description: "The map of the base: root topics and their first level, for orientation.",
+	}, s.topicMap)
 	return srv
+}
+
+// blockView is the block shape exposed over MCP: the fields a reader needs,
+// without internal timestamps or metadata.
+type blockView struct {
+	ID      string `json:"id"`
+	Parent  string `json:"parent,omitempty"`
+	Content string `json:"content"`
+}
+
+// blocksOutput is the return shape shared by the read tools.
+type blocksOutput struct {
+	Blocks []blockView `json:"blocks"`
+}
+
+func toBlocksOutput(blocks []knowledge.Block) blocksOutput {
+	views := make([]blockView, len(blocks))
+	for i, b := range blocks {
+		views[i] = blockView{ID: string(b.ID), Parent: string(b.ParentID), Content: b.Content}
+	}
+	return blocksOutput{Blocks: views}
+}
+
+type searchInput struct {
+	Query string `json:"query" jsonschema:"the full-text query"`
+}
+
+func (s *Server) searchBlocks(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in searchInput,
+) (*mcpsdk.CallToolResult, blocksOutput, error) {
+	blocks, err := s.search.Search(ctx, in.Query)
+	if err != nil {
+		return nil, blocksOutput{}, err
+	}
+	return nil, toBlocksOutput(blocks), nil
+}
+
+type subtreeInput struct {
+	Root string `json:"root" jsonschema:"the id of the block whose subtree to fetch"`
+}
+
+func (s *Server) getSubtree(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in subtreeInput,
+) (*mcpsdk.CallToolResult, blocksOutput, error) {
+	blocks, err := s.tree.GetSubtree(ctx, knowledge.ID(in.Root))
+	if err != nil {
+		return nil, blocksOutput{}, err
+	}
+	return nil, toBlocksOutput(blocks), nil
+}
+
+// topicMap takes no arguments; the empty struct yields an empty input schema.
+func (s *Server) topicMap(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, _ struct{},
+) (*mcpsdk.CallToolResult, blocksOutput, error) {
+	blocks, err := s.tree.TopicMap(ctx)
+	if err != nil {
+		return nil, blocksOutput{}, err
+	}
+	return nil, toBlocksOutput(blocks), nil
 }
 
 // proposeInput is the argument schema of the propose_blocks tool.
