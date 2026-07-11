@@ -141,10 +141,46 @@ func (s *Server) topicMap(
 	return nil, toBlocksOutput(blocks), nil
 }
 
+// originMCP marks operations that arrived over MCP. The server stamps it
+// on every op so an MCP client cannot claim a more trusted provenance.
+const originMCP = "mcp"
+
+// opInput is the MCP-facing shape of one operation. It deliberately mirrors
+// the domain op but omits Origin: provenance is the server's to assign, never
+// the client's. Keeping it separate also decouples the tool's wire schema from
+// the domain type, so domain-only fields never leak into the public contract.
+type opInput struct {
+	Kind      string `json:"op" jsonschema:"the operation: add/edit/move/delete/link"`
+	TempID    string `json:"temp_id,omitzero" jsonschema:"temporary id of a block being added"`
+	Parent    string `json:"parent,omitzero" jsonschema:"temp_id or existing id; empty means topic root"`
+	BlockID   string `json:"block_id,omitzero" jsonschema:"existing block to edit/move/delete"`
+	Content   string `json:"content,omitzero" jsonschema:"the block content"`
+	From      string `json:"from,omitzero" jsonschema:"link source (temp_id or existing id)"`
+	To        string `json:"to,omitzero" jsonschema:"link target (temp_id or existing id)"`
+	Relation  string `json:"relation,omitzero" jsonschema:"the link relation"`
+	Rationale string `json:"rationale,omitzero" jsonschema:"why this operation is proposed"`
+}
+
+// toOp maps the MCP input onto a domain op, stamping the fixed mcp origin.
+func (in opInput) toOp() knowledge.Op {
+	return knowledge.Op{
+		Kind:      knowledge.OpKind(in.Kind),
+		TempID:    in.TempID,
+		Parent:    in.Parent,
+		BlockID:   knowledge.ID(in.BlockID),
+		Content:   in.Content,
+		From:      in.From,
+		To:        in.To,
+		Relation:  knowledge.Relation(in.Relation),
+		Rationale: in.Rationale,
+		Origin:    originMCP,
+	}
+}
+
 // proposeInput is the argument schema of the propose_blocks tool.
 type proposeInput struct {
-	Title string         `json:"title" jsonschema:"a short title describing the proposal"`
-	Ops   []knowledge.Op `json:"ops" jsonschema:"the block operations to propose (add/edit/move/delete/link)"`
+	Title string    `json:"title" jsonschema:"a short title describing the proposal"`
+	Ops   []opInput `json:"ops" jsonschema:"the block operations to propose (add/edit/move/delete/link)"`
 }
 
 // proposeOutput is what propose_blocks returns: the queued proposal's identity.
@@ -158,7 +194,11 @@ type proposeOutput struct {
 func (s *Server) proposeBlocks(
 	ctx context.Context, _ *mcpsdk.CallToolRequest, in proposeInput,
 ) (*mcpsdk.CallToolResult, proposeOutput, error) {
-	p, err := s.proposal.SubmitProposal(ctx, knowledge.SourceMCP, in.Title, in.Ops)
+	ops := make([]knowledge.Op, len(in.Ops))
+	for i, o := range in.Ops {
+		ops[i] = o.toOp()
+	}
+	p, err := s.proposal.SubmitProposal(ctx, knowledge.SourceMCP, in.Title, ops)
 	if err != nil {
 		return nil, proposeOutput{}, err
 	}
