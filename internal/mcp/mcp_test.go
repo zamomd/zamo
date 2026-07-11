@@ -97,6 +97,15 @@ func TestProposeBlocksSubmitsAsMCP(t *testing.T) {
 	if len(fake.subOps) != 1 || fake.subOps[0].Kind != knowledge.OpAdd || fake.subOps[0].TempID != "t1" {
 		t.Errorf("ops not forwarded intact: %+v", fake.subOps)
 	}
+	// The queued proposal's identity comes back to the client.
+	var out proposeOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if out.ProposalID != "01PROP" || out.Status != string(knowledge.StatusPending) {
+		t.Errorf("output = %+v, want the pending proposal 01PROP", out)
+	}
 }
 
 // callBlocks calls a read tool and decodes its structured block list.
@@ -184,18 +193,31 @@ func TestToolSurface(t *testing.T) {
 }
 
 func TestToolSurfacesDomainError(t *testing.T) {
-	// A failing capability must come back as a tool error the model can read, not
-	// a transport crash.
-	fake := &fakeBase{searchErr: errors.New("base unavailable")}
-	cs := connect(t, NewServer(fake, fake, fake))
-
-	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name: "search", Arguments: map[string]any{"query": "x"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected transport error: %v", err)
+	// Every tool must turn a capability failure into a tool error the model can
+	// read, not a transport crash.
+	boom := errors.New("base unavailable")
+	cases := []struct {
+		tool string
+		fake *fakeBase
+		args map[string]any
+	}{
+		{"search", &fakeBase{searchErr: boom}, map[string]any{"query": "x"}},
+		{"get_subtree", &fakeBase{treeErr: boom}, map[string]any{"root": "01A"}},
+		{"topic_map", &fakeBase{treeErr: boom}, map[string]any{}},
+		{"propose_blocks", &fakeBase{subErr: boom}, map[string]any{
+			"title": "t", "ops": []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
+		}},
 	}
-	if !res.IsError {
-		t.Errorf("a failing tool must report IsError, got a success result")
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake))
+			res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("unexpected transport error: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("%s must report IsError on a capability failure", tc.tool)
+			}
+		})
 	}
 }
