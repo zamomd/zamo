@@ -99,16 +99,6 @@ func NewRepo(db *sql.DB, now func() time.Time) *Repo {
 	return &Repo{db: db, now: now}
 }
 
-// GetTopics implements knowledge.Repository.
-func (r *Repo) GetTopics(ctx context.Context) ([]knowledge.Block, error) {
-	return nil, knowledge.ErrNotImplemented
-}
-
-// GetSubtree implements knowledge.Repository.
-func (r *Repo) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
-	return nil, knowledge.ErrNotImplemented
-}
-
 // EditBlockContent implements knowledge.Repository.
 func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
 	return knowledge.ErrNotImplemented
@@ -242,9 +232,4 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 		return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotPending)
 	}
 	return nil
-}
-
-// Search implements knowledge.Repository.
-func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.Block, error) {
-	return nil, knowledge.ErrNotImplemented
 }
