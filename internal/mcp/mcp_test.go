@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -152,5 +153,49 @@ func TestTopicMapTool(t *testing.T) {
 	out := callBlocks(t, cs, "topic_map", map[string]any{})
 	if len(out.Blocks) != 1 || out.Blocks[0].ID != "01T" {
 		t.Errorf("topic_map result = %+v, want the topic block", out.Blocks)
+	}
+}
+
+func TestToolSurface(t *testing.T) {
+	// Exactly four tools, each described; the only write tool is propose_blocks —
+	// MCP can never mutate the base directly.
+	fake := &fakeBase{}
+	cs := connect(t, NewServer(fake, fake, fake))
+
+	got := map[string]bool{}
+	for tool, err := range cs.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("list tools: %v", err)
+		}
+		if tool.Description == "" {
+			t.Errorf("tool %q has no description", tool.Name)
+		}
+		got[tool.Name] = true
+	}
+	want := []string{"propose_blocks", "search", "get_subtree", "topic_map"}
+	if len(got) != len(want) {
+		t.Errorf("tools = %v, want exactly %v (no extra write tools)", got, want)
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("missing tool %q", name)
+		}
+	}
+}
+
+func TestToolSurfacesDomainError(t *testing.T) {
+	// A failing capability must come back as a tool error the model can read, not
+	// a transport crash.
+	fake := &fakeBase{searchErr: errors.New("base unavailable")}
+	cs := connect(t, NewServer(fake, fake, fake))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "search", Arguments: map[string]any{"query": "x"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("a failing tool must report IsError, got a success result")
 	}
 }
