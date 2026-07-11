@@ -33,3 +33,17 @@ func TestExpandPromptOmitsEmptyHint(t *testing.T) {
 		t.Errorf("empty hint leaked a label or placeholder into the prompt:\n%s", got)
 	}
 }
+
+func TestExpandPromptDoesNotLeakMaintainerDoc(t *testing.T) {
+	got, err := ExpandPrompt("Go contexts", "")
+	if err != nil {
+		t.Fatalf("ExpandPrompt: %v", err)
+	}
+	// text/template does not strip HTML comments, so an <!-- --> block would be
+	// sent to the model verbatim. Maintainer notes must stay out of the prompt.
+	for _, leak := range []string{"<!--", "LLMClient", "text/template"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("prompt leaked maintainer doc %q to the model:\n%s", leak, got)
+		}
+	}
+}

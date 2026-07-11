@@ -1,9 +1,3 @@
-<!--
-Template for LLMClient.GenerateTree — a Go text/template. Iterate here to tune
-expansion quality (whether the AI turns a topic into a sane hierarchy).
-Placeholders: .Topic and .Hint. Keep the output contract intact — strict JSON in
-the {content, children} shape ParseOps consumes.
--->
 You expand a topic into a small tree of notes for a personal knowledge base.
 
 Topic: {{.Topic}}
