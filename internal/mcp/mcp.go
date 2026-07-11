@@ -5,7 +5,15 @@ package mcp
 import (
 	"context"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/cominddev/comind/internal/knowledge"
+)
+
+// serverName and serverVersion identify this server in the MCP handshake.
+const (
+	serverName    = "comind"
+	serverVersion = "v0.1.0"
 )
 
 // Searcher runs full-text search over the base.
@@ -43,8 +51,44 @@ func NewServer(search Searcher, tree TreeReader, proposal ProposalSubmitter) *Se
 	return &Server{search: search, tree: tree, proposal: proposal}
 }
 
-// Run serves MCP over stdio until the context is cancelled.
-// The implementation will sit on top of the official Go SDK for MCP.
+// Run serves MCP over stdio until the client disconnects or ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	return knowledge.ErrNotImplemented
+	return s.mcpServer().Run(ctx, &mcpsdk.StdioTransport{})
+}
+
+// mcpServer builds the SDK server with the tools bound to this server's
+// capabilities. Kept separate from Run so tests can drive it over an in-memory
+// transport instead of stdio.
+func (s *Server) mcpServer() *mcpsdk.Server {
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: serverName, Version: serverVersion}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name: "propose_blocks",
+		Description: "Submit block operations as a proposal into the review queue — the only " +
+			"write path; nothing reaches the base until the human approves it.",
+	}, s.proposeBlocks)
+	return srv
+}
+
+// proposeInput is the argument schema of the propose_blocks tool.
+type proposeInput struct {
+	Title string         `json:"title" jsonschema:"a short title describing the proposal"`
+	Ops   []knowledge.Op `json:"ops" jsonschema:"the block operations to propose (add/edit/move/delete/link)"`
+}
+
+// proposeOutput is what propose_blocks returns: the queued proposal's identity.
+type proposeOutput struct {
+	ProposalID string `json:"proposal_id"`
+	Status     string `json:"status"`
+}
+
+// proposeBlocks queues the operations as an mcp-sourced proposal. The source is
+// fixed here: an MCP client never chooses its own provenance.
+func (s *Server) proposeBlocks(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in proposeInput,
+) (*mcpsdk.CallToolResult, proposeOutput, error) {
+	p, err := s.proposal.SubmitProposal(ctx, knowledge.SourceMCP, in.Title, in.Ops)
+	if err != nil {
+		return nil, proposeOutput{}, err
+	}
+	return nil, proposeOutput{ProposalID: string(p.ID), Status: string(p.Status)}, nil
 }

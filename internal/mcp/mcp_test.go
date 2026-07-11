@@ -16,10 +16,10 @@ type fakeBase struct {
 	searchBlocks []knowledge.Block
 	searchErr    error
 
-	subtreeRoot  knowledge.ID
-	subtree      []knowledge.Block
-	topic        []knowledge.Block
-	treeErr      error
+	subtreeRoot knowledge.ID
+	subtree     []knowledge.Block
+	topic       []knowledge.Block
+	treeErr     error
 
 	subSource   knowledge.Source
 	subTitle    string
@@ -42,7 +42,9 @@ func (f *fakeBase) GetSubtree(_ context.Context, root knowledge.ID) ([]knowledge
 	return f.subtree, f.treeErr
 }
 
-func (f *fakeBase) SubmitProposal(_ context.Context, source knowledge.Source, title string, ops []knowledge.Op) (knowledge.Proposal, error) {
+func (f *fakeBase) SubmitProposal(
+	_ context.Context, source knowledge.Source, title string, ops []knowledge.Op,
+) (knowledge.Proposal, error) {
 	f.subSource, f.subTitle, f.subOps = source, title, ops
 	return f.subProposal, f.subErr
 }
