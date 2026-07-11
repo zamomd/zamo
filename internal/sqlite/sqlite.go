@@ -66,6 +66,20 @@ func isBusy(err error) bool {
 	return false
 }
 
+// translate maps infrastructure errors to domain sentinels so driver types never leak to callers.
+func translate(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sql.ErrNoRows):
+		return knowledge.ErrNotFound
+	case isBusy(err):
+		return knowledge.ErrBusy
+	default:
+		return err
+	}
+}
+
 // Repo implements knowledge.Repository.
 type Repo struct {
 	db  *sql.DB
@@ -76,8 +90,14 @@ var _ knowledge.Repository = (*Repo)(nil)
 
 // NewRepo wraps an opened database (see Open) in the Repository
 // implementation. now supplies decision timestamps (decided_at); inject a
-// fixed clock in tests. Method semantics are documented on the interface.
-func NewRepo(db *sql.DB, now func() time.Time) *Repo { return &Repo{db: db, now: now} }
+// fixed clock in tests. A nil now defaults to time.Now. Method semantics are
+// documented on the interface.
+func NewRepo(db *sql.DB, now func() time.Time) *Repo {
+	if now == nil {
+		now = time.Now
+	}
+	return &Repo{db: db, now: now}
+}
 
 // GetTopics implements knowledge.Repository.
 func (r *Repo) GetTopics(ctx context.Context) ([]knowledge.Block, error) {
@@ -94,15 +114,15 @@ func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content st
 	return knowledge.ErrNotImplemented
 }
 
-// timeLayout is the on-disk format for proposal timestamps: RFC3339 with a
-// fixed-width, zero-padded nanosecond field, always in UTC. Fixed width is what
-// makes lexicographic order match chronological order for the TEXT column that
-// ORDER BY created_at relies on — time.RFC3339Nano trims trailing zeros, which
-// breaks that ordering. The DSN does not enable the driver's TEXT-to-time
-// conversion, so times are formatted and parsed explicitly.
+// timeLayout is the on-disk format for proposal timestamps: fixed-width,
+// zero-padded RFC3339 nanoseconds in UTC. Fixed width keeps lexicographic order
+// equal to chronological order — which ORDER BY created_at (a TEXT column)
+// relies on — since time.RFC3339Nano trims trailing zeros and would break it.
 const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
+
+func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
 // SaveProposal implements knowledge.Repository.
 func (r *Repo) SaveProposal(ctx context.Context, p knowledge.Proposal) error {
@@ -122,7 +142,7 @@ func (r *Repo) SaveProposal(ctx context.Context, p knowledge.Proposal) error {
 		string(payload), formatTime(p.CreatedAt), decidedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("save proposal %s: %w", p.ID, err)
+		return fmt.Errorf("save proposal %s: %w", p.ID, translate(err))
 	}
 	return nil
 }
@@ -135,7 +155,7 @@ func (r *Repo) ListProposals(ctx context.Context, status knowledge.Status) ([]kn
 		string(status),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list %s proposals: %w", status, err)
+		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
 	}
 	defer rows.Close()
 
@@ -148,7 +168,7 @@ func (r *Repo) ListProposals(ctx context.Context, status knowledge.Status) ([]kn
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list %s proposals: %w", status, err)
+		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
 	}
 	return out, nil
 }
@@ -170,13 +190,13 @@ func scanProposal(rows *sql.Rows) (knowledge.Proposal, error) {
 	if err := json.Unmarshal([]byte(payload), &p.Ops); err != nil {
 		return knowledge.Proposal{}, fmt.Errorf("unmarshal proposal %s ops: %w", id, err)
 	}
-	created, err := time.Parse(timeLayout, createdAt)
+	created, err := parseTime(createdAt)
 	if err != nil {
 		return knowledge.Proposal{}, fmt.Errorf("parse created_at of proposal %s: %w", id, err)
 	}
 	p.CreatedAt = created
 	if decidedAt.Valid {
-		t, err := time.Parse(timeLayout, decidedAt.String)
+		t, err := parseTime(decidedAt.String)
 		if err != nil {
 			return knowledge.Proposal{}, fmt.Errorf("parse decided_at of proposal %s: %w", id, err)
 		}
@@ -199,11 +219,11 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 		string(id), string(knowledge.StatusPending),
 	)
 	if err != nil {
-		return fmt.Errorf("reject proposal %s: %w", id, err)
+		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("reject proposal %s: %w", id, err)
+		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
 	}
 	if n == 0 {
 		// No pending row matched: report whether the proposal is gone
@@ -214,7 +234,7 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 		var exists bool
 		if err := r.db.QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM proposals WHERE id = ?)`, string(id)).Scan(&exists); err != nil {
-			return fmt.Errorf("reject proposal %s: %w", id, err)
+			return fmt.Errorf("reject proposal %s: %w", id, translate(err))
 		}
 		if !exists {
 			return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotFound)

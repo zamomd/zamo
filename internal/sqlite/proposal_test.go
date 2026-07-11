@@ -263,3 +263,36 @@ func TestRejectProposalGuards(t *testing.T) {
 		t.Errorf("re-reject decided proposal: got %v, want ErrNotPending", err)
 	}
 }
+
+func TestNewRepoNilClockDefaults(t *testing.T) {
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	// A nil clock must not panic when RejectProposal stamps decided_at; it
+	// defaults to time.Now.
+	repo := NewRepo(db, nil)
+	ctx := t.Context()
+	p := knowledge.Proposal{
+		ID:        "01NIL",
+		Source:    knowledge.SourceMCP,
+		Status:    knowledge.StatusPending,
+		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveProposal(ctx, p); err != nil {
+		t.Fatalf("SaveProposal: %v", err)
+	}
+	if err := repo.RejectProposal(ctx, p.ID); err != nil {
+		t.Fatalf("RejectProposal with a nil clock: %v", err)
+	}
+
+	rejected, err := repo.ListProposals(ctx, knowledge.StatusRejected)
+	if err != nil {
+		t.Fatalf("ListProposals: %v", err)
+	}
+	if len(rejected) != 1 || rejected[0].DecidedAt.IsZero() {
+		t.Errorf("nil clock did not stamp decided_at via time.Now: %+v", rejected)
+	}
+}
