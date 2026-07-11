@@ -207,7 +207,7 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 	// upgrade under WAL.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, err)
+		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
 	}
 	defer tx.Rollback()
 
@@ -220,7 +220,7 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 		return decideReason(ctx, tx, id)
 	}
 	if err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, err)
+		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
 	}
 
 	now := formatTime(r.now())
@@ -233,7 +233,7 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE proposals SET status = ?, decided_at = ? WHERE id = ?`,
 		string(knowledge.StatusApplied), now, string(id)); err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, err)
+		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
 	}
 	return tx.Commit()
 }
@@ -254,9 +254,31 @@ func applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.
 	}
 }
 
+// requireParent returns ErrStale when a non-root op names a parent that vanished
+// between the proposal and its apply — the same "the base moved" signal a missing
+// target gives. Root ops (empty Parent) have nothing to check. Domain ordering
+// applies parents before children, so an intra-proposal parent already exists.
+func requireParent(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op knowledge.Op) error {
+	if op.Parent == "" {
+		return nil
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`, string(op.Parent)).Scan(&exists); err != nil {
+		return fmt.Errorf("apply %s %s: %w", kind, op.BlockID, translate(err))
+	}
+	if !exists {
+		return fmt.Errorf("apply %s %s: parent %s: %w", kind, op.BlockID, op.Parent, knowledge.ErrStale)
+	}
+	return nil
+}
+
 // applyAdd inserts a new block appended under its parent, tagged with AI
 // authorship and the proposal's source as provenance.
 func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.Source, now string) error {
+	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
+		return err
+	}
 	// A topic root has NULL parent_id; `IS ?` matches both NULL and a value.
 	var parent any
 	if op.Parent != "" {
@@ -266,7 +288,7 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(position)+1, 0) FROM blocks WHERE parent_id IS ?`,
 		parent).Scan(&pos); err != nil {
-		return fmt.Errorf("apply add %s: next position: %w", op.BlockID, err)
+		return fmt.Errorf("apply add %s: next position: %w", op.BlockID, translate(err))
 	}
 	meta := knowledge.Metadata{"author": "ai", "source": string(source)}
 	if op.Origin != "" {
@@ -280,7 +302,7 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 		`INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		string(op.BlockID), parent, pos, op.Content, string(payload), now, now); err != nil {
-		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
+		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
 	return nil
 }
@@ -291,13 +313,16 @@ func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
 		op.Content, now, string(op.BlockID))
 	if err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	return affectedOne(res, op.Kind, op.BlockID)
 }
 
 // applyMove reparents a block, appending it after its new siblings.
 func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
+		return err
+	}
 	var parent any
 	if op.Parent != "" {
 		parent = string(op.Parent)
@@ -306,13 +331,13 @@ func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(position)+1, 0) FROM blocks WHERE parent_id IS ?`,
 		parent).Scan(&pos); err != nil {
-		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, err)
+		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, translate(err))
 	}
 	res, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
 		parent, pos, now, string(op.BlockID))
 	if err != nil {
-		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
+		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return affectedOne(res, op.Kind, op.BlockID)
 }
@@ -324,7 +349,7 @@ func applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM blocks WHERE id = ?`, string(op.BlockID))
 	if err != nil {
-		return fmt.Errorf("apply delete %s: %w", op.BlockID, err)
+		return fmt.Errorf("apply delete %s: %w", op.BlockID, translate(err))
 	}
 	return affectedOne(res, op.Kind, op.BlockID)
 }
@@ -334,7 +359,7 @@ func applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
 func affectedOne(res sql.Result, kind knowledge.OpKind, id knowledge.ID) error {
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("apply %s %s: %w", kind, id, err)
+		return fmt.Errorf("apply %s %s: %w", kind, id, translate(err))
 	}
 	if n == 0 {
 		return fmt.Errorf("apply %s %s: %w", kind, id, knowledge.ErrStale)
@@ -362,6 +387,7 @@ func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
 	}
 	return nil
 }
+
 // rowQueryer is the read surface shared by *sql.DB and *sql.Tx, so decideReason
 // works standalone (reject) or inside the apply transaction.
 type rowQueryer interface {

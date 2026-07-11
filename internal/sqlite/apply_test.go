@@ -195,6 +195,63 @@ func TestApplyProposalAtomicRollback(t *testing.T) {
 	}
 }
 
+func TestApplyProposalStaleParent(t *testing.T) {
+	// add/move that name a parent which vanished between the proposal and its apply
+	// must fail with ErrStale — the same "base moved" signal a vanished target
+	// gives — not a raw foreign-key error the GUI cannot branch on.
+	assertPending := func(t *testing.T, repo *Repo) {
+		t.Helper()
+		pending, err := repo.ListProposals(t.Context(), knowledge.StatusPending)
+		if err != nil {
+			t.Fatalf("list pending: %v", err)
+		}
+		if len(pending) != 1 || pending[0].ID != "01P" {
+			t.Errorf("proposal not left pending after stale apply: %+v", pending)
+		}
+	}
+
+	t.Run("add", func(t *testing.T) {
+		repo := newTestRepo(t)
+		ctx := t.Context()
+		savePending(t, repo, "01P", knowledge.SourceGUIExpand)
+
+		err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
+			{Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01GONE", Content: "orphan"},
+		})
+		if !errors.Is(err, knowledge.ErrStale) {
+			t.Fatalf("add under a vanished parent: got %v, want ErrStale", err)
+		}
+		if _, _, ok := blockRow(t, repo, "01NEW"); ok {
+			t.Error("block added despite a vanished parent")
+		}
+		assertPending(t, repo)
+	})
+
+	t.Run("move", func(t *testing.T) {
+		repo := newTestRepo(t)
+		ctx := t.Context()
+		// A real block to move, so the failure is about the parent, not the target.
+		savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+		if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+			{Kind: knowledge.OpAdd, BlockID: "01BLK", Content: "block"},
+		}); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		savePending(t, repo, "01P", knowledge.SourceGUIEdit)
+		err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
+			{Kind: knowledge.OpMove, BlockID: "01BLK", Parent: "01GONE"},
+		})
+		if !errors.Is(err, knowledge.ErrStale) {
+			t.Fatalf("move under a vanished parent: got %v, want ErrStale", err)
+		}
+		if parent, _, _ := blockRow(t, repo, "01BLK"); parent != "" {
+			t.Errorf("block reparented despite a vanished parent: parent=%q", parent)
+		}
+		assertPending(t, repo)
+	})
+}
+
 func TestApplyProposalAddsBlocks(t *testing.T) {
 	repo := newTestRepo(t)
 	ctx := t.Context()
