@@ -18,14 +18,16 @@ const blockColumns = `id, parent_id, position, content, metadata, created_at, up
 
 // GetTopics implements knowledge.Repository: the root topics plus their first
 // level of subtopics, the slice the map and tree screens render. Grandchildren
-// and deeper are excluded. The result is flat; callers rebuild the hierarchy
-// from ParentID and Position.
+// and deeper are excluded. The result is flat but position-ordered — each root
+// followed by its children, like GetSubtree; callers rebuild the hierarchy from
+// ParentID and Position.
 func (r *Repo) GetTopics(ctx context.Context) ([]knowledge.Block, error) {
 	const q = `
 SELECT ` + blockColumns + ` FROM blocks
 WHERE parent_id IS NULL
    OR parent_id IN (SELECT id FROM blocks WHERE parent_id IS NULL)
-ORDER BY COALESCE(parent_id, id), parent_id IS NOT NULL, position`
+ORDER BY COALESCE((SELECT p.position FROM blocks p WHERE p.id = blocks.parent_id), position),
+         COALESCE(parent_id, id), parent_id IS NOT NULL, position`
 
 	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {

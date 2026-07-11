@@ -142,6 +142,34 @@ func TestGetTopics(t *testing.T) {
 	}
 }
 
+func TestGetTopicsOrdersByPosition(t *testing.T) {
+	ctx := t.Context()
+	db := openTestDB(t)
+
+	// Root ids sort opposite to their position, so ordering by id would return
+	// the wrong top-level order; roots must follow position, as GetSubtree does
+	// for siblings.
+	insertBlock(ctx, t, db, "z-root", "", 0, "First")
+	insertBlock(ctx, t, db, "a-root", "", 1, "Second")
+	insertBlock(ctx, t, db, "z-b", "z-root", 1, "child b")
+	insertBlock(ctx, t, db, "z-a", "z-root", 0, "child a")
+
+	got, err := r(db).GetTopics(ctx)
+	if err != nil {
+		t.Fatalf("GetTopics: %v", err)
+	}
+	want := []knowledge.ID{"z-root", "z-a", "z-b", "a-root"}
+	gotIDs := ids(got)
+	if len(gotIDs) != len(want) {
+		t.Fatalf("GetTopics = %v, want %v", gotIDs, want)
+	}
+	for i := range want {
+		if gotIDs[i] != want[i] {
+			t.Fatalf("GetTopics order = %v, want %v (roots and children by position)", gotIDs, want)
+		}
+	}
+}
+
 func TestGetTopicsEmpty(t *testing.T) {
 	got, err := r(openTestDB(t)).GetTopics(t.Context())
 	if err != nil {
