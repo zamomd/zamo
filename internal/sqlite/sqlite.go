@@ -5,6 +5,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -65,16 +66,38 @@ func isBusy(err error) bool {
 	return false
 }
 
+// translate maps infrastructure errors to domain sentinels so driver types never leak to callers.
+func translate(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sql.ErrNoRows):
+		return knowledge.ErrNotFound
+	case isBusy(err):
+		return knowledge.ErrBusy
+	default:
+		return err
+	}
+}
+
 // Repo implements knowledge.Repository.
 type Repo struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 var _ knowledge.Repository = (*Repo)(nil)
 
 // NewRepo wraps an opened database (see Open) in the Repository
-// implementation. Method semantics are documented on the interface.
-func NewRepo(db *sql.DB) *Repo { return &Repo{db: db} }
+// implementation. now supplies decision timestamps (decided_at); inject a
+// fixed clock in tests. A nil now defaults to time.Now. Method semantics are
+// documented on the interface.
+func NewRepo(db *sql.DB, now func() time.Time) *Repo {
+	if now == nil {
+		now = time.Now
+	}
+	return &Repo{db: db, now: now}
+}
 
 // GetTopics implements knowledge.Repository.
 func (r *Repo) GetTopics(ctx context.Context) ([]knowledge.Block, error) {
@@ -91,14 +114,95 @@ func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content st
 	return knowledge.ErrNotImplemented
 }
 
+// timeLayout is the on-disk format for proposal timestamps: fixed-width,
+// zero-padded RFC3339 nanoseconds in UTC. Fixed width keeps lexicographic order
+// equal to chronological order — which ORDER BY created_at (a TEXT column)
+// relies on — since time.RFC3339Nano trims trailing zeros and would break it.
+const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
+
+func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
+
 // SaveProposal implements knowledge.Repository.
 func (r *Repo) SaveProposal(ctx context.Context, p knowledge.Proposal) error {
-	return knowledge.ErrNotImplemented
+	payload, err := json.Marshal(p.Ops)
+	if err != nil {
+		return fmt.Errorf("marshal proposal %s ops: %w", p.ID, err)
+	}
+	// decided_at stays NULL while pending; a nil interface binds as SQL NULL.
+	var decidedAt any
+	if !p.DecidedAt.IsZero() {
+		decidedAt = formatTime(p.DecidedAt)
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO proposals (id, source, status, title, payload, created_at, decided_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		string(p.ID), string(p.Source), string(p.Status), p.Title,
+		string(payload), formatTime(p.CreatedAt), decidedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("save proposal %s: %w", p.ID, translate(err))
+	}
+	return nil
 }
 
 // ListProposals implements knowledge.Repository.
 func (r *Repo) ListProposals(ctx context.Context, status knowledge.Status) ([]knowledge.Proposal, error) {
-	return nil, knowledge.ErrNotImplemented
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, source, status, title, payload, created_at, decided_at
+		 FROM proposals WHERE status = ? ORDER BY created_at, id`,
+		string(status),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
+	}
+	defer rows.Close()
+
+	var out []knowledge.Proposal
+	for rows.Next() {
+		p, err := scanProposal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
+	}
+	return out, nil
+}
+
+// scanProposal reads one proposals row into a domain Proposal, reversing the
+// SaveProposal encoding (JSON payload, TEXT timestamps, nullable decided_at).
+func scanProposal(rows *sql.Rows) (knowledge.Proposal, error) {
+	var (
+		p                                      knowledge.Proposal
+		id, source, status, payload, createdAt string
+		decidedAt                              sql.NullString
+	)
+	if err := rows.Scan(&id, &source, &status, &p.Title, &payload, &createdAt, &decidedAt); err != nil {
+		return knowledge.Proposal{}, fmt.Errorf("scan proposal: %w", err)
+	}
+	p.ID = knowledge.ID(id)
+	p.Source = knowledge.Source(source)
+	p.Status = knowledge.Status(status)
+	if err := json.Unmarshal([]byte(payload), &p.Ops); err != nil {
+		return knowledge.Proposal{}, fmt.Errorf("unmarshal proposal %s ops: %w", id, err)
+	}
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return knowledge.Proposal{}, fmt.Errorf("parse created_at of proposal %s: %w", id, err)
+	}
+	p.CreatedAt = created
+	if decidedAt.Valid {
+		t, err := parseTime(decidedAt.String)
+		if err != nil {
+			return knowledge.Proposal{}, fmt.Errorf("parse decided_at of proposal %s: %w", id, err)
+		}
+		p.DecidedAt = t
+	}
+	return p, nil
 }
 
 // ApplyProposal implements knowledge.Repository.
@@ -108,7 +212,36 @@ func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowled
 
 // RejectProposal implements knowledge.Repository.
 func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
-	return knowledge.ErrNotImplemented
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE proposals SET status = ?, decided_at = ?
+		 WHERE id = ? AND status = ?`,
+		string(knowledge.StatusRejected), formatTime(r.now()),
+		string(id), string(knowledge.StatusPending),
+	)
+	if err != nil {
+		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
+	}
+	if n == 0 {
+		// No pending row matched: report whether the proposal is gone
+		// (ErrNotFound) or was already decided (ErrNotPending). This second
+		// statement is not in the same transaction as the UPDATE, so under a
+		// concurrent writer the two reasons could swap — harmless, as only the
+		// error message differs, and proposals are never deleted in the MVP.
+		var exists bool
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM proposals WHERE id = ?)`, string(id)).Scan(&exists); err != nil {
+			return fmt.Errorf("reject proposal %s: %w", id, translate(err))
+		}
+		if !exists {
+			return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotFound)
+		}
+		return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotPending)
+	}
+	return nil
 }
 
 // Search implements knowledge.Repository.
