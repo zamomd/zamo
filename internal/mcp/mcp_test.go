@@ -108,6 +108,64 @@ func TestProposeBlocksSubmitsAsMCP(t *testing.T) {
 	}
 }
 
+func TestProposeStampsOriginServerSide(t *testing.T) {
+	// Provenance is the server's to assign: the tool schema has no origin field
+	// (a client cannot even supply one), and every forwarded op carries the
+	// fixed mcp marker. The client's Rationale — the "why" the reviewer reads —
+	// is preserved.
+	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
+	cs := connect(t, NewServer(fake, fake, fake))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "propose_blocks",
+		Arguments: map[string]any{
+			"title": "Contexts in Go",
+			"ops": []map[string]any{{
+				"op":        "add",
+				"temp_id":   "t1",
+				"content":   "# Contexts in Go",
+				"rationale": "the topic lacks a root",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("propose_blocks reported a tool error: %+v", res.Content)
+	}
+	if len(fake.subOps) != 1 {
+		t.Fatalf("ops not forwarded: %+v", fake.subOps)
+	}
+	if got := fake.subOps[0].Origin; got != "mcp" {
+		t.Errorf("Origin = %q, want the server's fixed mcp marker (client cannot forge provenance)", got)
+	}
+	if got := fake.subOps[0].Rationale; got != "the topic lacks a root" {
+		t.Errorf("Rationale = %q, want the client's rationale preserved", got)
+	}
+}
+
+func TestProposeRejectsForgedOrigin(t *testing.T) {
+	// The schema is closed: an op field the client must not set (origin) is
+	// refused outright as invalid params, never silently accepted.
+	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
+	cs := connect(t, NewServer(fake, fake, fake))
+
+	_, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "propose_blocks",
+		Arguments: map[string]any{
+			"title": "x",
+			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "origin": "gui_edit"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("a client-supplied origin must be rejected as invalid params")
+	}
+	if fake.subOps != nil {
+		t.Errorf("no proposal must be submitted on a rejected call, got ops %+v", fake.subOps)
+	}
+}
+
 // callBlocks calls a read tool and decodes its structured block list.
 func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
 	t.Helper()
