@@ -26,6 +26,7 @@ type fakeBase struct {
 	subSource   knowledge.Source
 	subTitle    string
 	subOps      []knowledge.Op
+	subCalls    int
 	subProposal knowledge.Proposal
 	subErr      error
 }
@@ -48,6 +49,7 @@ func (f *fakeBase) SubmitProposal(
 	_ context.Context, source knowledge.Source, title string, ops []knowledge.Op,
 ) (knowledge.Proposal, error) {
 	f.subSource, f.subTitle, f.subOps = source, title, ops
+	f.subCalls++
 	return f.subProposal, f.subErr
 }
 
@@ -247,6 +249,26 @@ func TestToolSurface(t *testing.T) {
 		if !got[name] {
 			t.Errorf("missing tool %q", name)
 		}
+	}
+}
+
+func TestReadToolsNeverWrite(t *testing.T) {
+	// The read tools must not be able to reach the write path: exercising every
+	// one leaves the proposal queue untouched. Guards against a read handler
+	// being wired to the wrong capability.
+	fake := &fakeBase{
+		searchBlocks: []knowledge.Block{{ID: "01A"}},
+		subtree:      []knowledge.Block{{ID: "01ROOT"}},
+		topic:        []knowledge.Block{{ID: "01T"}},
+	}
+	cs := connect(t, NewServer(fake, fake, fake))
+
+	callBlocks(t, cs, "search", map[string]any{"query": "x"})
+	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
+	callBlocks(t, cs, "topic_map", map[string]any{})
+
+	if fake.subCalls != 0 {
+		t.Errorf("read tools submitted %d proposals, want 0", fake.subCalls)
 	}
 }
 
