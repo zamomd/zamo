@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -51,14 +52,18 @@ func TestRenderMarkdownKeepsUnicodeInSlug(t *testing.T) {
 }
 
 func TestRenderMarkdownDedupesCollidingSlugs(t *testing.T) {
-	// Two topics that slug to the same base must not overwrite one file.
+	// Topics that slug to the same base must not overwrite one file; the suffix
+	// counts up (name.md, name-2.md, name-3.md), never repeating or counting
+	// down.
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "# Go Contexts")},
 		{blk("t2", "", 0, "Go contexts!")},
+		{blk("t3", "", 0, "GO CONTEXTS")},
 	})
-	names := []string{files[0].Name, files[1].Name}
-	if names[0] != "go-contexts.md" || names[1] != "go-contexts-2.md" {
-		t.Errorf("names = %v, want [go-contexts.md go-contexts-2.md]", names)
+	got := []string{files[0].Name, files[1].Name, files[2].Name}
+	want := []string{"go-contexts.md", "go-contexts-2.md", "go-contexts-3.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("names = %v, want %v", got, want)
 	}
 }
 
