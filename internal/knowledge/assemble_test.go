@@ -20,6 +20,25 @@ func addOp(temp, parent, content string) Op {
 	return Op{Kind: OpAdd, TempID: temp, Parent: parent, Content: content}
 }
 
+func TestAssembleRejectsAddWithEmptyTempID(t *testing.T) {
+	// An add with no temp id cannot resolve to a real id — it would emit a blank
+	// BlockID. Proposals reach here from untrusted sources (MCP), so a malformed
+	// add is a domain validation error, not silently applied.
+	p := Proposal{Ops: []Op{addOp("", "", "no temp id")}}
+	if _, err := assemble(p, []int{0}, seqIDs()); !errors.Is(err, ErrInvalidProposal) {
+		t.Errorf("empty temp id: got %v, want ErrInvalidProposal", err)
+	}
+}
+
+func TestAssembleRejectsDuplicateTempID(t *testing.T) {
+	// Two adds sharing a temp id would collide on resolution — one real id for two
+	// blocks. Reject the whole proposal rather than resolve ambiguously.
+	p := Proposal{Ops: []Op{addOp("t1", "", "A"), addOp("t1", "", "B")}}
+	if _, err := assemble(p, []int{0, 1}, seqIDs()); !errors.Is(err, ErrInvalidProposal) {
+		t.Errorf("duplicate temp id: got %v, want ErrInvalidProposal", err)
+	}
+}
+
 func TestAssembleRejectsCycleAmongTempIDs(t *testing.T) {
 	// Two adds each claiming the other as parent form a ring with no root — the
 	// tree cannot be built, so assemble must refuse it with ErrCycle.
@@ -246,9 +265,9 @@ func TestAssembleOrdersParentsBeforeChildren(t *testing.T) {
 }
 
 func TestAssembleResolvesAndOrders(t *testing.T) {
-	// A small add-tree, fully selected. temp ids resolve to fresh ULIDs in add
-	// order, parents keep pointing at their (now resolved) parent, and the result
-	// stays parents-before-children.
+	// A small add-tree, fully selected. temp ids resolve to fresh ids (from the
+	// injected generator) in add order, parents keep pointing at their (now
+	// resolved) parent, and the result stays parents-before-children.
 	p := Proposal{
 		Ops: []Op{
 			addOp("t1", "", "# Root"),
@@ -263,7 +282,7 @@ func TestAssembleResolvesAndOrders(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d ops, want 3: %+v", len(got), got)
 	}
-	// Resolution: temp ids are gone, BlockID carries the new ULID.
+	// Resolution: temp ids are gone, BlockID carries the new id.
 	want := []struct {
 		block, parent, content string
 	}{

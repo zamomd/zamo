@@ -1,6 +1,9 @@
 package knowledge
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+)
 
 // assemble turns a proposal and the user's selection into the final operation
 // list handed to Repository.ApplyProposal. It is pure: no storage, no clock. The
@@ -13,6 +16,9 @@ import "slices"
 // an existing block and passed through unresolved; whether that block actually
 // exists is storage's concern (a foreign-key check), not assemble's.
 func assemble(p Proposal, selected []int, newID IDGenerator) ([]Op, error) {
+	if err := validateAdds(p.Ops); err != nil {
+		return nil, err
+	}
 	chosen := selectOps(p.Ops, selected)
 	chosen = cascade(chosen, proposalTempIDs(p.Ops))
 
@@ -52,6 +58,28 @@ func assemble(p Proposal, selected []int, newID IDGenerator) ([]Op, error) {
 		out = append(out, op)
 	}
 	return out, nil
+}
+
+// validateAdds rejects a proposal whose adds cannot resolve to distinct ids:
+// an add with no temp id would emit a blank BlockID, and two adds sharing a
+// temp id would collapse onto one generated id. Both mean malformed input (the
+// format requires every new block to carry a unique temp id), so assemble
+// refuses the whole proposal rather than write something ambiguous to storage.
+func validateAdds(ops []Op) error {
+	seen := make(map[string]bool)
+	for _, op := range ops {
+		if op.Kind != OpAdd {
+			continue
+		}
+		if op.TempID == "" {
+			return fmt.Errorf("add op with empty temp id: %w", ErrInvalidProposal)
+		}
+		if seen[op.TempID] {
+			return fmt.Errorf("duplicate temp id %q: %w", op.TempID, ErrInvalidProposal)
+		}
+		seen[op.TempID] = true
+	}
+	return nil
 }
 
 // selectOps keeps the ops at the given indexes, in their original order,

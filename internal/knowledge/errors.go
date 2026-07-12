@@ -24,6 +24,11 @@ var (
 	// that has already been decided.
 	ErrNotPending = errors.New("proposal already decided")
 
+	// ErrInvalidProposal reports a proposal that cannot be assembled: an add
+	// with no temp id, or two adds sharing one. It signals malformed input from
+	// an untrusted source, caught before anything reaches storage.
+	ErrInvalidProposal = errors.New("proposal is malformed")
+
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")
