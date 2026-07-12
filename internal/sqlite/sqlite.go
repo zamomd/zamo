@@ -101,7 +101,21 @@ func NewRepo(db *sql.DB, now func() time.Time) *Repo {
 
 // EditBlockContent implements knowledge.Repository.
 func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
-	return knowledge.ErrNotImplemented
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
+		content, formatTime(r.now()), string(id))
+	if err != nil {
+		return fmt.Errorf("edit block %s: %w", id, translate(err))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("edit block %s: %w", id, translate(err))
+	}
+	if n == 0 {
+		// The block vanished between render and save: report it, don't feign success.
+		return fmt.Errorf("edit block %s: %w", id, knowledge.ErrNotFound)
+	}
+	return nil
 }
 
 // timeLayout is the on-disk format for proposal timestamps: fixed-width,
