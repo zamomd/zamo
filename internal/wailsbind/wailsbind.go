@@ -36,6 +36,12 @@ func (a *App) ApplyProposal(ctx context.Context, id knowledge.ID, selected []int
 	return a.svc.ApplyProposal(ctx, id, selected)
 }
 
+// ProposeEdit passes the call to knowledge.Service. The frontend supplies the
+// scope (a block or subtree root) and the user's text command.
+func (a *App) ProposeEdit(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Proposal, error) {
+	return a.svc.ProposeEdit(ctx, scope, instruction)
+}
+
 // GetSubtree passes the call to knowledge.Service.
 func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
 	return a.svc.GetSubtree(ctx, root)
