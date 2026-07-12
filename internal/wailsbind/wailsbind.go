@@ -40,3 +40,9 @@ func (a *App) ApplyProposal(ctx context.Context, id knowledge.ID, selected []int
 func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
 	return a.svc.GetSubtree(ctx, root)
 }
+
+// ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
+// directory chosen through the folder picker.
+func (a *App) ExportMarkdown(ctx context.Context, dir string) error {
+	return a.svc.ExportMarkdown(ctx, dir)
+}
