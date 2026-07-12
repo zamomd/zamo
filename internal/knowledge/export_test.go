@@ -62,6 +62,27 @@ func TestRenderMarkdownDedupesCollidingSlugs(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
+	// The suffix of one topic must not equal the base name of another: "x 2"
+	// slugs to "x-2", and a second "x" must not also become "x-2.md" and
+	// overwrite it. Every file must be distinct, or a topic is silently lost.
+	files := RenderMarkdown([][]Block{
+		{blk("t1", "", 0, "x 2")},
+		{blk("t2", "", 0, "x")},
+		{blk("t3", "", 0, "x")},
+	})
+	seen := map[string]bool{}
+	for _, f := range files {
+		if seen[f.Name] {
+			t.Errorf("duplicate filename %q — a topic would be overwritten", f.Name)
+		}
+		seen[f.Name] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("got %d distinct names from 3 topics: %v", len(seen), seen)
+	}
+}
+
 func TestRenderMarkdownFallsBackOnEmptySlug(t *testing.T) {
 	// A topic whose content has no slug-able characters still yields a usable,
 	// unique filename rather than ".md".
