@@ -22,10 +22,19 @@ type fakeRepo struct {
 	applyCalls int
 	saveErr    error
 	saved      *Proposal // the last proposal handed to SaveProposal
+
+	subtree    []Block // what GetSubtree returns
+	subtreeErr error
+	gotSubtree ID // the root GetSubtree was asked for
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)         { return nil, nil }
-func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)    { return nil, nil }
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return nil, nil }
+
+func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
+	f.gotSubtree = root
+	return f.subtree, f.subtreeErr
+}
+
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
 func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
@@ -44,6 +53,11 @@ type fakeLLM struct {
 	tree              []Op
 	treeErr           error
 	gotTopic, gotHint string
+
+	editOps        []Op
+	editErr        error
+	gotScope       []Block
+	gotInstruction string
 }
 
 func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, error) {
@@ -51,8 +65,9 @@ func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, err
 	return l.tree, l.treeErr
 }
 
-func (l *fakeLLM) GenerateEdit(context.Context, []Block, string) ([]Op, error) {
-	return nil, nil
+func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction string) ([]Op, error) {
+	l.gotScope, l.gotInstruction = scope, instruction
+	return l.editOps, l.editErr
 }
 
 func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
@@ -227,5 +242,78 @@ func TestServiceApplyProposalNotPending(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("storage ApplyProposal called %d times, want 0 for a non-pending id", repo.applyCalls)
+	}
+}
+
+func TestServiceProposeEditQueuesProposal(t *testing.T) {
+	scope := []Block{{ID: "01A", Content: "old text"}}
+	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
+	repo := &fakeRepo{subtree: scope}
+	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	svc := NewService(llm, repo, seqIDs(), clockAt(at))
+
+	got, err := svc.ProposeEdit(context.Background(), "01A", "revise this block")
+	if err != nil {
+		t.Fatalf("ProposeEdit: %v", err)
+	}
+	// The scope is read from storage and handed to the model with the command.
+	if repo.gotSubtree != "01A" {
+		t.Errorf("read subtree of %q, want 01A", repo.gotSubtree)
+	}
+	if llm.gotInstruction != "revise this block" || len(llm.gotScope) != 1 || llm.gotScope[0].ID != "01A" {
+		t.Errorf("model got scope %+v / instruction %q, want the scope and command", llm.gotScope, llm.gotInstruction)
+	}
+	// The edit is queued as a pending gui_edit proposal carrying the model's ops.
+	if got.Status != StatusPending || got.Source != SourceGUIEdit {
+		t.Errorf("proposal = %+v, want pending gui_edit", got)
+	}
+	if len(got.Ops) != 1 || got.Ops[0].Kind != OpEdit {
+		t.Errorf("ops = %+v, want the edit from the model", got.Ops)
+	}
+	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
+		t.Errorf("persisted %+v, want the returned proposal %+v", repo.saved, got)
+	}
+}
+
+func TestServiceProposeEditSurfacesLLMError(t *testing.T) {
+	llm := &fakeLLM{editErr: ErrLLMUnavailable}
+	repo := &fakeRepo{subtree: []Block{{ID: "01A", Content: "x"}}}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	if _, err := svc.ProposeEdit(context.Background(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("a proposal was queued despite the LLM failure: %+v", repo.saved)
+	}
+}
+
+func TestServiceProposeEditPropagatesReadError(t *testing.T) {
+	boom := errors.New("db down")
+	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
+	repo := &fakeRepo{subtreeErr: boom}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	_, err := svc.ProposeEdit(context.Background(), "01A", "do a thing")
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error", err)
+	}
+	if llm.gotInstruction != "" {
+		t.Errorf("the model was called despite a read failure")
+	}
+}
+
+func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
+	// A command the model turns into no operations must not queue an empty
+	// proposal; the empty-proposal invariant surfaces instead.
+	llm := &fakeLLM{editOps: nil}
+	repo := &fakeRepo{subtree: []Block{{ID: "01A", Content: "x"}}}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	if _, err := svc.ProposeEdit(context.Background(), "01A", "do nothing"); !errors.Is(err, ErrEmptyProposal) {
+		t.Errorf("error = %v, want ErrEmptyProposal", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("an empty edit was queued: %+v", repo.saved)
 	}
 }
