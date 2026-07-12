@@ -16,10 +16,24 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as knowledge$0 from "../knowledge/models.js";
 
 /**
+ * ApplyProposal passes the call to knowledge.Service.
+ */
+export function ApplyProposal(id: knowledge$0.ID, selected: number[] | null): $CancellablePromise<void> {
+    return $Call.ByID(3093822193, id, selected);
+}
+
+/**
  * ExpandTopic passes the call to knowledge.Service.
  */
 export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Proposal> {
     return $Call.ByID(738254684, topic, hint);
+}
+
+/**
+ * GetSubtree passes the call to knowledge.Service.
+ */
+export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
+    return $Call.ByID(309124419, root);
 }
 
 /**

@@ -7,17 +7,17 @@
  * in fields, never as service markup inside the text.
  */
 export interface Block {
-  ID: ID;
+    "ID": ID;
 
-  /**
-   * empty means the block is a topic root
-   */
-  ParentID: ID;
-  Position: number;
-  Content: string;
-  Meta: Metadata;
-  CreatedAt: string;
-  UpdatedAt: string;
+    /**
+     * empty means the block is a topic root
+     */
+    "ParentID": ID;
+    "Position": number;
+    "Content": string;
+    "Meta": Metadata;
+    "CreatedAt": string;
+    "UpdatedAt": string;
 }
 
 /**
@@ -39,57 +39,57 @@ export type Metadata = { [_ in string]?: any } | null;
  * real IDs are assigned on apply.
  */
 export interface Op {
-  op: OpKind;
+    "op": OpKind;
 
-  /**
-   * temporary ID of a block being added
-   */
-  temp_id?: string;
+    /**
+     * temporary ID of a block being added
+     */
+    "temp_id"?: string;
 
-  /**
-   * TempID or ID of an existing block; empty means topic root
-   */
-  parent?: string;
+    /**
+     * TempID or ID of an existing block; empty means topic root
+     */
+    "parent"?: string;
 
-  /**
-   * existing block (edit/move/delete)
-   */
-  block_id?: ID;
-  content?: string;
+    /**
+     * existing block (edit/move/delete)
+     */
+    "block_id"?: ID;
+    "content"?: string;
 
-  /**
-   * Link fields (OpLink only). From/To are TempIDs or existing IDs.
-   */
-  from?: string;
-  to?: string;
-  relation?: Relation;
+    /**
+     * Link fields (OpLink only). From/To are TempIDs or existing IDs.
+     */
+    "from"?: string;
+    "to"?: string;
+    "relation"?: Relation;
 
-  /**
-   * Provenance: why the AI proposes this and where it came from.
-   * The review screen shows both fields.
-   */
-  rationale?: string;
-  origin?: string;
+    /**
+     * Provenance: why the AI proposes this and where it came from.
+     * The review screen shows both fields.
+     */
+    "rationale"?: string;
+    "origin"?: string;
 }
 
 /**
  * OpKind is the kind of a single operation inside a proposal.
  */
 export enum OpKind {
-  /**
-   * The Go zero value for the underlying type of the enum.
-   */
-  $zero = "",
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
 
-  /**
-   * The operation kinds of the proposal format.
-   */
-  OpAdd = "add",
-  OpEdit = "edit",
-  OpMove = "move",
-  OpDelete = "delete",
-  OpLink = "link",
-}
+    /**
+     * The operation kinds of the proposal format.
+     */
+    OpAdd = "add",
+    OpEdit = "edit",
+    OpMove = "move",
+    OpDelete = "delete",
+    OpLink = "link",
+};
 
 /**
  * Proposal is a change proposal: the only way any AI (from any input)
@@ -97,17 +97,17 @@ export enum OpKind {
  * human edits bypass the queue.
  */
 export interface Proposal {
-  ID: ID;
-  Source: Source;
-  Status: Status;
-  Title: string;
-  Ops: Op[] | null;
-  CreatedAt: string;
+    "ID": ID;
+    "Source": Source;
+    "Status": Status;
+    "Title": string;
+    "Ops": Op[] | null;
+    "CreatedAt": string;
 
-  /**
-   * zero while the proposal is pending
-   */
-  DecidedAt: string;
+    /**
+     * zero while the proposal is pending
+     */
+    "DecidedAt": string;
 }
 
 /**
@@ -116,65 +116,65 @@ export interface Proposal {
  * in Block.ParentID (one source of truth per fact).
  */
 export enum Relation {
-  /**
-   * The Go zero value for the underlying type of the enum.
-   */
-  $zero = "",
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
 
-  /**
-   * The two non-hierarchical relations.
-   *
-   * code example ↔ theory
-   */
-  RelationExample = "example",
+    /**
+     * The two non-hierarchical relations.
+     *
+     * code example ↔ theory
+     */
+    RelationExample = "example",
 
-  /**
-   * loosely related (default type)
-   */
-  RelationRelated = "related",
-}
+    /**
+     * loosely related (default type)
+     */
+    RelationRelated = "related",
+};
 
 /**
  * Source says where a proposal came from. The set is open: the scheduler,
  * chat import and other future inputs will add their own values.
  */
 export enum Source {
-  /**
-   * The Go zero value for the underlying type of the enum.
-   */
-  $zero = "",
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
 
-  /**
-   * The proposal sources of the MVP.
-   *
-   * topic expansion from the app
-   */
-  SourceGUIExpand = "gui_expand",
+    /**
+     * The proposal sources of the MVP.
+     *
+     * topic expansion from the app
+     */
+    SourceGUIExpand = "gui_expand",
 
-  /**
-   * AI edit command from the app
-   */
-  SourceGUIEdit = "gui_edit",
+    /**
+     * AI edit command from the app
+     */
+    SourceGUIEdit = "gui_edit",
 
-  /**
-   * proposal from an MCP tool
-   */
-  SourceMCP = "mcp",
-}
+    /**
+     * proposal from an MCP tool
+     */
+    SourceMCP = "mcp",
+};
 
 /**
  * Status is the state of a proposal in the review queue.
  */
 export enum Status {
-  /**
-   * The Go zero value for the underlying type of the enum.
-   */
-  $zero = "",
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
 
-  /**
-   * The proposal lifecycle: pending until the user decides.
-   */
-  StatusPending = "pending",
-  StatusApplied = "applied",
-  StatusRejected = "rejected",
-}
+    /**
+     * The proposal lifecycle: pending until the user decides.
+     */
+    StatusPending = "pending",
+    StatusApplied = "applied",
+    StatusRejected = "rejected",
+};
