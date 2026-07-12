@@ -84,7 +84,9 @@
 	}
 
 	function startEdit(block: Block): void {
-		if (busy) {
+		// Ignore while busy or while another block is already being edited, so an
+		// in-progress edit is never silently discarded by switching blocks.
+		if (busy || editingID !== null) {
 			return;
 		}
 		editingID = block.ID;
@@ -110,6 +112,7 @@
 			cancelEdit();
 		} catch (err: unknown) {
 			error = String(err);
+			status = "";
 		} finally {
 			busy = false;
 		}
@@ -125,8 +128,10 @@
 {#snippet treeNode(node: TreeNode)}
 	<li>
 		{#if editingID === node.block.ID}
-			<textarea bind:value={editText} disabled={busy}></textarea>
-			<button type="button" onclick={saveEdit} disabled={busy}>Save</button>
+			<textarea aria-label="block content" bind:value={editText} disabled={busy}></textarea>
+			<button type="button" onclick={saveEdit} disabled={busy || editText.trim() === ""}>
+				Save
+			</button>
 			<button type="button" onclick={cancelEdit} disabled={busy}>Cancel</button>
 		{:else}
 			<button
