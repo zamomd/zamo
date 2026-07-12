@@ -77,7 +77,7 @@ func TestParseEditOpsDropsInvalidOps(t *testing.T) {
 		{"op":"frobnicate","block_id":"01A"},
 		{"op":"edit","block_id":"01A"},
 		{"op":"edit","content":"no target"},
-		{"op":"move","block_id":"01B"},
+		{"op":"move","parent":"01A"},
 		{"op":"delete"},
 		{"op":"add","content":""},
 		{"op":"delete","block_id":"01C"}
@@ -88,6 +88,54 @@ func TestParseEditOpsDropsInvalidOps(t *testing.T) {
 	}
 	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
 		t.Errorf("ops = %+v, want only the one valid delete", ops)
+	}
+}
+
+func TestParseEditOpsMoveToRootKeepsEmptyParent(t *testing.T) {
+	// The domain treats an empty parent as the topic root and supports moving a
+	// block there; the parser must not be stricter than the pipeline it feeds
+	// and silently drop a valid move.
+	ops, err := ParseEditOps([]byte(`[{"op":"move","block_id":"01A"}]`))
+	if err != nil {
+		t.Fatalf("ParseEditOps: %v", err)
+	}
+	if len(ops) != 1 || ops[0].Kind != knowledge.OpMove || ops[0].BlockID != "01A" || ops[0].Parent != "" {
+		t.Errorf("ops = %+v, want a move of 01A to the root", ops)
+	}
+}
+
+func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
+	// A generated temp id must not collide with one the model supplied on
+	// another op, or two adds fight for one id and the whole proposal becomes
+	// unappliable.
+	ops, err := ParseEditOps([]byte(`[
+		{"op":"add","temp_id":"t1","parent":"01A","content":"supplied"},
+		{"op":"add","parent":"01A","content":"generated"}
+	]`))
+	if err != nil {
+		t.Fatalf("ParseEditOps: %v", err)
+	}
+	if len(ops) != 2 {
+		t.Fatalf("got %d ops, want 2", len(ops))
+	}
+	if ops[0].TempID != "t1" {
+		t.Errorf("supplied temp id = %q, want t1", ops[0].TempID)
+	}
+	if ops[1].TempID == "" || ops[1].TempID == ops[0].TempID {
+		t.Errorf("generated temp id = %q, want a fresh id distinct from t1", ops[1].TempID)
+	}
+}
+
+func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
+	// An empty array earlier in the reply must not shadow the real one, the way
+	// firstJSONObject skips a bare {}.
+	raw := []byte(`Options were [] but here are the changes: [{"op":"delete","block_id":"01C"}]`)
+	ops, err := ParseEditOps(raw)
+	if err != nil {
+		t.Fatalf("ParseEditOps: %v", err)
+	}
+	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
+		t.Errorf("ops = %+v, want the real delete, not the empty array", ops)
 	}
 }
 
