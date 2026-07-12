@@ -41,13 +41,22 @@ func ParseEditOps(raw []byte) ([]knowledge.Op, error) {
 		return nil, fmt.Errorf("%w: no JSON array in reply", knowledge.ErrLLMBadResponse)
 	}
 
+	// Reserve every temp id the model supplied so a generated id for a keyless
+	// add cannot collide with one, which would make the whole proposal unappliable.
+	taken := make(map[string]bool)
+	for _, e := range edits {
+		if e.TempID != "" {
+			taken[e.TempID] = true
+		}
+	}
+
 	ops := make([]knowledge.Op, 0, len(edits))
 	seq := 0
 	for _, e := range edits {
 		if len(ops) >= maxBlocks {
 			break
 		}
-		if op, ok := e.toOp(&seq); ok {
+		if op, ok := e.toOp(&seq, taken); ok {
 			ops = append(ops, op)
 		}
 	}
@@ -57,11 +66,12 @@ func ParseEditOps(raw []byte) ([]knowledge.Op, error) {
 	return ops, nil
 }
 
-// toOp validates one edit op by kind and maps it to a domain op. seq feeds
-// generated temp ids for adds that omit one, so later ops (and the assembler)
-// can still reference the new block. It returns false for an unknown kind or a
+// toOp validates one edit op by kind and maps it to a domain op. For a keyless
+// add it mints a temp id, skipping any already in taken (a model-supplied id or
+// an earlier generated one), so later ops and the assembler can reference the
+// new block without collision. It returns false for an unknown kind or a
 // missing required field, dropping the op.
-func (e editOp) toOp(seq *int) (knowledge.Op, bool) {
+func (e editOp) toOp(seq *int, taken map[string]bool) (knowledge.Op, bool) {
 	content := strings.TrimSpace(e.Content)
 	switch knowledge.OpKind(e.Op) {
 	case knowledge.OpAdd:
@@ -70,8 +80,14 @@ func (e editOp) toOp(seq *int) (knowledge.Op, bool) {
 		}
 		tempID := e.TempID
 		if tempID == "" {
-			*seq++
-			tempID = "t" + strconv.Itoa(*seq)
+			for {
+				*seq++
+				tempID = "t" + strconv.Itoa(*seq)
+				if !taken[tempID] {
+					taken[tempID] = true // reserve so the next keyless add differs too
+					break
+				}
+			}
 		}
 		return knowledge.Op{Kind: knowledge.OpAdd, TempID: tempID, Parent: e.Parent, Content: content}, true
 	case knowledge.OpEdit:
@@ -80,7 +96,9 @@ func (e editOp) toOp(seq *int) (knowledge.Op, bool) {
 		}
 		return knowledge.Op{Kind: knowledge.OpEdit, BlockID: knowledge.ID(e.BlockID), Content: content}, true
 	case knowledge.OpMove:
-		if e.BlockID == "" || e.Parent == "" {
+		// An empty parent is the topic root, which the assembler supports; only a
+		// missing block_id (nothing to move) is invalid.
+		if e.BlockID == "" {
 			return knowledge.Op{}, false
 		}
 		return knowledge.Op{Kind: knowledge.OpMove, BlockID: knowledge.ID(e.BlockID), Parent: e.Parent}, true
@@ -94,9 +112,11 @@ func (e editOp) toOp(seq *int) (knowledge.Op, bool) {
 	}
 }
 
-// firstJSONArray scans for the first '[' that decodes into a JSON array of edit
-// ops, ignoring markdown fences, prose and trailing text around it. A bracket
-// that does not begin a well-formed array (prose like "step [1]") is skipped.
+// firstJSONArray scans for the first '[' that decodes into a non-empty JSON
+// array of edit ops, ignoring markdown fences, prose and trailing text around
+// it. A bracket that does not begin a well-formed array (prose like "step [1]")
+// is skipped, and so is an empty "[]" so it cannot shadow the real array later
+// in the reply.
 func firstJSONArray(raw []byte) ([]editOp, bool) {
 	for i := range raw {
 		if raw[i] != '[' {
@@ -104,6 +124,9 @@ func firstJSONArray(raw []byte) ([]editOp, bool) {
 		}
 		var edits []editOp
 		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&edits) != nil {
+			continue
+		}
+		if len(edits) == 0 {
 			continue
 		}
 		return edits, true

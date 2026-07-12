@@ -17,5 +17,5 @@ fences. Each operation is one of:
 
 - Use "block_id" for an existing block from the list above.
 - Give each new block a "temp_id" so later operations can reference it.
-- "parent" empty means the topic root; a move must name a destination parent.
+- "parent" empty means the topic root, for an add or a move alike.
 - Return an empty array [] if the command needs no change.
