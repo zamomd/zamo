@@ -125,6 +125,161 @@ func TestApplyProposalDeleteWithChildFails(t *testing.T) {
 	}
 }
 
+func TestApplyProposalCreatesLink(t *testing.T) {
+	// A resolved link between two existing blocks lands in the edges table. The
+	// domain (assemble) emits OpLink, so storage must apply it — the schema has an
+	// edges table for exactly this.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
+		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "example"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	savePending(t, repo, "01LINK", knowledge.SourceMCP)
+	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("link apply: %v", err)
+	}
+	var relation string
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT relation FROM edges WHERE from_id = '01FROM' AND to_id = '01TO'`).Scan(&relation); err != nil {
+		t.Fatalf("read edge: %v", err)
+	}
+	if relation != string(knowledge.RelationExample) {
+		t.Errorf("edge relation = %q, want example", relation)
+	}
+}
+
+func TestApplyProposalLinkDefaultsRelation(t *testing.T) {
+	// A link op that leaves Relation unset defaults to "related" — the schema's
+	// CHECK forbids an empty relation, so the domain's default must be materialized.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "a"},
+		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "b"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	savePending(t, repo, "01LINK", knowledge.SourceMCP)
+	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO"},
+	}); err != nil {
+		t.Fatalf("link apply: %v", err)
+	}
+	var relation string
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT relation FROM edges WHERE from_id = '01FROM' AND to_id = '01TO'`).Scan(&relation); err != nil {
+		t.Fatalf("read edge: %v", err)
+	}
+	if relation != string(knowledge.RelationRelated) {
+		t.Errorf("default relation = %q, want related", relation)
+	}
+}
+
+func TestApplyProposalLinkStaleEndpoint(t *testing.T) {
+	// A link whose endpoint block vanished is stale, like any op onto a gone
+	// target: fail with ErrStale (not a raw foreign-key error) and roll back.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	savePending(t, repo, "01LINK", knowledge.SourceMCP)
+	err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01FROM", To: "01GONE", Relation: knowledge.RelationRelated},
+	})
+	if !errors.Is(err, knowledge.ErrStale) {
+		t.Fatalf("link to a vanished endpoint: got %v, want ErrStale", err)
+	}
+}
+
+func TestApplyProposalMoveIntoOwnSubtreeFails(t *testing.T) {
+	// Moving a block under its own existing descendant would collapse the tree
+	// into a detached ring of parent pointers. assemble cannot see the existing
+	// tree, so storage rejects it with ErrCycle and rolls back.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "01CHILD", Parent: "01ROOT", Content: "Child"},
+		{Kind: knowledge.OpAdd, BlockID: "01GC", Parent: "01CHILD", Content: "Grandchild"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
+	err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "01ROOT", Parent: "01GC"},
+	})
+	if !errors.Is(err, knowledge.ErrCycle) {
+		t.Fatalf("move into own subtree: got %v, want ErrCycle", err)
+	}
+	// Rolled back: the root stays at the top and the proposal stays pending.
+	if parent, _, _ := blockRow(t, repo, "01ROOT"); parent != "" {
+		t.Errorf("root reparented despite the cycle: parent=%q", parent)
+	}
+	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != "01MOVE" {
+		t.Errorf("proposal not left pending after cycle: %+v", pending)
+	}
+}
+
+func TestApplyProposalSelfMoveFails(t *testing.T) {
+	// A block moved under itself is a one-node ring — also ErrCycle.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01BLK", Content: "block"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
+	err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "01BLK", Parent: "01BLK"},
+	})
+	if !errors.Is(err, knowledge.ErrCycle) {
+		t.Fatalf("self-move: got %v, want ErrCycle", err)
+	}
+}
+
+func TestApplyProposalMoveOntoSiblingSucceeds(t *testing.T) {
+	// A legitimate reparent onto a block outside the moved subtree is not a cycle.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "01A", Parent: "01ROOT", Content: "A"},
+		{Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ROOT", Content: "B"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
+	if err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "01A", Parent: "01B"},
+	}); err != nil {
+		t.Fatalf("legit move rejected: %v", err)
+	}
+	if parent, _, _ := blockRow(t, repo, "01A"); parent != "01B" {
+		t.Errorf("A parent after move = %q, want 01B", parent)
+	}
+}
+
 func TestApplyProposalStaleTarget(t *testing.T) {
 	// edit/move/delete each target a block that no longer exists (a concurrent
 	// apply removed it). The proposal is stale and must fail with ErrStale, not

@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -54,7 +55,30 @@ func (s *Service) PendingProposals(ctx context.Context) ([]Proposal, error) {
 // into Proposal.Ops; operations depending on removed ones are dropped
 // in cascade), then storage applies them in a single transaction.
 func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) error {
-	return ErrNotImplemented
+	pending, err := s.repo.ListProposals(ctx, StatusPending)
+	if err != nil {
+		return err
+	}
+	// Only a pending proposal can be applied; a decided or unknown id is not in
+	// this queue. Storage re-checks under the write lock, so this read need not be
+	// transactional.
+	var p Proposal
+	found := false
+	for _, cand := range pending {
+		if cand.ID == id {
+			p, found = cand, true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("proposal %s: %w", id, ErrNotPending)
+	}
+
+	ops, err := assemble(p, selected, s.newID)
+	if err != nil {
+		return err
+	}
+	return s.repo.ApplyProposal(ctx, id, ops)
 }
 
 // RejectProposal declines a pending proposal; nothing reaches the base.

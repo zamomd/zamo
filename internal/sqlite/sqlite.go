@@ -249,6 +249,8 @@ func applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.
 		return applyMove(ctx, tx, op, now)
 	case knowledge.OpDelete:
 		return applyDelete(ctx, tx, op)
+	case knowledge.OpLink:
+		return applyLink(ctx, tx, op, now)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
@@ -318,9 +320,13 @@ func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 	return affectedOne(res, op.Kind, op.BlockID)
 }
 
-// applyMove reparents a block, appending it after its new siblings.
+// applyMove reparents a block, appending it after its new siblings. It refuses
+// a move into the block's own subtree (see rejectMoveCycle) before writing.
 func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
+		return err
+	}
+	if err := rejectMoveCycle(ctx, tx, op); err != nil {
 		return err
 	}
 	var parent any
@@ -340,6 +346,74 @@ func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return affectedOne(res, op.Kind, op.BlockID)
+}
+
+// rejectMoveCycle returns ErrCycle when reparenting op.BlockID under op.Parent
+// would place the block inside its own subtree. It walks the ancestor chain of
+// the new parent (the parent itself is the seed) up through parent_id; reaching
+// the moved block means the block is an ancestor-or-self of its new parent — a
+// ring. A move to a topic root (empty parent) can never cycle.
+func rejectMoveCycle(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
+	if op.Parent == "" {
+		return nil
+	}
+	var cycle bool
+	if err := tx.QueryRowContext(ctx,
+		`WITH RECURSIVE ancestors(id) AS (
+		     SELECT ?
+		     UNION ALL
+		     SELECT b.parent_id FROM blocks b JOIN ancestors a ON b.id = a.id
+		     WHERE b.parent_id IS NOT NULL
+		 )
+		 SELECT EXISTS(SELECT 1 FROM ancestors WHERE id = ?)`,
+		string(op.Parent), string(op.BlockID)).Scan(&cycle); err != nil {
+		return fmt.Errorf("apply move %s: cycle check: %w", op.BlockID, translate(err))
+	}
+	if cycle {
+		return fmt.Errorf("apply move %s under %s: %w", op.BlockID, op.Parent, knowledge.ErrCycle)
+	}
+	return nil
+}
+
+// requireBlock returns ErrStale when a referenced block is absent — the same
+// "base moved" signal a vanished parent gives, so callers branch on ErrStale
+// instead of a raw foreign-key error. An empty id (no reference) is fine.
+func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id string) error {
+	if id == "" {
+		return nil
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("apply %s: block %s: %w", kind, id, translate(err))
+	}
+	if !exists {
+		return fmt.Errorf("apply %s: block %s: %w", kind, id, knowledge.ErrStale)
+	}
+	return nil
+}
+
+// applyLink records a non-hierarchical edge between two existing blocks. Either
+// endpoint gone maps to ErrStale (the base moved), not a raw foreign-key error;
+// the relation defaults to "related" when the op leaves it unset, matching the
+// domain's default and the schema's CHECK.
+func applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+	if err := requireBlock(ctx, tx, op.Kind, op.From); err != nil {
+		return err
+	}
+	if err := requireBlock(ctx, tx, op.Kind, op.To); err != nil {
+		return err
+	}
+	relation := op.Relation
+	if relation == "" {
+		relation = knowledge.RelationRelated
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO edges (from_id, to_id, relation, created_at) VALUES (?, ?, ?, ?)`,
+		op.From, op.To, string(relation), now); err != nil {
+		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
+	}
+	return nil
 }
 
 // applyDelete removes a block. The schema has no ON DELETE CASCADE, so a block
