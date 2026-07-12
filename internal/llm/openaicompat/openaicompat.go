@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
@@ -38,10 +39,12 @@ type Client struct {
 
 var _ knowledge.LLMClient = (*Client)(nil)
 
-// New creates a Client. apiKey may be empty for local providers.
+// New creates a Client. apiKey may be empty for local providers. A trailing
+// slash on baseURL is trimmed so a hand-edited ".../v1/" config does not become
+// ".../v1//chat/completions" and 404.
 func New(baseURL, apiKey, model string) *Client {
 	return &Client{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		model:   model,
 		http:    &http.Client{Timeout: 5 * time.Minute},
@@ -54,6 +57,10 @@ type chatRequest struct {
 	Messages  []chatTurn `json:"messages"`
 }
 
+// chatTurn is one message. Content is read as a plain string — the common
+// dialect; a provider that returns it as an array of parts decodes to empty and
+// surfaces as a bad response, which is acceptable for the lowest-common-
+// denominator contract this package targets.
 type chatTurn struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -142,11 +149,13 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		// own text failing to parse (ParseOps, downstream) is a bad response.
 		return "", fmt.Errorf("%w: response is not a chat-completions envelope", knowledge.ErrLLMUnavailable)
 	}
-	var text bytes.Buffer
-	for _, choice := range *parsed.Choices {
-		text.WriteString(choice.Message.Content)
+	// The answer is the first choice; further choices are alternative completions,
+	// never continuations, so they are not concatenated. An empty choice list
+	// yields empty text, which ParseOps reports as a bad response.
+	if choices := *parsed.Choices; len(choices) > 0 {
+		return choices[0].Message.Content, nil
 	}
-	return text.String(), nil
+	return "", nil
 }
 
 // statusError turns a non-2xx response into ErrLLMUnavailable, folding in the
