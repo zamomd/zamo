@@ -26,12 +26,12 @@ const untitledSlug = "untitled"
 // overwritten. Content is assumed to be clean markdown with no service markup.
 func RenderMarkdown(subtrees [][]Block) []ExportFile {
 	files := make([]ExportFile, 0, len(subtrees))
-	used := make(map[string]int, len(subtrees))
+	taken := make(map[string]bool, len(subtrees))
 	for _, sub := range subtrees {
 		if len(sub) == 0 {
 			continue
 		}
-		name := uniqueName(topicSlug(sub[0].Content), used)
+		name := uniqueName(topicSlug(sub[0].Content), taken)
 		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub)})
 	}
 	return files
@@ -83,16 +83,19 @@ func topicSlug(content string) string {
 	return b.String()
 }
 
-// uniqueName appends the ".md" extension and disambiguates a repeated slug with
-// a numeric suffix (name.md, name-2.md, name-3.md …). An empty slug falls back
-// to a fixed base first, so the numbering applies to the fallback too.
-func uniqueName(slug string, used map[string]int) string {
+// uniqueName appends the ".md" extension and disambiguates against names
+// already taken with a numeric suffix (name.md, name-2.md, name-3.md …). It
+// checks the final filename, not the base slug, so a suffixed name can never
+// collide with another topic's base name and overwrite its file. An empty slug
+// falls back to a fixed base first.
+func uniqueName(slug string, taken map[string]bool) string {
 	if slug == "" {
 		slug = untitledSlug
 	}
-	used[slug]++
-	if n := used[slug]; n > 1 {
-		return slug + "-" + strconv.Itoa(n) + ".md"
+	name := slug + ".md"
+	for n := 2; taken[name]; n++ {
+		name = slug + "-" + strconv.Itoa(n) + ".md"
 	}
-	return slug + ".md"
+	taken[name] = true
+	return name
 }
