@@ -38,8 +38,18 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Proposal
 
 // ProposeEdit turns a user's text command ("split this block into more
 // detail") into a structure-edit proposal — through the same review queue.
+// The scope subtree is read from storage and handed to the model as context;
+// the resulting operations are queued as a pending gui_edit proposal.
 func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	blocks, err := s.repo.GetSubtree(ctx, scope)
+	if err != nil {
+		return Proposal{}, err
+	}
+	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
+	if err != nil {
+		return Proposal{}, err
+	}
+	return s.SubmitProposal(ctx, SourceGUIEdit, instruction, ops)
 }
 
 // SubmitProposal puts ready-made operations into the review queue.
