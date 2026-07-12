@@ -49,14 +49,23 @@ func TestParseEditOpsReadsArrayAmidProse(t *testing.T) {
 }
 
 func TestParseEditOpsGeneratesTempIDForAdd(t *testing.T) {
-	// An add without a temp_id still needs one so later ops (and the assembler)
-	// can reference the new block.
-	ops, err := ParseEditOps([]byte(`[{"op":"add","parent":"01A","content":"x"}]`))
+	// Adds without a temp_id still need one so later ops (and the assembler) can
+	// reference the new block. Generated ids count up (t1, t2), stay distinct,
+	// and do not clobber an id the model did supply.
+	ops, err := ParseEditOps([]byte(`[
+		{"op":"add","parent":"01A","content":"first"},
+		{"op":"add","temp_id":"keep","parent":"01A","content":"given"},
+		{"op":"add","parent":"01A","content":"second"}
+	]`))
 	if err != nil {
 		t.Fatalf("ParseEditOps: %v", err)
 	}
-	if len(ops) != 1 || ops[0].TempID == "" {
-		t.Errorf("ops = %+v, want a generated temp id", ops)
+	if len(ops) != 3 {
+		t.Fatalf("got %d ops, want 3", len(ops))
+	}
+	if ops[0].TempID != "t1" || ops[1].TempID != "keep" || ops[2].TempID != "t2" {
+		t.Errorf("temp ids = %q,%q,%q, want t1, keep, t2",
+			ops[0].TempID, ops[1].TempID, ops[2].TempID)
 	}
 }
 
