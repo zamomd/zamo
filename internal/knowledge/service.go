@@ -29,7 +29,11 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, now func() ti
 // ExpandTopic expands a topic into a block tree and puts the result into
 // the review queue.
 func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	ops, err := s.llm.GenerateTree(ctx, topic, hint)
+	if err != nil {
+		return Proposal{}, err
+	}
+	return s.SubmitProposal(ctx, SourceGUIExpand, topic, ops)
 }
 
 // ProposeEdit turns a user's text command ("split this block into more
@@ -41,7 +45,14 @@ func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string)
 // SubmitProposal puts ready-made operations into the review queue.
 // The entry point for sources that bring their own operations.
 func (s *Service) SubmitProposal(ctx context.Context, source Source, title string, ops []Op) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	p, err := NewProposal(s.newID(), source, title, ops, s.now())
+	if err != nil {
+		return Proposal{}, err
+	}
+	if err := s.repo.SaveProposal(ctx, p); err != nil {
+		return Proposal{}, err
+	}
+	return p, nil
 }
 
 // PendingProposals returns the review queue: proposals awaiting
