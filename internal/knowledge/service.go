@@ -123,9 +123,13 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
 // rendered as nested lists (RenderMarkdown). It reads every topic's full
-// subtree, renders the set, and writes the files under dir. The portability
-// guarantee — the base is never locked in our format — so any read error aborts
-// the export rather than writing a partial, misleading tree.
+// subtree, renders the set, then writes the files under dir. All reads complete
+// before any write, so a read failure aborts with nothing written; a write
+// failure part-way (disk full, permissions) can still leave earlier files on
+// disk. Cancellation is honoured between writes.
+//
+// ponytail: one GetSubtree query per topic (N+1). Fine for a personal base;
+// upgrade to a single bulk "all subtrees" read if export ever gets slow.
 func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 	topics, err := s.repo.GetTopics(ctx)
 	if err != nil {
@@ -145,6 +149,9 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 	}
 
 	for _, f := range RenderMarkdown(subtrees) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
 			return err
 		}
