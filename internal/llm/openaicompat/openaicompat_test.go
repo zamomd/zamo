@@ -122,8 +122,10 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 			wantMsg: "invalid api key",
 		},
 		{
-			name:    "non-2xx boundary",
-			handler: respond(http.StatusMultipleChoices, apiErrBody("choose")),
+			// The 2xx boundary: even a 300 carrying a valid-looking envelope is
+			// not success and must not be parsed into a tree.
+			name:    "3xx is not success",
+			handler: respond(http.StatusMultipleChoices, chatReply(tree)),
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
