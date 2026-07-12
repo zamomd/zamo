@@ -23,6 +23,14 @@ export function ApplyProposal(id: knowledge$0.ID, selected: number[] | null): $C
 }
 
 /**
+ * EditBlockContent passes the call to knowledge.Service. A manual edit by the
+ * owner applies directly, without the review queue.
+ */
+export function EditBlockContent(id: knowledge$0.ID, content: string): $CancellablePromise<void> {
+    return $Call.ByID(2403512003, id, content);
+}
+
+/**
  * ExpandTopic passes the call to knowledge.Service.
  */
 export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Proposal> {

@@ -40,3 +40,9 @@ func (a *App) ApplyProposal(ctx context.Context, id knowledge.ID, selected []int
 func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
 	return a.svc.GetSubtree(ctx, root)
 }
+
+// EditBlockContent passes the call to knowledge.Service. A manual edit by the
+// owner applies directly, without the review queue.
+func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
+	return a.svc.EditBlockContent(ctx, id, content)
+}
