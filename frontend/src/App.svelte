@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import type { Block } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 
@@ -77,8 +78,10 @@
 		}
 	}
 
-	reload().catch((err: unknown) => {
-		error = String(err);
+	onMount(() => {
+		reload().catch((err: unknown) => {
+			error = String(err);
+		});
 	});
 </script>
 
