@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -119,8 +121,33 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 	return s.repo.EditBlockContent(ctx, id, content)
 }
 
-// ExportMarkdown exports the base: one markdown file per topic,
-// block nesting rendered as nested lists.
+// ExportMarkdown exports the base: one markdown file per topic, block nesting
+// rendered as nested lists (RenderMarkdown). It reads every topic's full
+// subtree, renders the set, and writes the files under dir. The portability
+// guarantee — the base is never locked in our format — so any read error aborts
+// the export rather than writing a partial, misleading tree.
 func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
-	return ErrNotImplemented
+	topics, err := s.repo.GetTopics(ctx)
+	if err != nil {
+		return err
+	}
+
+	var subtrees [][]Block
+	for _, t := range topics {
+		if !t.IsTopic() { // GetTopics also returns first-level children; skip them
+			continue
+		}
+		sub, err := s.repo.GetSubtree(ctx, t.ID)
+		if err != nil {
+			return err
+		}
+		subtrees = append(subtrees, sub)
+	}
+
+	for _, f := range RenderMarkdown(subtrees) {
+		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
