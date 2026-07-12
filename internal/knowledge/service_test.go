@@ -25,9 +25,9 @@ type fakeRepo struct {
 	saveErr    error
 	saved      *Proposal // the last proposal handed to SaveProposal
 
-	topics     []Block          // what GetTopics returns
+	topics     []Block // what GetTopics returns
 	topicsErr  error
-	subtrees   map[ID][]Block   // per-root subtree GetSubtree returns
+	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
 }
 
