@@ -95,6 +95,42 @@ func TestGenerateTreeWorksWithoutAPIKey(t *testing.T) {
 	}
 }
 
+func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
+	// A base URL with a trailing slash (a common hand-edited config) must not
+	// become ".../v1//chat/completions" and 404 — the local-model footgun.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(tree))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/", "test-key", "llama3")
+	if _, err := c.GenerateTree(t.Context(), "Go contexts", ""); err != nil {
+		t.Fatalf("GenerateTree with trailing slash: %v", err)
+	}
+}
+
+func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
+	// Each choice is an independent alternative completion. The answer is the
+	// first choice; if it is empty the model gave nothing, so a later choice
+	// must not be spliced in to rescue it — that would report a tree the model
+	// did not put first.
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[`+
+			`{"message":{"role":"assistant","content":""}},`+
+			`{"message":{"role":"assistant","content":`+jsonString(tree)+`}}]}`)
+	})
+
+	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
+	if !errors.Is(err, knowledge.ErrLLMBadResponse) {
+		t.Errorf("error = %v, want ErrLLMBadResponse (empty first choice, no splicing)", err)
+	}
+}
+
 func TestGenerateTreeMapsErrors(t *testing.T) {
 	respond := func(status int, body string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
