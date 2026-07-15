@@ -38,10 +38,26 @@ export function ExpandTopic(topic: string, hint: string): $CancellablePromise<kn
 }
 
 /**
+ * ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
+ * directory chosen through the folder picker.
+ */
+export function ExportMarkdown(dir: string): $CancellablePromise<void> {
+    return $Call.ByID(3261496674, dir);
+}
+
+/**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(309124419, root);
+}
+
+/**
+ * ProposeEdit passes the call to knowledge.Service. The frontend supplies the
+ * scope (a block or subtree root) and the user's text command.
+ */
+export function ProposeEdit(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Proposal> {
+    return $Call.ByID(3160651725, scope, instruction);
 }
 
 /**

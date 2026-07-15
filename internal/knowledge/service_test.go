@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -22,10 +24,24 @@ type fakeRepo struct {
 	applyCalls int
 	saveErr    error
 	saved      *Proposal // the last proposal handed to SaveProposal
+
+	topics     []Block // what GetTopics returns
+	topicsErr  error
+	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
+	subtreeErr error
+	gotSubtree ID // the root GetSubtree was asked for
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)         { return nil, nil }
-func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)    { return nil, nil }
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
+
+func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
+	f.gotSubtree = root
+	if f.subtreeErr != nil {
+		return nil, f.subtreeErr
+	}
+	return f.subtrees[root], nil
+}
+
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
 func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
@@ -44,6 +60,11 @@ type fakeLLM struct {
 	tree              []Op
 	treeErr           error
 	gotTopic, gotHint string
+
+	editOps        []Op
+	editErr        error
+	gotScope       []Block
+	gotInstruction string
 }
 
 func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, error) {
@@ -51,8 +72,9 @@ func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, err
 	return l.tree, l.treeErr
 }
 
-func (l *fakeLLM) GenerateEdit(context.Context, []Block, string) ([]Op, error) {
-	return nil, nil
+func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction string) ([]Op, error) {
+	l.gotScope, l.gotInstruction = scope, instruction
+	return l.editOps, l.editErr
 }
 
 func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
@@ -227,5 +249,147 @@ func TestServiceApplyProposalNotPending(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("storage ApplyProposal called %d times, want 0 for a non-pending id", repo.applyCalls)
+	}
+}
+
+func TestServiceProposeEditQueuesProposal(t *testing.T) {
+	scope := []Block{{ID: "01A", Content: "old text"}}
+	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
+	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	svc := NewService(llm, repo, seqIDs(), clockAt(at))
+
+	got, err := svc.ProposeEdit(context.Background(), "01A", "revise this block")
+	if err != nil {
+		t.Fatalf("ProposeEdit: %v", err)
+	}
+	// The scope is read from storage and handed to the model with the command.
+	if repo.gotSubtree != "01A" {
+		t.Errorf("read subtree of %q, want 01A", repo.gotSubtree)
+	}
+	if llm.gotInstruction != "revise this block" || len(llm.gotScope) != 1 || llm.gotScope[0].ID != "01A" {
+		t.Errorf("model got scope %+v / instruction %q, want the scope and command", llm.gotScope, llm.gotInstruction)
+	}
+	// The edit is queued as a pending gui_edit proposal carrying the model's ops.
+	if got.Status != StatusPending || got.Source != SourceGUIEdit {
+		t.Errorf("proposal = %+v, want pending gui_edit", got)
+	}
+	if len(got.Ops) != 1 || got.Ops[0].Kind != OpEdit {
+		t.Errorf("ops = %+v, want the edit from the model", got.Ops)
+	}
+	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
+		t.Errorf("persisted %+v, want the returned proposal %+v", repo.saved, got)
+	}
+}
+
+func TestServiceProposeEditSurfacesLLMError(t *testing.T) {
+	llm := &fakeLLM{editErr: ErrLLMUnavailable}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	if _, err := svc.ProposeEdit(context.Background(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("a proposal was queued despite the LLM failure: %+v", repo.saved)
+	}
+}
+
+func TestServiceProposeEditPropagatesReadError(t *testing.T) {
+	boom := errors.New("db down")
+	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
+	repo := &fakeRepo{subtreeErr: boom}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	_, err := svc.ProposeEdit(context.Background(), "01A", "do a thing")
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error", err)
+	}
+	if llm.gotInstruction != "" {
+		t.Errorf("the model was called despite a read failure")
+	}
+}
+
+func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
+	// A command the model turns into no operations must not queue an empty
+	// proposal; the empty-proposal invariant surfaces instead.
+	llm := &fakeLLM{editOps: nil}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
+	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+
+	if _, err := svc.ProposeEdit(context.Background(), "01A", "do nothing"); !errors.Is(err, ErrEmptyProposal) {
+		t.Errorf("error = %v, want ErrEmptyProposal", err)
+	}
+	if repo.saved != nil {
+		t.Errorf("an empty edit was queued: %+v", repo.saved)
+	}
+}
+
+func TestServiceExportMarkdownWritesOneFilePerTopic(t *testing.T) {
+	// GetTopics returns roots plus their first level; only roots become files,
+	// each carrying its full subtree. A first-level child must not spawn its own
+	// file.
+	repo := &fakeRepo{
+		topics: []Block{
+			blk("t1", "", 0, "# Alpha"),
+			blk("c1", "t1", 0, "child of alpha"),
+			blk("t2", "", 1, "# Beta"),
+		},
+		subtrees: map[ID][]Block{
+			"t1": {blk("t1", "", 0, "# Alpha"), blk("c1", "t1", 0, "child of alpha")},
+			"t2": {blk("t2", "", 1, "# Beta")},
+		},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("ExportMarkdown: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("wrote %d files, want 2 (one per root, not per block)", len(entries))
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "alpha.md"))
+	if err != nil {
+		t.Fatalf("read alpha.md: %v", err)
+	}
+	if want := "- # Alpha\n  - child of alpha\n"; string(got) != want {
+		t.Errorf("alpha.md = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "beta.md")); err != nil {
+		t.Errorf("beta.md missing: %v", err)
+	}
+}
+
+func TestServiceExportMarkdownEmptyBase(t *testing.T) {
+	repo := &fakeRepo{topics: nil}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("empty base must export cleanly, got %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("wrote %d files for an empty base, want 0", len(entries))
+	}
+}
+
+func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
+	boom := errors.New("db down")
+	repo := &fakeRepo{
+		topics:     []Block{blk("t1", "", 0, "# Alpha")},
+		subtreeErr: boom,
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	err := svc.ExportMarkdown(context.Background(), t.TempDir())
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error surfaced", err)
 	}
 }

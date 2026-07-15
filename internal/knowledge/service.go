@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -38,8 +40,18 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Proposal
 
 // ProposeEdit turns a user's text command ("split this block into more
 // detail") into a structure-edit proposal — through the same review queue.
+// The scope subtree is read from storage and handed to the model as context;
+// the resulting operations are queued as a pending gui_edit proposal.
 func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	blocks, err := s.repo.GetSubtree(ctx, scope)
+	if err != nil {
+		return Proposal{}, err
+	}
+	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
+	if err != nil {
+		return Proposal{}, err
+	}
+	return s.SubmitProposal(ctx, SourceGUIEdit, instruction, ops)
 }
 
 // SubmitProposal puts ready-made operations into the review queue.
@@ -119,8 +131,40 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 	return s.repo.EditBlockContent(ctx, id, content)
 }
 
-// ExportMarkdown exports the base: one markdown file per topic,
-// block nesting rendered as nested lists.
+// ExportMarkdown exports the base: one markdown file per topic, block nesting
+// rendered as nested lists (RenderMarkdown). It reads every topic's full
+// subtree, renders the set, then writes the files under dir. All reads complete
+// before any write, so a read failure aborts with nothing written; a write
+// failure part-way (disk full, permissions) can still leave earlier files on
+// disk. Cancellation is honoured between writes.
+//
+// ponytail: one GetSubtree query per topic (N+1). Fine for a personal base;
+// upgrade to a single bulk "all subtrees" read if export ever gets slow.
 func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
-	return ErrNotImplemented
+	topics, err := s.repo.GetTopics(ctx)
+	if err != nil {
+		return err
+	}
+
+	var subtrees [][]Block
+	for _, t := range topics {
+		if !t.IsTopic() { // GetTopics also returns first-level children; skip them
+			continue
+		}
+		sub, err := s.repo.GetSubtree(ctx, t.ID)
+		if err != nil {
+			return err
+		}
+		subtrees = append(subtrees, sub)
+	}
+
+	for _, f := range RenderMarkdown(subtrees) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
