@@ -155,9 +155,38 @@ func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
 	}
 }
 
+func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
+	// [] is the prompt's "no change needed" answer — valid, not a bad response.
+	for name, body := range map[string]string{
+		"bare":   `[]`,
+		"fenced": "```json\n[]\n```",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ops, err := ParseEditOps([]byte(body))
+			if err != nil {
+				t.Fatalf("ParseEditOps: %v", err)
+			}
+			if len(ops) != 0 {
+				t.Errorf("ops = %+v, want none for a no-change reply", ops)
+			}
+		})
+	}
+}
+
+func TestParseEditOpsSkipsForeignArrayShadow(t *testing.T) {
+	// An array with no usable op must not shadow the real one later in the reply.
+	raw := []byte(`Considered [{"id":1}] first. Changes: [{"op":"delete","block_id":"01C"}]`)
+	ops, err := ParseEditOps(raw)
+	if err != nil {
+		t.Fatalf("ParseEditOps: %v", err)
+	}
+	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
+		t.Errorf("ops = %+v, want the real delete, not the foreign array", ops)
+	}
+}
+
 func TestParseEditOpsNoUsableOpsIsBadResponse(t *testing.T) {
 	cases := map[string]string{
-		"empty array":   `[]`,
 		"all invalid":   `[{"op":"edit"},{"op":"nope"}]`,
 		"no json array": "I cannot help with that.",
 		"object only":   `{"content":"not an array"}`,
