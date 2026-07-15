@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
+	go.uber.org/goleak v1.3.0
 	modernc.org/sqlite v1.54.0
 )
 
