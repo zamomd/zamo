@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -23,16 +25,21 @@ type fakeRepo struct {
 	saveErr    error
 	saved      *Proposal // the last proposal handed to SaveProposal
 
-	subtree    []Block // what GetSubtree returns
+	topics     []Block // what GetTopics returns
+	topicsErr  error
+	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return nil, nil }
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
 
 func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 	f.gotSubtree = root
-	return f.subtree, f.subtreeErr
+	if f.subtreeErr != nil {
+		return nil, f.subtreeErr
+	}
+	return f.subtrees[root], nil
 }
 
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
@@ -248,7 +255,7 @@ func TestServiceApplyProposalNotPending(t *testing.T) {
 func TestServiceProposeEditQueuesProposal(t *testing.T) {
 	scope := []Block{{ID: "01A", Content: "old text"}}
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
-	repo := &fakeRepo{subtree: scope}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
 	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	svc := NewService(llm, repo, seqIDs(), clockAt(at))
 
@@ -277,7 +284,7 @@ func TestServiceProposeEditQueuesProposal(t *testing.T) {
 
 func TestServiceProposeEditSurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{editErr: ErrLLMUnavailable}
-	repo := &fakeRepo{subtree: []Block{{ID: "01A", Content: "x"}}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	if _, err := svc.ProposeEdit(context.Background(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
@@ -307,7 +314,7 @@ func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
 	// A command the model turns into no operations must not queue an empty
 	// proposal; the empty-proposal invariant surfaces instead.
 	llm := &fakeLLM{editOps: nil}
-	repo := &fakeRepo{subtree: []Block{{ID: "01A", Content: "x"}}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	if _, err := svc.ProposeEdit(context.Background(), "01A", "do nothing"); !errors.Is(err, ErrEmptyProposal) {
@@ -315,5 +322,74 @@ func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
 	}
 	if repo.saved != nil {
 		t.Errorf("an empty edit was queued: %+v", repo.saved)
+	}
+}
+
+func TestServiceExportMarkdownWritesOneFilePerTopic(t *testing.T) {
+	// GetTopics returns roots plus their first level; only roots become files,
+	// each carrying its full subtree. A first-level child must not spawn its own
+	// file.
+	repo := &fakeRepo{
+		topics: []Block{
+			blk("t1", "", 0, "# Alpha"),
+			blk("c1", "t1", 0, "child of alpha"),
+			blk("t2", "", 1, "# Beta"),
+		},
+		subtrees: map[ID][]Block{
+			"t1": {blk("t1", "", 0, "# Alpha"), blk("c1", "t1", 0, "child of alpha")},
+			"t2": {blk("t2", "", 1, "# Beta")},
+		},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("ExportMarkdown: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("wrote %d files, want 2 (one per root, not per block)", len(entries))
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "alpha.md"))
+	if err != nil {
+		t.Fatalf("read alpha.md: %v", err)
+	}
+	if want := "- # Alpha\n  - child of alpha\n"; string(got) != want {
+		t.Errorf("alpha.md = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "beta.md")); err != nil {
+		t.Errorf("beta.md missing: %v", err)
+	}
+}
+
+func TestServiceExportMarkdownEmptyBase(t *testing.T) {
+	repo := &fakeRepo{topics: nil}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("empty base must export cleanly, got %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("wrote %d files for an empty base, want 0", len(entries))
+	}
+}
+
+func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
+	boom := errors.New("db down")
+	repo := &fakeRepo{
+		topics:     []Block{blk("t1", "", 0, "# Alpha")},
+		subtreeErr: boom,
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	err := svc.ExportMarkdown(context.Background(), t.TempDir())
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error surfaced", err)
 	}
 }

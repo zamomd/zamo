@@ -1,6 +1,10 @@
 package knowledge
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Source says where a proposal came from. The set is open: the scheduler,
 // chat import and other future inputs will add their own values.
@@ -61,9 +65,28 @@ type Op struct {
 // pending — only an explicit decision moves it on — and must carry at least one
 // operation; both invariants are enforced here rather than trusted to each call
 // site. An op-less proposal is rejected with ErrEmptyProposal.
+//
+// Shape is validated here too: a proposal that could never apply must not
+// reach the review queue, whatever source produced it. Checks against the
+// live base (parents, cycles) stay in assemble/apply.
 func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Time) (Proposal, error) {
 	if len(ops) == 0 {
 		return Proposal{}, ErrEmptyProposal
+	}
+	if strings.TrimSpace(title) == "" {
+		return Proposal{}, fmt.Errorf("empty title: %w", ErrInvalidProposal)
+	}
+	tempIDs := make(map[string]bool)
+	for i, op := range ops {
+		if err := op.validate(); err != nil {
+			return Proposal{}, fmt.Errorf("op %d: %w", i, err)
+		}
+		if op.Kind == OpAdd {
+			if tempIDs[op.TempID] {
+				return Proposal{}, fmt.Errorf("op %d: duplicate temp id %q: %w", i, op.TempID, ErrInvalidProposal)
+			}
+			tempIDs[op.TempID] = true
+		}
 	}
 	return Proposal{
 		ID:        id,
@@ -73,6 +96,29 @@ func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Ti
 		Ops:       ops,
 		CreatedAt: createdAt,
 	}, nil
+}
+
+// validate checks the op's shape: the kind is known and its required fields
+// are present. Existence and cycle checks depend on the base's state and
+// belong to apply.
+func (op Op) validate() error {
+	switch op.Kind {
+	case OpAdd:
+		if op.TempID == "" {
+			return fmt.Errorf("add op with empty temp id: %w", ErrInvalidProposal)
+		}
+	case OpEdit, OpMove, OpDelete:
+		if op.BlockID == "" {
+			return fmt.Errorf("%s op with empty block id: %w", op.Kind, ErrInvalidProposal)
+		}
+	case OpLink:
+		if op.From == "" || op.To == "" {
+			return fmt.Errorf("link op with empty from/to: %w", ErrInvalidProposal)
+		}
+	default:
+		return fmt.Errorf("unknown op kind %q: %w", op.Kind, ErrInvalidProposal)
+	}
+	return nil
 }
 
 // Proposal is a change proposal: the only way any AI (from any input)

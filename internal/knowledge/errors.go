@@ -24,9 +24,9 @@ var (
 	// that has already been decided.
 	ErrNotPending = errors.New("proposal already decided")
 
-	// ErrInvalidProposal reports a proposal that cannot be assembled: an add
-	// with no temp id, or two adds sharing one. It signals malformed input from
-	// an untrusted source, caught before anything reaches storage.
+	// ErrInvalidProposal reports a proposal whose shape is broken: an empty
+	// title, an unknown op kind, or an op missing a required field. Malformed
+	// input from an untrusted source, refused before it reaches the queue.
 	ErrInvalidProposal = errors.New("proposal is malformed")
 
 	// ErrEmptyProposal reports an attempt to create a proposal that carries
