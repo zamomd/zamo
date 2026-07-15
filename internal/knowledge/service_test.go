@@ -30,6 +30,22 @@ type fakeRepo struct {
 	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
+
+	blocks    map[ID]Block // what GetBlocks serves
+	blocksErr error
+}
+
+func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {
+	if f.blocksErr != nil {
+		return nil, f.blocksErr
+	}
+	out := make(map[ID]Block, len(ids))
+	for _, id := range ids {
+		if b, ok := f.blocks[id]; ok {
+			out[id] = b
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
