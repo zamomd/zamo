@@ -51,14 +51,24 @@ func ParseEditOps(raw []byte) ([]knowledge.Op, error) {
 	}
 
 	ops := make([]knowledge.Op, 0, len(edits))
+	emitted := make(map[string]bool) // temp ids already given to an add
 	seq := 0
 	for _, e := range edits {
 		if len(ops) >= maxBlocks {
 			break
 		}
-		if op, ok := e.toOp(&seq, taken); ok {
-			ops = append(ops, op)
+		op, ok := e.toOp(&seq, taken)
+		if !ok {
+			continue
 		}
+		// A repeated temp id would make the proposal unappliable; drop the duplicate.
+		if op.Kind == knowledge.OpAdd {
+			if emitted[op.TempID] {
+				continue
+			}
+			emitted[op.TempID] = true
+		}
+		ops = append(ops, op)
 	}
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("%w: reply had no usable operations", knowledge.ErrLLMBadResponse)

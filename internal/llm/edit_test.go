@@ -126,6 +126,22 @@ func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
 	}
 }
 
+func TestParseEditOpsDropsDuplicateSuppliedTempID(t *testing.T) {
+	// The later of two adds sharing a temp id is dropped like any other
+	// invalid op; the rest of the reply stays usable.
+	ops, err := ParseEditOps([]byte(`[
+		{"op":"add","temp_id":"t1","parent":"01A","content":"first"},
+		{"op":"add","temp_id":"t1","parent":"01A","content":"dup"},
+		{"op":"delete","block_id":"01B"}
+	]`))
+	if err != nil {
+		t.Fatalf("ParseEditOps: %v", err)
+	}
+	if len(ops) != 2 || ops[0].Content != "first" || ops[1].Kind != knowledge.OpDelete {
+		t.Errorf("ops = %+v, want the first t1 add and the delete only", ops)
+	}
+}
+
 func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
 	// An empty array earlier in the reply must not shadow the real one, the way
 	// firstJSONObject skips a bare {}.
