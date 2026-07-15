@@ -175,11 +175,26 @@ func statusError(status int, body []byte) error {
 	return fmt.Errorf("%w: HTTP %d", knowledge.ErrLLMUnavailable, status)
 }
 
-// GenerateEdit implements knowledge.LLMClient.
+// GenerateEdit implements knowledge.LLMClient. It renders the edit prompt for
+// the scope and instruction, calls the Messages API, and parses the reply into
+// restructuring operations. Error mapping matches GenerateTree: transport, key
+// and HTTP-status failures are ErrLLMUnavailable; a reply that will not parse is
+// ErrLLMBadResponse (via ParseEditOps).
 func (c *Client) GenerateEdit(
 	ctx context.Context,
 	scope []knowledge.Block,
 	instruction string,
 ) ([]knowledge.Op, error) {
-	return nil, knowledge.ErrNotImplemented
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
+	}
+	prompt, err := llm.EditPrompt(scope, instruction)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	text, err := c.complete(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return llm.ParseEditOps([]byte(text))
 }
