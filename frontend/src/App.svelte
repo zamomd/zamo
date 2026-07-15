@@ -14,7 +14,7 @@
 	}
 
 	function queued(): void {
-		refreshCount();
+		refreshCount().catch(() => {});
 		tab = "review";
 	}
 

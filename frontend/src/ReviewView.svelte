@@ -20,24 +20,41 @@
 	let error = $state("");
 	let busy = $state(false);
 
-	async function loadQueue(preferID?: string): Promise<void> {
-		queue = (await App.PendingProposals()) ?? [];
+	// Monotonic generation counter guarding against out-of-order async
+	// resolution: open()/toggle()/switchProposal()/loadQueue() each await a
+	// Wails call, and overlapping calls (key-repeat on n/p, fast Space) could
+	// otherwise let the last-resolving call win over the last-issued one.
+	// Plain let (not $state) — it's a coordination token, not render state.
+	let seq = 0;
+
+	// gen lets a caller that already claimed a generation (applySelected,
+	// rejectCurrent, switchProposal) hand it down instead of minting a new
+	// one, so the whole chain of awaits is invalidated together.
+	async function loadQueue(preferID?: string, gen?: number): Promise<void> {
+		const my = gen ?? ++seq;
+		const q = (await App.PendingProposals()) ?? [];
+		if (my !== seq) return;
+		queue = q;
 		if (queue.length === 0) {
 			review = null;
 			return;
 		}
 		const i = preferID ? queue.findIndex((p) => p.ID === preferID) : -1;
 		current = i >= 0 ? i : Math.min(current, queue.length - 1);
-		await open(queue[current].ID);
+		await open(queue[current].ID, my);
 	}
 
 	// open loads one proposal's annotated view. Stale ops start deselected.
-	async function open(id: string): Promise<void> {
+	async function open(id: string, gen?: number): Promise<void> {
+		const my = gen ?? ++seq;
 		const r = await App.ReviewProposal(id);
+		if (my !== seq) return;
 		review = r;
 		const ops = r.Ops ?? [];
 		selected = ops.map((_, i) => i).filter((i) => !ops[i].Stale);
-		effective = (await App.EffectiveSelection(r.Proposal.Ops ?? [], selected)) ?? [];
+		const eff = (await App.EffectiveSelection(r.Proposal.Ops ?? [], selected)) ?? [];
+		if (my !== seq) return;
+		effective = eff;
 		cursor = 0;
 		openDiffs = new Set();
 		notice = "";
@@ -45,28 +62,43 @@
 
 	async function toggle(i: number): Promise<void> {
 		if (!review) return;
+		const my = ++seq;
 		selected = selected.includes(i) ? selected.filter((x) => x !== i) : [...selected, i];
-		effective = (await App.EffectiveSelection(review.Proposal.Ops ?? [], selected)) ?? [];
+		const eff = (await App.EffectiveSelection(review.Proposal.Ops ?? [], selected)) ?? [];
+		if (my !== seq) return;
+		effective = eff;
 	}
 
 	async function applySelected(): Promise<void> {
 		if (!review || busy || effective.length === 0) return;
 		busy = true;
+		const my = ++seq;
 		error = "";
+		// Pick the neighbor to land on before the apply mutates the queue:
+		// the next proposal, else the previous, else none (loadQueue falls
+		// back to a clamped index).
+		const nextID = queue[current + 1]?.ID ?? queue[current - 1]?.ID;
 		try {
 			await App.ApplyProposal(review.Proposal.ID, selected);
-			await loadQueue();
+			if (my !== seq) return;
+			await loadQueue(nextID, my);
 			onchanged();
 			notice = "applied";
 		} catch (err: unknown) {
+			if (my !== seq) return;
 			const msg = String(err);
+			// The Wails JS runtime surfaces a rejected Go call by throwing the
+			// raw error-body text as the message (undocumented behavior), so
+			// these substrings must keep matching the Go domain error text in
+			// internal/knowledge/errors.go: "proposal is stale" and "proposal
+			// already decided".
 			if (msg.includes("stale")) {
 				// The base moved under the proposal: re-read, fresh flags deselect
 				// what vanished.
-				await open(review.Proposal.ID);
+				await open(review.Proposal.ID, my);
 				notice = "base changed — check again";
 			} else if (msg.includes("already decided")) {
-				await loadQueue();
+				await loadQueue(nextID, my);
 				onchanged();
 			} else {
 				error = msg;
@@ -79,13 +111,19 @@
 	async function rejectCurrent(): Promise<void> {
 		if (!review || busy) return;
 		busy = true;
+		const my = ++seq;
 		error = "";
+		// Same neighbor-selection logic as applySelected: compute before the
+		// reject call mutates the queue.
+		const nextID = queue[current + 1]?.ID ?? queue[current - 1]?.ID;
 		try {
 			await App.RejectProposal(review.Proposal.ID);
-			await loadQueue();
+			if (my !== seq) return;
+			await loadQueue(nextID, my);
 			onchanged();
 			notice = "rejected";
 		} catch (err: unknown) {
+			if (my !== seq) return;
 			error = String(err);
 		} finally {
 			busy = false;
@@ -99,8 +137,9 @@
 
 	async function switchProposal(delta: number): Promise<void> {
 		if (queue.length === 0) return;
+		const my = ++seq;
 		current = Math.min(queue.length - 1, Math.max(0, current + delta));
-		await open(queue[current].ID);
+		await open(queue[current].ID, my);
 	}
 
 	function toggleDiff(i: number): void {
@@ -113,7 +152,9 @@
 	// Keyboard: the issue's speed requirement. Inactive while typing in a field.
 	function onKey(e: KeyboardEvent): void {
 		const t = e.target as HTMLElement;
-		if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+		// Let native activation win for anything focusable/interactive (e.g. Tab
+		// onto the Reject button, then Enter must click it, not applySelected).
+		if (t.closest("input, textarea, button, select, [contenteditable]")) return;
 		switch (e.key) {
 			case "j":
 			case "ArrowDown":
