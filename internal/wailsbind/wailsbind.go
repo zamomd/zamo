@@ -47,6 +47,12 @@ func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Bl
 	return a.svc.GetSubtree(ctx, root)
 }
 
+// EditBlockContent passes the call to knowledge.Service. A manual edit by the
+// owner applies directly, without the review queue.
+func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
+	return a.svc.EditBlockContent(ctx, id, content)
+}
+
 // ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
 // directory chosen through the folder picker.
 func (a *App) ExportMarkdown(ctx context.Context, dir string) error {

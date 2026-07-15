@@ -15,6 +15,11 @@
 	let busy: boolean = $state(false);
 	let forest: TreeNode[] = $state([]);
 
+	// Inline block editing: the owner's own edits apply straight to the base,
+	// bypassing the review queue (review guards against AI, not the owner).
+	let editingID: string | null = $state(null);
+	let editText: string = $state("");
+
 	// buildTree turns a pre-ordered flat subtree into a nested node. The root is
 	// the block whose ParentID is empty; every other block is attached to its
 	// parent in slice order, which GetSubtree already sorts by Position.
@@ -78,6 +83,41 @@
 		}
 	}
 
+	function startEdit(block: Block): void {
+		// Ignore while busy or while another block is already being edited, so an
+		// in-progress edit is never silently discarded by switching blocks.
+		if (busy || editingID !== null) {
+			return;
+		}
+		editingID = block.ID;
+		editText = block.Content;
+	}
+
+	function cancelEdit(): void {
+		editingID = null;
+		editText = "";
+	}
+
+	// saveEdit writes the block's new content directly, then re-reads the base.
+	async function saveEdit(): Promise<void> {
+		if (editingID === null || busy) {
+			return;
+		}
+		busy = true;
+		error = "";
+		try {
+			await App.EditBlockContent(editingID, editText);
+			await reload();
+			status = "saved edit";
+			cancelEdit();
+		} catch (err: unknown) {
+			error = String(err);
+			status = "";
+		} finally {
+			busy = false;
+		}
+	}
+
 	onMount(() => {
 		reload().catch((err: unknown) => {
 			error = String(err);
@@ -87,7 +127,22 @@
 
 {#snippet treeNode(node: TreeNode)}
 	<li>
-		<code>{node.block.Content}</code>
+		{#if editingID === node.block.ID}
+			<textarea aria-label="block content" bind:value={editText} disabled={busy}></textarea>
+			<button type="button" onclick={saveEdit} disabled={busy || editText.trim() === ""}>
+				Save
+			</button>
+			<button type="button" onclick={cancelEdit} disabled={busy}>Cancel</button>
+		{:else}
+			<button
+				type="button"
+				title="click to edit"
+				disabled={busy}
+				onclick={() => startEdit(node.block)}
+			>
+				<code>{node.block.Content}</code>
+			</button>
+		{/if}
 		{#if node.children.length > 0}
 			<ul>
 				{#each node.children as child (child.block.ID)}
