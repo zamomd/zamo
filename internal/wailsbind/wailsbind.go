@@ -77,6 +77,6 @@ func (a *App) ReviewProposal(ctx context.Context, id knowledge.ID) (knowledge.Pr
 
 // EffectiveSelection previews the apply cascade for the review screen; pure,
 // no storage.
-func (a *App) EffectiveSelection(ops []knowledge.Op, selected []int) []int {
+func (a *App) EffectiveSelection(_ context.Context, ops []knowledge.Op, selected []int) []int {
 	return knowledge.EffectiveSelection(ops, selected)
 }

@@ -99,7 +99,8 @@ func proposalTempIDs(ops []Op) map[string]bool {
 // would actually apply: out-of-range and duplicate indexes are ignored, and an
 // op referencing a temp block whose add is not selected is dropped, to a
 // fixpoint. Exported so the review screen previews exactly what assemble will
-// do. The result is ascending.
+// do. The order of selected is not significant; only membership matters. The
+// result is ascending.
 func EffectiveSelection(ops []Op, selected []int) []int {
 	keep := make(map[int]bool, len(selected))
 	for _, i := range selected {

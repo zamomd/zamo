@@ -29,8 +29,10 @@ func (s *Service) ReviewProposal(ctx context.Context, id ID) (ProposalReview, er
 	temps := proposalTempIDs(p.Ops)
 	ids := make([]ID, 0, len(p.Ops))
 	seen := make(map[ID]bool)
-	for _, op := range p.Ops {
-		for _, ref := range existingRefs(op, temps) {
+	refsByOp := make([][]ID, len(p.Ops))
+	for i, op := range p.Ops {
+		refsByOp[i] = existingRefs(op, temps)
+		for _, ref := range refsByOp[i] {
 			if !seen[ref] {
 				seen[ref] = true
 				ids = append(ids, ref)
@@ -45,7 +47,7 @@ func (s *Service) ReviewProposal(ctx context.Context, id ID) (ProposalReview, er
 	review := make([]OpReview, len(p.Ops))
 	for i, op := range p.Ops {
 		r := OpReview{Op: op}
-		for _, ref := range existingRefs(op, temps) {
+		for _, ref := range refsByOp[i] {
 			if _, ok := blocks[ref]; !ok {
 				r.Stale = true
 			}
