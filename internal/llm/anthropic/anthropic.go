@@ -50,7 +50,14 @@ func New(apiKey, model string) *Client {
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: defaultBaseURL,
-		http:    &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{
+			Timeout: 60 * time.Second,
+			// The API never redirects; following one would re-POST the prompt
+			// to wherever Location points.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

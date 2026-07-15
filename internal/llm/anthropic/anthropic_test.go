@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
@@ -178,6 +179,27 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+}
+
+func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
+	// A redirect means the configured endpoint is not the API; following a
+	// 307 would re-POST the prompt to wherever Location points.
+	var followed atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		followed.Store(true)
+	}))
+	t.Cleanup(target.Close)
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	})
+
+	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
+	if !errors.Is(err, knowledge.ErrLLMUnavailable) || !strings.Contains(err.Error(), "307") {
+		t.Errorf("error = %v, want ErrLLMUnavailable with HTTP 307", err)
+	}
+	if followed.Load() {
+		t.Error("the prompt was re-POSTed to the redirect target")
 	}
 }
 
