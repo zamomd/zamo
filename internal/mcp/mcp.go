@@ -10,11 +10,8 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// serverName and serverVersion identify this server in the MCP handshake.
-const (
-	serverName    = "comind"
-	serverVersion = "v0.1.0"
-)
+// serverName identifies this server in the MCP handshake.
+const serverName = "comind"
 
 // Searcher runs full-text search over the base.
 type Searcher interface {
@@ -43,12 +40,14 @@ type Server struct {
 	search   Searcher
 	tree     TreeReader
 	proposal ProposalSubmitter
+	version  string
 }
 
 // NewServer assembles the server from its three narrow capabilities
-// (in production all three are the same knowledge.Service).
-func NewServer(search Searcher, tree TreeReader, proposal ProposalSubmitter) *Server {
-	return &Server{search: search, tree: tree, proposal: proposal}
+// (in production all three are the same knowledge.Service) and the build
+// version to report in the MCP handshake.
+func NewServer(search Searcher, tree TreeReader, proposal ProposalSubmitter, version string) *Server {
+	return &Server{search: search, tree: tree, proposal: proposal, version: version}
 }
 
 // Run serves MCP over stdio until the client disconnects or ctx is cancelled.
@@ -60,7 +59,7 @@ func (s *Server) Run(ctx context.Context) error {
 // capabilities. Kept separate from Run so tests can drive it over an in-memory
 // transport instead of stdio.
 func (s *Server) mcpServer() *mcpsdk.Server {
-	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: serverName, Version: serverVersion}, nil)
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: serverName, Version: s.version}, nil)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name: "propose_blocks",
 		Description: "Submit block operations as a proposal into the review queue — the only " +

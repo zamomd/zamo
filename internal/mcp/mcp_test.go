@@ -53,14 +53,18 @@ func (f *fakeBase) SubmitProposal(
 	return f.subProposal, f.subErr
 }
 
+const testVersion = "v-test"
+
 // connect wires an in-memory client to the server under test.
 func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 	t.Helper()
 	ctx := t.Context()
 	st, ct := mcpsdk.NewInMemoryTransports()
-	if _, err := srv.mcpServer().Connect(ctx, st, nil); err != nil {
+	ss, err := srv.mcpServer().Connect(ctx, st, nil)
+	if err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
+	t.Cleanup(func() { _ = ss.Close() })
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "v0"}, nil)
 	cs, err := client.Connect(ctx, ct, nil)
 	if err != nil {
@@ -70,9 +74,20 @@ func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 	return cs
 }
 
+func TestHandshakeReportsInjectedVersion(t *testing.T) {
+	// The handshake reports the injected build version, not a constant of its own.
+	fake := &fakeBase{}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	got := cs.InitializeResult().ServerInfo
+	if got.Name != serverName || got.Version != testVersion {
+		t.Errorf("handshake identity = %s %s, want %s %s", got.Name, got.Version, serverName, testVersion)
+	}
+}
+
 func TestProposeBlocksSubmitsAsMCP(t *testing.T) {
 	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "propose_blocks",
@@ -116,7 +131,7 @@ func TestProposeStampsOriginServerSide(t *testing.T) {
 	// fixed mcp marker. The client's Rationale — the "why" the reviewer reads —
 	// is preserved.
 	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "propose_blocks",
@@ -151,7 +166,7 @@ func TestProposeRejectsForgedOrigin(t *testing.T) {
 	// The schema is closed: an op field the client must not set (origin) is
 	// refused outright as invalid params, never silently accepted.
 	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	_, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "propose_blocks",
@@ -188,7 +203,7 @@ func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[st
 
 func TestSearchTool(t *testing.T) {
 	fake := &fakeBase{searchBlocks: []knowledge.Block{{ID: "01A", Content: "context deadlines"}}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "search", map[string]any{"query": "context"})
 	if fake.searchQuery != "context" {
@@ -204,7 +219,7 @@ func TestGetSubtreeTool(t *testing.T) {
 		{ID: "01ROOT", Content: "Root"},
 		{ID: "01CHILD", ParentID: "01ROOT", Content: "Child"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	if fake.subtreeRoot != "01ROOT" {
@@ -217,7 +232,7 @@ func TestGetSubtreeTool(t *testing.T) {
 
 func TestTopicMapTool(t *testing.T) {
 	fake := &fakeBase{topic: []knowledge.Block{{ID: "01T", Content: "# Topic"}}}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "topic_map", map[string]any{})
 	if len(out.Blocks) != 1 || out.Blocks[0].ID != "01T" {
@@ -229,7 +244,7 @@ func TestToolSurface(t *testing.T) {
 	// Exactly four tools, each described; the only write tool is propose_blocks —
 	// MCP can never mutate the base directly.
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	got := map[string]bool{}
 	for tool, err := range cs.Tools(t.Context(), nil) {
@@ -261,7 +276,7 @@ func TestReadToolsNeverWrite(t *testing.T) {
 		subtree:      []knowledge.Block{{ID: "01ROOT"}},
 		topic:        []knowledge.Block{{ID: "01T"}},
 	}
-	cs := connect(t, NewServer(fake, fake, fake))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	callBlocks(t, cs, "search", map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
@@ -290,7 +305,7 @@ func TestToolSurfacesDomainError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
-			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake))
+			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake, testVersion))
 			res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tc.tool, Arguments: tc.args})
 			if err != nil {
 				t.Fatalf("unexpected transport error: %v", err)

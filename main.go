@@ -69,7 +69,7 @@ func run() error {
 	case "gui":
 		return runGUI(svc)
 	case "mcp":
-		return mcp.NewServer(svc, svc, svc).Run(ctx)
+		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
 		return fmt.Errorf("unknown mode %q (available: gui, mcp)", mode)
 	}
