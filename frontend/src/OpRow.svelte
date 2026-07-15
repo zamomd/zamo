@@ -24,11 +24,11 @@
 	const summary = $derived.by(() => {
 		switch (op.op) {
 			case "add":
-				return `add under ${op.parent === "" ? "(root)" : op.parent}: ${op.content}`;
+				return `add under ${!op.parent ? "(root)" : op.parent}: ${op.content}`;
 			case "edit":
 				return `edit ${op.block_id}`;
 			case "move":
-				return `move ${op.block_id} → ${op.parent === "" ? "(root)" : op.parent}`;
+				return `move ${op.block_id} → ${!op.parent ? "(root)" : op.parent}`;
 			case "delete":
 				return `delete ${op.block_id}`;
 			case "link":

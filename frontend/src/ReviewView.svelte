@@ -70,13 +70,14 @@
 	}
 
 	async function applySelected(): Promise<void> {
-		if (!review || busy || effective.length === 0) return;
+		if (!review || busy || effective.length === 0 || selected.length === 0) return;
 		busy = true;
 		const my = ++seq;
 		error = "";
 		// Pick the neighbor to land on before the apply mutates the queue:
 		// the next proposal, else the previous, else none (loadQueue falls
-		// back to a clamped index).
+		// back to a clamped index). Guard against selected being emptied while
+		// EffectiveSelection is still in flight.
 		const nextID = queue[current + 1]?.ID ?? queue[current - 1]?.ID;
 		try {
 			await App.ApplyProposal(review.Proposal.ID, selected);
