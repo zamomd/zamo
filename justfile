@@ -72,12 +72,17 @@ bench:
     go test -run='^$' -bench=. -benchmem ./...
 
 # compile and run every benchmark once (no timing) so benchmarks cannot rot;
-# part of `check`. Timings flap on shared runners, so use `just bench` for numbers
+# part of `check`. Timings flap on shared runners, so use `just bench` for numbers.
+# Output is shown only on failure — the anti-rot signal must not be swallowed.
 bench-smoke:
-    go test -run='^$' -bench=. -benchtime=1x ./... >/dev/null
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(go test -run='^$' -bench=. -benchtime=1x ./... 2>&1) || { echo "$out" >&2; exit 1; }
 
-# profile one package's benchmark and open its heap profile in pprof; a manual
-# investigation tool, never a gate (single package only — profile flags require it)
+# profile one benchmark and open its heap profile in pprof (`top`, `list`, `web`);
+# cpu.prof is captured too (`go tool pprof cpu.prof`). Pass a single bench for
+# targeted attribution — the default matches every benchmark in the package. A
+# manual investigation tool, never a gate; single package only (profile flags).
 pprof pkg='./internal/sqlite/' bench='.':
     go test -run='^$' -bench={{bench}} -benchmem \
         -cpuprofile=cpu.prof -memprofile=mem.prof {{pkg}}

@@ -47,6 +47,11 @@ func BenchmarkSearch(b *testing.B) {
 	db, _ := benchDB(b, 500)
 	repo := NewRepo(db, time.Now)
 	ctx := b.Context()
+	// Guard the fixture: Search returns (nil, nil) on zero hits, so without this
+	// a broken FTS index would silently benchmark the empty-result path and pass.
+	if res, err := repo.Search(ctx, "concurrency consensus"); err != nil || len(res) == 0 {
+		b.Fatalf("Search fixture: got %d hits, err=%v; want non-empty", len(res), err)
+	}
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, err := repo.Search(ctx, "concurrency consensus"); err != nil {
