@@ -14,16 +14,16 @@
 		"format": "biome format --write ."
 	},
 	"dependencies": {
-		"@wailsio/runtime": "latest"
+		"@wailsio/runtime": "^3.0.0-alpha.95"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.1",
-		"@sveltejs/vite-plugin-svelte": "^7.0.0",
+		"@biomejs/biome": "2.5.2",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tsconfig/svelte": "^5.0.8",
-		"svelte": "^5.46.4",
-		"svelte-check": "^4.4.8",
-		"tslib": "^2.6.2",
-		"typescript": "^5.2.2",
-		"vite": "^8.0.5"
+		"svelte": "^5.56.4",
+		"svelte-check": "^4.7.1",
+		"tslib": "^2.8.1",
+		"typescript": "^6.0.3",
+		"vite": "^8.1.3"
 	}
 }

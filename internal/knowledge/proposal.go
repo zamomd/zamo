@@ -57,6 +57,24 @@ type Op struct {
 	Origin    string `json:"origin,omitzero"`
 }
 
+// NewProposal builds a proposal from ready-made ops. Every new proposal starts
+// pending — only an explicit decision moves it on — and must carry at least one
+// operation; both invariants are enforced here rather than trusted to each call
+// site. An op-less proposal is rejected with ErrEmptyProposal.
+func NewProposal(id ID, source Source, title string, ops []Op, createdAt time.Time) (Proposal, error) {
+	if len(ops) == 0 {
+		return Proposal{}, ErrEmptyProposal
+	}
+	return Proposal{
+		ID:        id,
+		Source:    source,
+		Status:    StatusPending,
+		Title:     title,
+		Ops:       ops,
+		CreatedAt: createdAt,
+	}, nil
+}
+
 // Proposal is a change proposal: the only way any AI (from any input)
 // modifies the base. Only an explicit user action applies it; manual
 // human edits bypass the queue.

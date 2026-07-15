@@ -30,3 +30,13 @@ func (a *App) TopicMap(ctx context.Context) ([]knowledge.Block, error) {
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Proposal, error) {
 	return a.svc.ExpandTopic(ctx, topic, hint)
 }
+
+// ApplyProposal passes the call to knowledge.Service.
+func (a *App) ApplyProposal(ctx context.Context, id knowledge.ID, selected []int) error {
+	return a.svc.ApplyProposal(ctx, id, selected)
+}
+
+// GetSubtree passes the call to knowledge.Service.
+func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
+	return a.svc.GetSubtree(ctx, root)
+}

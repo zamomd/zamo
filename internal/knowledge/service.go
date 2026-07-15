@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -28,7 +29,11 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, now func() ti
 // ExpandTopic expands a topic into a block tree and puts the result into
 // the review queue.
 func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	ops, err := s.llm.GenerateTree(ctx, topic, hint)
+	if err != nil {
+		return Proposal{}, err
+	}
+	return s.SubmitProposal(ctx, SourceGUIExpand, topic, ops)
 }
 
 // ProposeEdit turns a user's text command ("split this block into more
@@ -40,7 +45,14 @@ func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string)
 // SubmitProposal puts ready-made operations into the review queue.
 // The entry point for sources that bring their own operations.
 func (s *Service) SubmitProposal(ctx context.Context, source Source, title string, ops []Op) (Proposal, error) {
-	return Proposal{}, ErrNotImplemented
+	p, err := NewProposal(s.newID(), source, title, ops, s.now())
+	if err != nil {
+		return Proposal{}, err
+	}
+	if err := s.repo.SaveProposal(ctx, p); err != nil {
+		return Proposal{}, err
+	}
+	return p, nil
 }
 
 // PendingProposals returns the review queue: proposals awaiting
@@ -54,7 +66,30 @@ func (s *Service) PendingProposals(ctx context.Context) ([]Proposal, error) {
 // into Proposal.Ops; operations depending on removed ones are dropped
 // in cascade), then storage applies them in a single transaction.
 func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) error {
-	return ErrNotImplemented
+	pending, err := s.repo.ListProposals(ctx, StatusPending)
+	if err != nil {
+		return err
+	}
+	// Only a pending proposal can be applied; a decided or unknown id is not in
+	// this queue. Storage re-checks under the write lock, so this read need not be
+	// transactional.
+	var p Proposal
+	found := false
+	for _, cand := range pending {
+		if cand.ID == id {
+			p, found = cand, true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("proposal %s: %w", id, ErrNotPending)
+	}
+
+	ops, err := assemble(p, selected, s.newID)
+	if err != nil {
+		return err
+	}
+	return s.repo.ApplyProposal(ctx, id, ops)
 }
 
 // RejectProposal declines a pending proposal; nothing reaches the base.
