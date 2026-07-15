@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -22,10 +24,22 @@ type fakeRepo struct {
 	applyCalls int
 	saveErr    error
 	saved      *Proposal // the last proposal handed to SaveProposal
+
+	topics     []Block // what GetTopics returns
+	topicsErr  error
+	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
+	subtreeErr error
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error)         { return nil, nil }
-func (f *fakeRepo) GetSubtree(context.Context, ID) ([]Block, error)    { return nil, nil }
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
+
+func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
+	if f.subtreeErr != nil {
+		return nil, f.subtreeErr
+	}
+	return f.subtrees[root], nil
+}
+
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
 func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
@@ -227,5 +241,74 @@ func TestServiceApplyProposalNotPending(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("storage ApplyProposal called %d times, want 0 for a non-pending id", repo.applyCalls)
+	}
+}
+
+func TestServiceExportMarkdownWritesOneFilePerTopic(t *testing.T) {
+	// GetTopics returns roots plus their first level; only roots become files,
+	// each carrying its full subtree. A first-level child must not spawn its own
+	// file.
+	repo := &fakeRepo{
+		topics: []Block{
+			blk("t1", "", 0, "# Alpha"),
+			blk("c1", "t1", 0, "child of alpha"),
+			blk("t2", "", 1, "# Beta"),
+		},
+		subtrees: map[ID][]Block{
+			"t1": {blk("t1", "", 0, "# Alpha"), blk("c1", "t1", 0, "child of alpha")},
+			"t2": {blk("t2", "", 1, "# Beta")},
+		},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("ExportMarkdown: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("wrote %d files, want 2 (one per root, not per block)", len(entries))
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "alpha.md"))
+	if err != nil {
+		t.Fatalf("read alpha.md: %v", err)
+	}
+	if want := "- # Alpha\n  - child of alpha\n"; string(got) != want {
+		t.Errorf("alpha.md = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "beta.md")); err != nil {
+		t.Errorf("beta.md missing: %v", err)
+	}
+}
+
+func TestServiceExportMarkdownEmptyBase(t *testing.T) {
+	repo := &fakeRepo{topics: nil}
+	svc := NewService(nil, repo, seqIDs(), nil)
+	dir := t.TempDir()
+
+	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
+		t.Fatalf("empty base must export cleanly, got %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("wrote %d files for an empty base, want 0", len(entries))
+	}
+}
+
+func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
+	boom := errors.New("db down")
+	repo := &fakeRepo{
+		topics:     []Block{blk("t1", "", 0, "# Alpha")},
+		subtreeErr: boom,
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	err := svc.ExportMarkdown(context.Background(), t.TempDir())
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error surfaced", err)
 	}
 }
