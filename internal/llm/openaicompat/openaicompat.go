@@ -65,9 +65,8 @@ type chatRequest struct {
 }
 
 // chatTurn is one message. Content is read as a plain string — the common
-// dialect; a provider that returns it as an array of parts decodes to empty and
-// surfaces as a bad response, which is acceptable for the lowest-common-
-// denominator contract this package targets.
+// dialect; a provider that returns an array of parts fails to decode and
+// surfaces as unavailable.
 type chatTurn struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -110,8 +109,8 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 	return llm.ParseOps([]byte(text))
 }
 
-// complete performs one chat-completions call and returns the concatenated
-// content of the reply's message choices.
+// complete performs one chat-completions call and returns the content of the
+// reply's first choice.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 	payload, err := json.Marshal(chatRequest{
 		Model:     c.model,
