@@ -50,7 +50,7 @@ changelog:
     git-cliff -o CHANGELOG.md
 
 # everything CI checks
-check: lint web-lint english-only test
+check: lint web-lint english-only test bench-smoke
     go mod tidy -diff
 
 # per-package coverage (atomic mode: the only one correct under -race)
@@ -65,6 +65,23 @@ cover-html: cover
 # scan dependencies for known vulnerabilities
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+# allocation report (allocs/op, B/op) for the hot paths — the deterministic,
+# reproducible complement to pprof
+bench:
+    go test -run='^$' -bench=. -benchmem ./...
+
+# compile and run every benchmark once (no timing) so benchmarks cannot rot;
+# part of `check`. Timings flap on shared runners, so use `just bench` for numbers
+bench-smoke:
+    go test -run='^$' -bench=. -benchtime=1x ./... >/dev/null
+
+# profile one package's benchmark and open its heap profile in pprof; a manual
+# investigation tool, never a gate (single package only — profile flags require it)
+pprof pkg='./internal/sqlite/' bench='.':
+    go test -run='^$' -bench={{bench}} -benchmem \
+        -cpuprofile=cpu.prof -memprofile=mem.prof {{pkg}}
+    go tool pprof mem.prof
 
 # mutation testing over a package that has tests (config in .gremlins.yaml)
 # install: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0

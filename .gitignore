@@ -13,6 +13,9 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 # Coverage profile
 cover.out
 
+# pprof profiles (just pprof)
+*.prof
+
 # Frontend
 node_modules/
 frontend/dist/*
