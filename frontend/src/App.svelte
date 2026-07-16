@@ -8,6 +8,10 @@
 	// Tab shell: the Base view (the tree), the Review view (the pending
 	// queue), and Settings (the provider configuration). Switching tabs
 	// remounts the view, so each one re-reads its data.
+	// The window has no push channel from the MCP server, so it re-reads the
+	// pending queue itself on a timer (and on focus) — see #15: no daemon, no bus.
+	const POLL_MS = 5000;
+
 	let tab: "base" | "review" | "settings" = $state("base");
 	let pendingCount = $state(0);
 
@@ -22,6 +26,23 @@
 
 	onMount(() => {
 		refreshCount().catch(() => {});
+		// An MCP-submitted proposal arrives out of band while the window sits idle;
+		// re-read it into the badge without a restart. Poll only while the window is
+		// visible (no wakeups when minimized) and re-read the moment it regains focus
+		// or visibility, so a return from the background is never left stale.
+		const refresh = (): void => {
+			if (!document.hidden) {
+				refreshCount().catch(() => {});
+			}
+		};
+		const timer = setInterval(refresh, POLL_MS);
+		window.addEventListener("focus", refresh);
+		document.addEventListener("visibilitychange", refresh);
+		return () => {
+			clearInterval(timer);
+			window.removeEventListener("focus", refresh);
+			document.removeEventListener("visibilitychange", refresh);
+		};
 	});
 </script>
 
