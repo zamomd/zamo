@@ -23,6 +23,12 @@ type Config struct {
 	// directory. The COMIND_DB environment variable overrides both.
 	Database string `toml:"database"`
 
+	// Declarative turns off the mutable settings layer: settings.toml is
+	// neither read nor written, and the GUI shows values read-only. It lives
+	// here and not in settings.toml on purpose — otherwise the GUI could
+	// unlock itself.
+	Declarative bool `toml:"declarative"`
+
 	LLM LLM `toml:"llm"`
 }
 
@@ -120,11 +126,7 @@ func (c Config) DatabasePath() (string, error) {
 // providers need no key, and remote ones will fail with a clear error
 // on first use.
 func (l LLM) APIKeyValue() (string, error) {
-	envName := "ANTHROPIC_API_KEY"
-	if l.Provider == ProviderOpenAICompat {
-		envName = "OPENAI_API_KEY"
-	}
-	if key := os.Getenv(envName); key != "" {
+	if key := os.Getenv(keyEnvName(l.Provider)); key != "" {
 		return key, nil
 	}
 	if l.APIKeyFile != "" {
@@ -135,6 +137,14 @@ func (l LLM) APIKeyValue() (string, error) {
 		return strings.TrimSpace(string(raw)), nil
 	}
 	return l.APIKey, nil
+}
+
+// keyEnvName is the environment variable holding the key for a provider.
+func keyEnvName(provider string) string {
+	if provider == ProviderOpenAICompat {
+		return "OPENAI_API_KEY"
+	}
+	return "ANTHROPIC_API_KEY"
 }
 
 // dataDir returns the platform directory for application data. Data and
