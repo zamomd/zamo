@@ -165,19 +165,12 @@ func TestSaveResetToConfigSwapsLiveClient(t *testing.T) {
 }
 
 func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
-	// config.toml declares a model and a base URL; overriding both in the GUI
-	// and then resetting must fall back to the declared values, not keep the
-	// override baked in by a double merge.
-	//
-	// Current() alone would not catch a reintroduced bug here: it always
-	// re-resolves from disk, and Save writes the *overrides* file correctly
-	// even when its internal double merge is broken (SaveOverrides persists
-	// `next`, computed straight from the submission, never the doubly-merged
-	// `resolved`). So this also swaps a stub server in as the config-declared
-	// base URL and pings through the holder: the double-merge bug leaves the
-	// override's unreachable address baked into the live client even after
-	// the override is dropped, which only shows up by actually reaching the
-	// network through the holder, not by re-reading the file.
+	// Overriding config-declared fields in the GUI and then resetting must
+	// fall back to the declared values, not keep the override baked in by a
+	// double merge. The file alone cannot prove that — Save persists the
+	// overrides correctly even when its merge is broken — so the test pings
+	// through the holder against a stub server at the config-declared base
+	// URL: only the live client betrays the stale merge.
 	var reached bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true

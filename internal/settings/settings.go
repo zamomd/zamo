@@ -1,10 +1,8 @@
 // Package settings is the use case for the provider settings screen: read the
 // effective configuration, save the mutable layer, swap the live client.
 //
-// It sits outside knowledge on purpose. The domain knows nothing about
-// providers, TOML or paths, and must not learn: it only ever sees an
-// LLMClient. Nor does this belong in wailsbind, which stays a pass-through —
-// the GUI is not the only entry point.
+// It sits outside knowledge on purpose: the domain only ever sees an
+// LLMClient and must not learn about providers, TOML or paths.
 package settings
 
 import (
@@ -66,11 +64,9 @@ func New(holder *llm.Holder, path string) *Manager {
 }
 
 // BuildClient assembles a provider client from a resolved configuration. The
-// key is passed as a source, not a value: it must be read per request so a
-// rotated key file takes effect (see llm.KeySource). An empty provider is a
-// supported state — AI features off — and yields llm.Disabled rather than an
-// error; config.Load and config.ResolveWith already reject any other unknown
-// provider before a Resolved reaches here.
+// key is passed as a source, not a value, so a rotated key takes effect (see
+// llm.KeySource). An empty provider is a supported state — AI features off —
+// and yields llm.Disabled rather than an error.
 func BuildClient(r config.Resolved) (knowledge.LLMClient, error) {
 	switch r.Config.LLM.Provider {
 	case "":
@@ -104,15 +100,9 @@ func (m *Manager) Current(_ context.Context) (View, error) {
 // client. The order matters: a submission that cannot produce a client must
 // leave both the file and the running client untouched.
 //
-// It resolves against the raw config.toml (config.Load), not against
-// current.Config: ResolveFrom already folds settings.toml into current.Config,
-// so passing that merged value back into config.ResolveWith together with the
-// new overrides would double-merge — any field the submission drops (an empty
-// override, meaning "reset to config") would keep its stale settings.toml
-// value baked into the "config" layer instead of falling back to config.toml.
-// current itself is still the right source for the currently stored API key
-// and the declarative flag, both of which are read from the merged view on
-// purpose (see overrides and the check above).
+// It resolves against the raw config.Load result, not current.Config: that one
+// already has settings.toml folded in, and merging it again would keep a
+// dropped override alive as if config.toml had declared it.
 func (m *Manager) Save(_ context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -135,22 +125,15 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	if err != nil {
 		return err
 	}
-	// Checked against the resolved value, not in.BaseURL: a submission that
-	// relies on a base_url already declared in config.toml must still be
-	// accepted. openai-compatible only exists to point at some endpoint
-	// (OpenAI, OpenRouter, Ollama, LM Studio...), so without one it saves a
-	// provider that can never work and fails later with an opaque transport
-	// error instead of this clear one.
+	// Checked against the resolved value, not in.BaseURL, so a base_url
+	// declared in config.toml still counts. Without one, openai-compatible
+	// can never work and would fail later with an opaque transport error.
 	if resolved.Config.LLM.Provider == config.ProviderOpenAICompat && resolved.Config.LLM.BaseURL == "" {
 		return errors.New("openai-compatible requires a base URL")
 	}
-	// Checked against the newly-resolved state, i.e. the provider being
-	// submitted: config.keyOrigin already looks at whichever provider it is
-	// given, so this correctly guards the submitted provider's env var rather
-	// than the one currently in effect, allowing a switch away from a provider
-	// whose env var happens to be set. This still runs before BuildClient and
-	// SaveOverrides, so a refusal leaves both the file and the live client
-	// untouched.
+	// Guards the env var of the provider being submitted, not the one
+	// currently in effect: switching away from a provider whose variable
+	// happens to be set must stay possible.
 	if resolved.Origins.APIKey == config.OriginEnv && in.APIKey != "" {
 		envName := config.KeyEnvName(resolved.Config.LLM.Provider)
 		return fmt.Errorf("%s already supplies the API key and is in use; "+
@@ -169,10 +152,8 @@ func (m *Manager) Save(_ context.Context, in In) error {
 
 // Check builds a client from a submission that has not been saved and asks the
 // provider whether it is reachable. It writes nothing and does not swap the
-// live client, so it works in declarative mode too.
-//
-// Like Save, it resolves against the raw config.toml rather than current's
-// already-merged Config, for the same double-merge reason.
+// live client, so it works in declarative mode too. Like Save, it resolves
+// against the raw config.Load result.
 func (m *Manager) Check(ctx context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {

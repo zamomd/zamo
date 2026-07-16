@@ -121,11 +121,9 @@ func (c Config) DatabasePath() (string, error) {
 }
 
 // APIKeyValue resolves the provider key: environment variable first
-// (ANTHROPIC_API_KEY or OPENAI_API_KEY, per provider), then
-// api_key_file, then the inline api_key. Empty is allowed — local
-// providers need no key, and remote ones will fail with a clear error
-// on first use. When provider is empty (AI off), keyEnvName returns
-// "" and no environment variable is consulted.
+// (per provider; none when the provider is empty), then api_key_file,
+// then the inline api_key. Empty is allowed — local providers need no
+// key, and remote ones fail with a clear error on first use.
 func (l LLM) APIKeyValue() (string, error) {
 	if envName := keyEnvName(l.Provider); envName != "" {
 		if key := os.Getenv(envName); key != "" {
@@ -142,15 +140,13 @@ func (l LLM) APIKeyValue() (string, error) {
 	return l.APIKey, nil
 }
 
-// KeyEnvName exposes keyEnvName to callers outside this package (e.g.
-// internal/settings, which names the variable in a refusal message) so the
-// provider-to-variable mapping has a single source of truth.
+// KeyEnvName reports the environment variable holding the key for a provider;
+// empty when the provider has none. It is the single source of the mapping —
+// error messages that name the variable must use it too.
 func KeyEnvName(provider string) string {
 	return keyEnvName(provider)
 }
 
-// keyEnvName is the environment variable holding the key for a provider.
-// Empty provider has no associated environment variable.
 func keyEnvName(provider string) string {
 	switch provider {
 	case ProviderOpenAICompat:

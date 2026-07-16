@@ -99,8 +99,8 @@ type apiError struct {
 func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
-		// The prompt template is embedded, so this only fails on a build defect;
-		// map it to unavailable so the request-cannot-be-made contract holds.
+		// The template is embedded; failing to render it is a build defect,
+		// still "the request cannot be made".
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	text, err := c.complete(ctx, prompt)
@@ -156,14 +156,12 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	if parsed.Choices == nil {
-		// A 2xx body that isn't the chat envelope means something between us and
-		// the model (proxy, CDN) answered — the model did not. Only the model's
-		// own text failing to parse (ParseOps, downstream) is a bad response.
+		// A 2xx body without the chat envelope means a proxy or CDN answered,
+		// not the model — unavailable, not a bad response.
 		return "", fmt.Errorf("%w: response is not a chat-completions envelope", knowledge.ErrLLMUnavailable)
 	}
-	// The answer is the first choice; further choices are alternative completions,
-	// never continuations, so they are not concatenated. An empty choice list
-	// yields empty text, which ParseOps reports as a bad response.
+	// Further choices are alternative completions, never continuations, so
+	// only the first is read.
 	if choices := *parsed.Choices; len(choices) > 0 {
 		return choices[0].Message.Content, nil
 	}

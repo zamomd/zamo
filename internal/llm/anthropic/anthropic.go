@@ -99,8 +99,8 @@ type apiError struct {
 func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
-		// The prompt template is embedded, so this only fails on a build defect;
-		// map it to unavailable so the request-cannot-be-made contract holds.
+		// The template is embedded; failing to render it is a build defect,
+		// still "the request cannot be made".
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	text, err := c.complete(ctx, prompt)
@@ -157,9 +157,8 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	if parsed.Content == nil {
-		// A 2xx body that isn't the Messages envelope means something between us
-		// and the model (proxy, CDN) answered — the model did not. Only the
-		// model's own text failing to parse (ParseOps, downstream) is a bad response.
+		// A 2xx body without the Messages envelope means a proxy or CDN
+		// answered, not the model — unavailable, not a bad response.
 		return "", fmt.Errorf("%w: response is not a Messages envelope", knowledge.ErrLLMUnavailable)
 	}
 	var text bytes.Buffer
@@ -214,11 +213,8 @@ func statusError(status int, body []byte) error {
 	return fmt.Errorf("%w: HTTP %d", knowledge.ErrLLMUnavailable, status)
 }
 
-// GenerateEdit implements knowledge.LLMClient. It renders the edit prompt for
-// the scope and instruction, calls the Messages API, and parses the reply into
-// restructuring operations. Error mapping matches GenerateTree: transport, key
-// and HTTP-status failures are ErrLLMUnavailable; a reply that will not parse is
-// ErrLLMBadResponse (via ParseEditOps).
+// GenerateEdit implements knowledge.LLMClient. Error mapping matches
+// GenerateTree.
 func (c *Client) GenerateEdit(
 	ctx context.Context,
 	scope []knowledge.Block,

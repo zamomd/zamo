@@ -3,11 +3,10 @@
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 
-	// The screen edits the mutable layer only (settings.toml). A field whose
-	// origin is "config" is declared in config.toml and shown as such; "gui"
-	// means this layer overrides it and can be reset to fall back to
-	// config.toml. "env" cannot be overridden here at all. In declarative mode
-	// every field is read-only, but Check still works: it writes nothing.
+	// The screen edits the mutable layer (settings.toml) only. "config" fields
+	// are declared in config.toml, "gui" fields override them and can be
+	// reset, "env" cannot be changed here. In declarative mode every field is
+	// read-only, but Check still works: it writes nothing.
 	let view = $state<View | null>(null);
 	let provider = $state("");
 	let model = $state("");
@@ -17,26 +16,20 @@
 	let error = $state("");
 	let busy = $state(false);
 
-	// Per-field dirtiness: an untouched field must submit "" (not overridden)
-	// unless it is already a GUI override, so that opening the screen and
-	// saving a change to one field can never capture another field's
-	// config.toml-declared value into settings.toml (see input()).
+	// An untouched field must submit "" (not overridden), or saving a change
+	// to one field would capture another field's config.toml-declared value
+	// into settings.toml (see input()).
 	let providerDirty = $state(false);
 	let modelDirty = $state(false);
 	let baseUrlDirty = $state(false);
 
-	// resetConfirming gates the destructive Reset action behind an inline,
-	// in-component confirmation row. window.confirm() is not usable here: the
-	// Wails v3 native webview has no runJavaScriptConfirmPanelWithMessage:
-	// delegate, so confirm() always resolves as if the user cancelled, and the
-	// packaged app's Reset button would otherwise do nothing at all.
+	// Reset is confirmed with an inline row: window.confirm() is a silent
+	// no-op in the Wails v3 webview (see AGENTS.md).
 	let resetConfirming = $state(false);
 
 	let ro = $derived(view?.declarative ?? false);
-	// An empty provider is a legal, supported state - AI features off, not a
-	// missing default (see config.LLM.Provider). Model, base URL and the API
-	// key are meaningless without a provider, so the form hides them instead
-	// of showing disabled fields nobody can act on.
+	// An empty provider means AI features are off (see config.LLM.Provider);
+	// the dependent fields are hidden rather than shown disabled.
 	let aiOff = $derived(provider === "");
 
 	async function load(): Promise<void> {
@@ -52,8 +45,7 @@
 		resetConfirming = false;
 	}
 
-	// fieldNote explains a field's origin. "default" gets no annotation:
-	// nothing is overriding the built-in default, so there is nothing to say.
+	// fieldNote explains a field's origin; "default" gets no annotation.
 	function fieldNote(field: { origin: string }): string {
 		if (field.origin === "config") return "set in config.toml";
 		if (field.origin === "gui") return "overridden here";
@@ -75,19 +67,16 @@
 			case "gui":
 				return "overridden here";
 			default:
-				// Only worth saying when the field itself is unusable (declarative
-				// mode); otherwise the empty, enabled input already says it.
+				// Only worth saying in declarative mode; otherwise the empty,
+				// enabled input already says it.
 				return ro ? "set api_key_file in config.toml, or the provider's API key environment variable" : "";
 		}
 	});
 
-	// providerFallbackNote flags the one gap the absent-means-reset design
-	// cannot close: when config.toml itself declares a provider, submitting an
-	// empty selection does not turn AI off - it falls back to that declared
-	// value, because an empty field means "not overridden" everywhere else
-	// too. Accepted limitation (see internal/settings.Manager.overrides); not
-	// something this screen can fix without changing the wire contract, which
-	// is out of scope here.
+	// Accepted limitation of absent-means-reset: when config.toml declares a
+	// provider, saving an empty selection falls back to it instead of turning
+	// AI off (see internal/settings.Manager.overrides). This note warns about
+	// exactly that.
 	let providerFallbackNote = $derived.by((): string => {
 		if (!view) return "";
 		if (provider === "" && view.provider.origin === "config" && view.provider.value !== "") {
@@ -99,17 +88,11 @@
 		return "";
 	});
 
-	// input() builds the submission for Save/Check. Per field, an empty string
-	// means "not overridden" on the wire (see In's doc comment), so an
-	// untouched field must submit "" unless it is already a GUI override -
-	// otherwise the field's current effective value (which may only be true
-	// because config.toml declares it) gets captured into settings.toml as if
-	// the user had typed it themselves.
-	//
-	// When no provider is selected, model, base URL and the API key are
-	// hidden and the panel says AI features are off; the submission must
-	// match that claim; the field values are ignored entirely so nothing
-	// typed before switching the provider to "None" can be persisted.
+	// input() builds the submission. On the wire an empty string means "not
+	// overridden" (see In), so a field is submitted only when the user edited
+	// it or it already is a GUI override — never its config.toml-declared
+	// value. With no provider selected the hidden fields are dropped entirely,
+	// so nothing typed before switching to "None" can be persisted.
 	function input(): In {
 		const submittedProvider = providerDirty || view?.provider.origin === "gui" ? provider : "";
 		if (aiOff) {
@@ -150,11 +133,8 @@
 	}
 
 	// clearKey drops only the stored API key, leaving every other override as
-	// it stands. The plain Save button cannot express that: input() always
-	// carries clearApiKey: false, so an untouched key field never gets wiped
-	// by accident. This sends the same field values Save would, plus
-	// clearApiKey - the one combination the existing contract already
-	// supports for "clear just the key".
+	// it stands — plain Save cannot express that: input() always carries
+	// clearApiKey: false so an untouched key is never wiped by accident.
 	async function clearKey(): Promise<void> {
 		busy = true;
 		status = "";
@@ -163,9 +143,7 @@
 			const { provider: p, model: m, baseUrl: b } = input();
 			await App.SaveSettings({ provider: p, model: m, baseUrl: b, apiKey: "", clearApiKey: true });
 			await load();
-			// Honest wording: config.toml may still declare an inline api_key or
-			// an api_key_file, in which case a key remains set and in effect
-			// after this call - only the GUI's own override is gone.
+			// config.toml may still supply a key; only the GUI override is gone.
 			status = "GUI key override removed.";
 		} catch (e) {
 			error = String(e);
@@ -174,9 +152,6 @@
 		}
 	}
 
-	// requestReset opens the inline confirmation row instead of resetting
-	// directly - see resetConfirming's doc comment for why confirm() cannot
-	// be used here.
 	function requestReset(): void {
 		resetConfirming = true;
 	}
@@ -185,11 +160,8 @@
 		resetConfirming = false;
 	}
 
-	// confirmReset is what the confirmation row's "Confirm reset" button
-	// runs. Dropping every override is what "reset to config" means: an
-	// absent field falls through to config.toml. That includes the API key,
-	// which is why this is gated behind an explicit confirmation - the button
-	// alone would otherwise silently destroy a key typed into this screen.
+	// confirmReset drops every override, API key included — which is why it
+	// sits behind the confirmation row.
 	async function confirmReset(): Promise<void> {
 		resetConfirming = false;
 		busy = true;
