@@ -104,15 +104,11 @@ func buildService(ctx context.Context) (*knowledge.Service, func(), error) {
 }
 
 func buildLLMClient(cfg config.LLM) (knowledge.LLMClient, error) {
-	key, err := cfg.APIKeyValue()
-	if err != nil {
-		return nil, err
-	}
 	switch cfg.Provider {
 	case config.ProviderAnthropic:
-		return anthropic.New(key, cfg.Model), nil
+		return anthropic.New(cfg.APIKeyValue, cfg.Model), nil
 	case config.ProviderOpenAICompat:
-		return openaicompat.New(cfg.BaseURL, key, cfg.Model), nil
+		return openaicompat.New(cfg.BaseURL, cfg.APIKeyValue, cfg.Model), nil
 	default:
 		// Load validates the provider; this is unreachable.
 		return nil, fmt.Errorf("unknown llm provider %q", cfg.Provider)

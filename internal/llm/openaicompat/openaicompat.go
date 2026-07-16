@@ -31,21 +31,22 @@ const (
 // It sticks to the lowest common denominator of the OpenAI dialects:
 // provider quirks stay inside this package.
 type Client struct {
-	baseURL string // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
-	apiKey  string // may be empty (local models)
+	baseURL string        // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
+	key     llm.KeySource // may yield an empty key (local models)
 	model   string
 	http    *http.Client
 }
 
 var _ knowledge.LLMClient = (*Client)(nil)
 
-// New creates a Client. apiKey may be empty for local providers. A trailing
-// slash on baseURL is trimmed so a hand-edited ".../v1/" config does not become
-// ".../v1//chat/completions" and 404.
-func New(baseURL, apiKey, model string) *Client {
+// New creates a Client. The key source may yield an empty key for local
+// providers; it is read on every request, never cached (see llm.KeySource). A
+// trailing slash on baseURL is trimmed so a hand-edited ".../v1/" config does
+// not become ".../v1//chat/completions" and 404.
+func New(baseURL string, key llm.KeySource, model string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
+		key:     key,
 		model:   model,
 		http: &http.Client{
 			Timeout: 60 * time.Second,
@@ -112,6 +113,11 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 // complete performs one chat-completions call and returns the content of the
 // reply's first choice.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
+	key, err := c.key()
+	if err != nil {
+		return "", fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+
 	payload, err := json.Marshal(chatRequest{
 		Model:     c.model,
 		MaxTokens: maxTokens,
@@ -127,8 +133,8 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" { // a local model is reached without a key
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if key != "" { // a local model is reached without a key
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
 	resp, err := c.http.Do(req)

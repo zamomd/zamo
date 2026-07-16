@@ -33,7 +33,7 @@ const (
 
 // Client talks to the Anthropic Messages API.
 type Client struct {
-	apiKey  string
+	key     llm.KeySource
 	model   string
 	baseURL string
 	http    *http.Client
@@ -41,13 +41,14 @@ type Client struct {
 
 var _ knowledge.LLMClient = (*Client)(nil)
 
-// New creates a Client. An empty model selects DefaultModel.
-func New(apiKey, model string) *Client {
+// New creates a Client. An empty model selects DefaultModel. The key is read
+// through the source on every request, never cached: see llm.KeySource.
+func New(key llm.KeySource, model string) *Client {
 	if model == "" {
 		model = DefaultModel
 	}
 	return &Client{
-		apiKey:  apiKey,
+		key:     key,
 		model:   model,
 		baseURL: defaultBaseURL,
 		http: &http.Client{
@@ -96,9 +97,6 @@ type apiError struct {
 // key and HTTP-status failures map to ErrLLMUnavailable; a reply that will not
 // parse maps to ErrLLMBadResponse (via ParseOps).
 func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
-	}
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
 		// The prompt template is embedded, so this only fails on a build defect;
@@ -115,6 +113,14 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 // complete performs one Messages API call and returns the concatenated text of
 // the reply's text blocks.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
+	key, err := c.key()
+	if err != nil {
+		return "", fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	if key == "" {
+		return "", fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
+	}
+
 	payload, err := json.Marshal(messagesRequest{
 		Model:     c.model,
 		MaxTokens: maxTokens,
@@ -129,7 +135,7 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("X-Api-Key", key)
 	req.Header.Set("Anthropic-Version", apiVersion)
 
 	resp, err := c.http.Do(req)
@@ -185,9 +191,6 @@ func (c *Client) GenerateEdit(
 	scope []knowledge.Block,
 	instruction string,
 ) ([]knowledge.Op, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
-	}
 	prompt, err := llm.EditPrompt(scope, instruction)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)

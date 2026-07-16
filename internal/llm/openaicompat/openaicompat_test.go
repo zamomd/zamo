@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/llm"
 )
 
 // tree is a canned expansion the stub server returns as the model's message
@@ -27,7 +28,7 @@ func newTestClient(t *testing.T, apiKey string, handler http.HandlerFunc) *Clien
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, apiKey, "llama3")
+	return New(srv.URL, llm.StaticKey(apiKey), "llama3")
 }
 
 func TestGenerateTreeParsesReply(t *testing.T) {
@@ -108,7 +109,7 @@ func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL+"/", "test-key", "llama3")
+	c := New(srv.URL+"/", llm.StaticKey("test-key"), "llama3")
 	if _, err := c.GenerateTree(t.Context(), "Go contexts", ""); err != nil {
 		t.Fatalf("GenerateTree with trailing slash: %v", err)
 	}
@@ -212,7 +213,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	url := srv.URL
 	srv.Close() // Do() now fails at the transport layer
 
-	c := New(url, "test-key", "llama3")
+	c := New(url, llm.StaticKey("test-key"), "llama3")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
