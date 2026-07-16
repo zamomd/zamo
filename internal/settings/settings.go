@@ -103,6 +103,16 @@ func (m *Manager) Current(_ context.Context) (View, error) {
 // Save validates the submission, writes the mutable layer, and swaps the live
 // client. The order matters: a submission that cannot produce a client must
 // leave both the file and the running client untouched.
+//
+// It resolves against the raw config.toml (config.Load), not against
+// current.Config: ResolveFrom already folds settings.toml into current.Config,
+// so passing that merged value back into config.ResolveWith together with the
+// new overrides would double-merge — any field the submission drops (an empty
+// override, meaning "reset to config") would keep its stale settings.toml
+// value baked into the "config" layer instead of falling back to config.toml.
+// current itself is still the right source for the currently stored API key
+// and the declarative flag, both of which are read from the merged view on
+// purpose (see overrides and the check above).
 func (m *Manager) Save(_ context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -111,18 +121,29 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	if current.Config.Declarative {
 		return ErrDeclarative
 	}
-	if current.Origins.APIKey == config.OriginEnv && in.APIKey != "" {
-		return fmt.Errorf("the API key comes from the environment and cannot be overridden here")
-	}
 
 	next, err := m.overrides(current, in)
 	if err != nil {
 		return err
 	}
 
-	resolved, err := config.ResolveWith(current.Config, next)
+	base, err := config.Load("")
 	if err != nil {
 		return err
+	}
+	resolved, err := config.ResolveWith(base, next)
+	if err != nil {
+		return err
+	}
+	// Checked against the newly-resolved state, i.e. the provider being
+	// submitted: config.keyOrigin already looks at whichever provider it is
+	// given, so this correctly guards the submitted provider's env var rather
+	// than the one currently in effect, allowing a switch away from a provider
+	// whose env var happens to be set. This still runs before BuildClient and
+	// SaveOverrides, so a refusal leaves both the file and the live client
+	// untouched.
+	if resolved.Origins.APIKey == config.OriginEnv && in.APIKey != "" {
+		return errors.New("the API key comes from the environment and cannot be overridden here")
 	}
 	client, err := BuildClient(resolved)
 	if err != nil {
@@ -138,6 +159,9 @@ func (m *Manager) Save(_ context.Context, in In) error {
 // Check builds a client from a submission that has not been saved and asks the
 // provider whether it is reachable. It writes nothing and does not swap the
 // live client, so it works in declarative mode too.
+//
+// Like Save, it resolves against the raw config.toml rather than current's
+// already-merged Config, for the same double-merge reason.
 func (m *Manager) Check(ctx context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -149,7 +173,11 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 			return err
 		}
 	}
-	resolved, err := config.ResolveWith(current.Config, next)
+	base, err := config.Load("")
+	if err != nil {
+		return err
+	}
+	resolved, err := config.ResolveWith(base, next)
 	if err != nil {
 		return err
 	}

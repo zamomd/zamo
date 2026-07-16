@@ -135,6 +135,129 @@ func TestCurrentNeverExposesTheKey(t *testing.T) {
 	// the screen learns only whether one is set.
 }
 
+func TestSaveResetToConfigSwapsLiveClient(t *testing.T) {
+	// Nothing declared in config.toml: after Save(anthropic) then Save(In{})
+	// (a reset), the live client must be the disabled one, not a stale
+	// anthropic client. Pin the distinction against llm.Disabled{}.Ping's own
+	// message, not just the shared ErrLLMUnavailable sentinel, so the test
+	// would fail if Save left the anthropic client in place returning its own
+	// "no API key configured" flavor of the same sentinel.
+	m, h, _ := newManager(t, "")
+
+	if err := m.Save(t.Context(), In{Provider: config.ProviderAnthropic}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(t.Context(), In{}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := h.Ping(t.Context())
+	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
+		t.Fatalf("Ping error = %v, want ErrLLMUnavailable", err)
+	}
+
+	wantErr := llm.Disabled{}.Ping(t.Context())
+	if err.Error() != wantErr.Error() {
+		t.Errorf("Ping error = %q, want %q (the disabled client's message, naming the absent provider, not the key)",
+			err.Error(), wantErr.Error())
+	}
+}
+
+func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
+	// config.toml declares a model and a base URL; overriding both in the GUI
+	// and then resetting must fall back to the declared values, not keep the
+	// override baked in by a double merge.
+	//
+	// Current() alone would not catch a reintroduced bug here: it always
+	// re-resolves from disk, and Save writes the *overrides* file correctly
+	// even when its internal double merge is broken (SaveOverrides persists
+	// `next`, computed straight from the submission, never the doubly-merged
+	// `resolved`). So this also swaps a stub server in as the config-declared
+	// base URL and pings through the holder: the double-merge bug leaves the
+	// override's unreachable address baked into the live client even after
+	// the override is dropped, which only shows up by actually reaching the
+	// network through the holder, not by re-reading the file.
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	configTOML := "[llm]\nprovider = \"openai-compatible\"\nmodel = \"from-config\"\nbase_url = \"" + srv.URL + "/v1\"\n"
+	m, h, _ := newManager(t, configTOML)
+
+	if err := m.Save(t.Context(), In{Model: "from-gui", BaseURL: "http://127.0.0.1:1/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(t.Context(), In{}); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Model.Value != "from-config" || v.Model.Origin != string(config.OriginConfig) {
+		t.Errorf("model = %+v, want {from-config config}", v.Model)
+	}
+
+	if err := h.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping through the holder after reset = %v, want nil\n"+
+			"(must fall back to config.toml's base URL, not keep the dropped override's unreachable one)", err)
+	}
+	if !reached {
+		t.Error("the config-declared server was not reached after reset; the live client kept the stale override's base URL")
+	}
+}
+
+func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
+	// ANTHROPIC_API_KEY is ambient from a prior anthropic setup; switching to
+	// openai-compatible with a key typed for THAT provider must not be
+	// refused just because the old provider's env var happens to be set.
+	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
+	t.Setenv("OPENAI_API_KEY", "")
+	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
+	// newManager clears both env vars; set the ambient one back after.
+	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
+
+	err := m.Save(t.Context(), In{
+		Provider: config.ProviderOpenAICompat,
+		BaseURL:  "http://127.0.0.1:1/v1",
+		APIKey:   "sk-openai",
+	})
+	if err != nil {
+		t.Fatalf("Save = %v, want nil; a provider switch must not be blocked by the OTHER provider's env var", err)
+	}
+
+	o, err := config.LoadOverrides(setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.LLM.APIKey != "sk-openai" {
+		t.Errorf("saved api key = %q, want sk-openai", o.LLM.APIKey)
+	}
+}
+
+func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
+	// OPENAI_API_KEY is set; submitting an openai-compatible key by hand must
+	// still be refused, and must write nothing.
+	m, _, setPath := newManager(t, "")
+	t.Setenv("OPENAI_API_KEY", "ambient-openai-key")
+
+	err := m.Save(t.Context(), In{
+		Provider: config.ProviderOpenAICompat,
+		APIKey:   "sk-typed",
+	})
+	if err == nil {
+		t.Fatal("Save = nil, want an error: the submitted provider's own env var must block an override")
+	}
+	if _, statErr := os.Stat(setPath); !os.IsNotExist(statErr) {
+		t.Error("settings.toml was written even though the guard should have refused the submission")
+	}
+}
+
 func TestCheckDoesNotSave(t *testing.T) {
 	m, _, setPath := newManager(t, "")
 	// The check reaches a provider that is not there; the point is only that a
