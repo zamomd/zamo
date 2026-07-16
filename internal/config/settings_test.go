@@ -97,6 +97,7 @@ func TestResolvedAPIKeyPrecedence(t *testing.T) {
 	keyFile := writeAt(t, "key.txt", "from-file\n")
 	cfgPath := writeAt(t, "config.toml", `
 [llm]
+provider = "anthropic"
 api_key = "from-config"
 api_key_file = "`+keyFile+`"
 `)
@@ -209,5 +210,34 @@ func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "provider") {
 		t.Errorf("file mentions an unset field:\n%s", raw)
+	}
+}
+
+func TestNoProviderIgnoresEnvAPIKey(t *testing.T) {
+	// When no provider is configured (AI off), ambient ANTHROPIC_API_KEY
+	// must not lock the API key field in the GUI. The key origin should be
+	// OriginDefault, and APIKeySet should report false.
+	t.Setenv("ANTHROPIC_API_KEY", "ambient-key")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	cfgPath := writeAt(t, "config.toml", "")
+	setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
+
+	r, err := ResolveFrom(cfgPath, setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if r.Config.LLM.Provider != "" {
+		t.Errorf("provider = %q, want empty (AI off)", r.Config.LLM.Provider)
+	}
+	if r.Origins.APIKey == OriginEnv {
+		t.Errorf("key origin = OriginEnv, must not be env-locked when provider is empty")
+	}
+	if r.APIKeySet() {
+		t.Errorf("APIKeySet = true, want false (no provider means no key is set)")
+	}
+	if key, _ := r.APIKeyValue(); key != "" {
+		t.Errorf("key value = %q, want empty when provider is empty", key)
 	}
 }

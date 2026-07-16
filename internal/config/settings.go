@@ -194,13 +194,14 @@ func declaredOrigin(set bool) Origin {
 
 // keyOrigin reports where the API key would come from, without reading the key
 // file: "configured" is a cheaper question than "readable", and Ping answers
-// the latter.
+// the latter. When provider is empty (AI off), no environment variable is
+// consulted even if one is set.
 func keyOrigin(cfg Config, o Overrides) Origin {
 	provider := cfg.LLM.Provider
 	if o.LLM.Provider != "" {
 		provider = o.LLM.Provider
 	}
-	if os.Getenv(keyEnvName(provider)) != "" {
+	if envName := keyEnvName(provider); envName != "" && os.Getenv(envName) != "" {
 		return OriginEnv
 	}
 	if o.LLM.APIKey != "" {
@@ -221,10 +222,13 @@ func (r Resolved) APIKeySet() bool { return r.Origins.APIKey != OriginDefault }
 
 // APIKeyValue resolves the key: env > settings.toml > api_key_file > api_key.
 // It is called on every request, not cached — a key file managed by sops-nix
-// is rewritten on each activation.
+// is rewritten on each activation. When provider is empty (AI off), no
+// environment variable is consulted.
 func (r Resolved) APIKeyValue() (string, error) {
-	if key := os.Getenv(keyEnvName(r.Config.LLM.Provider)); key != "" {
-		return key, nil
+	if envName := keyEnvName(r.Config.LLM.Provider); envName != "" {
+		if key := os.Getenv(envName); key != "" {
+			return key, nil
+		}
 	}
 	if r.Overrides.LLM.APIKey != "" {
 		return r.Overrides.LLM.APIKey, nil

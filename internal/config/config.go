@@ -124,10 +124,13 @@ func (c Config) DatabasePath() (string, error) {
 // (ANTHROPIC_API_KEY or OPENAI_API_KEY, per provider), then
 // api_key_file, then the inline api_key. Empty is allowed — local
 // providers need no key, and remote ones will fail with a clear error
-// on first use.
+// on first use. When provider is empty (AI off), keyEnvName returns
+// "" and no environment variable is consulted.
 func (l LLM) APIKeyValue() (string, error) {
-	if key := os.Getenv(keyEnvName(l.Provider)); key != "" {
-		return key, nil
+	if envName := keyEnvName(l.Provider); envName != "" {
+		if key := os.Getenv(envName); key != "" {
+			return key, nil
+		}
 	}
 	if l.APIKeyFile != "" {
 		raw, err := os.ReadFile(l.APIKeyFile)
@@ -140,11 +143,16 @@ func (l LLM) APIKeyValue() (string, error) {
 }
 
 // keyEnvName is the environment variable holding the key for a provider.
+// Empty provider has no associated environment variable.
 func keyEnvName(provider string) string {
-	if provider == ProviderOpenAICompat {
+	switch provider {
+	case ProviderOpenAICompat:
 		return "OPENAI_API_KEY"
+	case ProviderAnthropic:
+		return "ANTHROPIC_API_KEY"
+	default:
+		return ""
 	}
-	return "ANTHROPIC_API_KEY"
 }
 
 // dataDir returns the platform directory for application data. Data and
