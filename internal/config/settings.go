@@ -144,13 +144,13 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 		return Resolved{}, err
 	}
 
-	r := Resolved{Config: cfg}
-	r.Origins = Origins{
-		Provider: declaredOrigin(cfg.LLM.Provider != ""),
-		Model:    declaredOrigin(cfg.LLM.Model != ""),
-		BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
-	}
 	if cfg.Declarative {
+		r := Resolved{Config: cfg}
+		r.Origins = Origins{
+			Provider: declaredOrigin(cfg.LLM.Provider != ""),
+			Model:    declaredOrigin(cfg.LLM.Model != ""),
+			BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
+		}
 		r.Origins.APIKey = keyOrigin(cfg, Overrides{})
 		return r, nil
 	}
@@ -159,8 +159,24 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
-	r.Overrides = o
+	r, err := ResolveWith(cfg, o)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("settings %s: %w", settingsPath, err)
+	}
+	return r, nil
+}
 
+// ResolveWith merges an in-memory overrides layer onto an already-loaded
+// config, without touching disk. The settings screen needs the effective
+// result of a submission before it is saved, and Save/Check must not
+// duplicate this merge.
+func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
+	r := Resolved{Config: cfg, Overrides: o}
+	r.Origins = Origins{
+		Provider: declaredOrigin(cfg.LLM.Provider != ""),
+		Model:    declaredOrigin(cfg.LLM.Model != ""),
+		BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
+	}
 	if o.LLM.Provider != "" {
 		r.Config.LLM.Provider = o.LLM.Provider
 		r.Origins.Provider = OriginGUI
@@ -178,8 +194,8 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 	switch r.Config.LLM.Provider {
 	case "", ProviderAnthropic, ProviderOpenAICompat:
 	default:
-		return Resolved{}, fmt.Errorf("settings %s: unknown llm.provider %q (available: %s, %s)",
-			settingsPath, r.Config.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
+		return Resolved{}, fmt.Errorf("unknown llm.provider %q (available: %s, %s)",
+			r.Config.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
 	}
 	return r, nil
 }

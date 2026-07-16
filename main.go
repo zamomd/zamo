@@ -18,9 +18,8 @@ import (
 	"github.com/cominddev/comind/internal/config"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
-	"github.com/cominddev/comind/internal/llm/anthropic"
-	"github.com/cominddev/comind/internal/llm/openaicompat"
 	"github.com/cominddev/comind/internal/mcp"
+	"github.com/cominddev/comind/internal/settings"
 	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/cominddev/comind/internal/ulid"
 	"github.com/cominddev/comind/internal/wailsbind"
@@ -60,7 +59,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	svc, cleanup, err := buildService(ctx)
+	svc, holder, settingsPath, cleanup, err := buildService(ctx)
 	if err != nil {
 		return err
 	}
@@ -68,7 +67,7 @@ func run() error {
 
 	switch mode {
 	case "gui":
-		return runGUI(svc)
+		return runGUI(svc, settings.New(holder, settingsPath))
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -77,56 +76,48 @@ func run() error {
 }
 
 // buildService wires the dependencies: the only place where adapters
-// meet the core.
-func buildService(ctx context.Context) (*knowledge.Service, func(), error) {
-	cfg, err := config.Load("")
+// meet the core. It also hands back the live client holder and the settings
+// path, which the GUI mode needs to wire up the settings screen.
+func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string, func(), error) {
+	resolved, err := config.Resolve()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 
-	dbPath, err := cfg.DatabasePath()
+	dbPath, err := resolved.Config.DatabasePath()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	db, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
 
-	llmClient, err := buildLLMClient(cfg.LLM)
+	client, err := settings.BuildClient(resolved)
 	if err != nil {
 		db.Close()
-		return nil, nil, err
+		return nil, nil, "", nil, err
 	}
+	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	svc := knowledge.NewService(llmClient, sqlite.NewRepo(db, time.Now), newID, time.Now)
-	return svc, func() { db.Close() }, nil
-}
-
-func buildLLMClient(cfg config.LLM) (knowledge.LLMClient, error) {
-	switch cfg.Provider {
-	case "":
-		// No provider configured is a supported state: AI features are off,
-		// but the rest of the application (including comind mcp) works fully.
-		return llm.Disabled{}, nil
-	case config.ProviderAnthropic:
-		return anthropic.New(cfg.APIKeyValue, cfg.Model), nil
-	case config.ProviderOpenAICompat:
-		return openaicompat.New(cfg.BaseURL, cfg.APIKeyValue, cfg.Model), nil
-	default:
-		// Load validates the provider; this is unreachable.
-		return nil, fmt.Errorf("unknown llm provider %q", cfg.Provider)
+	settingsPath, err := config.SettingsPath()
+	if err != nil {
+		db.Close()
+		return nil, nil, "", nil, err
 	}
+
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, time.Now)
+	return svc, holder, settingsPath, func() { db.Close() }, nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.
-func runGUI(svc *knowledge.Service) error {
+func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
-			application.NewService(wailsbind.New(svc)),
+			application.NewService(wailsbind.New(svc, mgr)),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
