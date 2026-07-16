@@ -47,7 +47,14 @@ just check          # lint + race tests + go mod tidy -diff
 - `go build ./...` needs `frontend/dist` to exist; the committed
   `.gitkeep` guarantees it. Don't delete it.
 - After changing `internal/wailsbind` methods, regenerate the frontend
-  bindings: `wails3 generate bindings`.
+  bindings: `wails3 generate bindings -f '' -clean=true -ts -i` (the
+  flags are what `build/Taskfile.yml` uses; the bare command emits `.js`
+  and deletes the tracked `.ts` bindings).
+- `confirm()`, `alert()` and `prompt()` do nothing in the Wails webview:
+  v3 implements no `runJavaScriptConfirmPanelWithMessage:`, so WKUIDelegate
+  treats the call as cancelled and `confirm()` always returns false. Build
+  confirmation into the component. This passes in a browser tab under
+  `just dev` and only breaks in the packaged app.
 - `Taskfile.yml` and `build/` belong to the Wails toolchain — put team
   commands in `justfile`, and keep template modifications minimal so
   diffs against a freshly generated template stay readable.
