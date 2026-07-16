@@ -53,6 +53,12 @@ func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content str
 	return a.svc.EditBlockContent(ctx, id, content)
 }
 
+// Search passes the call to knowledge.Service. The frontend supplies the raw
+// query string; the backend owns the FTS syntax and its neutralisation.
+func (a *App) Search(ctx context.Context, query string) ([]knowledge.Block, error) {
+	return a.svc.Search(ctx, query)
+}
+
 // ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
 // directory chosen through the folder picker.
 func (a *App) ExportMarkdown(ctx context.Context, dir string) error {

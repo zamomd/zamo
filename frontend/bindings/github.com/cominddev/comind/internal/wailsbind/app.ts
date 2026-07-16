@@ -91,6 +91,14 @@ export function ReviewProposal(id: knowledge$0.ID): $CancellablePromise<knowledg
 }
 
 /**
+ * Search passes the call to knowledge.Service. The frontend supplies the raw
+ * query string; the backend owns the FTS syntax and its neutralisation.
+ */
+export function Search(query: string): $CancellablePromise<knowledge$0.Block[] | null> {
+    return $Call.ByID(1512770581, query);
+}
+
+/**
  * TopicMap passes the call to knowledge.Service.
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
