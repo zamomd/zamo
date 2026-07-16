@@ -15,13 +15,13 @@ func write(t *testing.T, content string) string {
 	return path
 }
 
-func TestLoadDefaults(t *testing.T) {
+func TestLoadWithoutProviderLeavesAIOff(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatalf("missing file must yield defaults, got: %v", err)
 	}
-	if cfg.LLM.Provider != ProviderAnthropic {
-		t.Errorf("default provider = %q, want %q", cfg.LLM.Provider, ProviderAnthropic)
+	if cfg.LLM.Provider != "" {
+		t.Errorf("provider = %q, want empty (no provider is a supported, AI-off state)", cfg.LLM.Provider)
 	}
 }
 

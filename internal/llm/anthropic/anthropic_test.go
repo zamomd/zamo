@@ -6,11 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/llm"
 )
 
 // newTestClient points a Client at a stub Messages API server.
@@ -18,7 +20,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	c := New("test-key", "")
+	c := New(llm.StaticKey("test-key"), "")
 	c.baseURL = srv.URL
 	return c
 }
@@ -79,6 +81,33 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 	}
 }
 
+func TestGenerateTreeReadsKeyPerRequest(t *testing.T) {
+	var gotKeys []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotKeys = append(gotKeys, r.Header.Get("X-Api-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"content\":\"root\"}"}]}`)
+	})
+
+	// A rotating source stands in for a key file rewritten by a sops-nix
+	// activation while the client is alive.
+	key := "old"
+	c.key = func() (string, error) { return key, nil }
+
+	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
+		t.Fatal(err)
+	}
+	key = "new"
+	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"old", "new"}
+	if !slices.Equal(gotKeys, want) {
+		t.Errorf("keys sent = %v, want %v (key must be read per request, not cached)", gotKeys, want)
+	}
+}
+
 func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 	var gotBody map[string]any
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -105,8 +134,37 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 	}
 }
 
+func TestPingChecksModelsEndpoint(t *testing.T) {
+	var gotPath, gotKey string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotKey = r.URL.Path, r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	})
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("path = %q, want /v1/models", gotPath)
+	}
+	if gotKey != "test-key" {
+		t.Errorf("X-Api-Key = %q, want test-key", gotKey)
+	}
+}
+
+func TestPingMapsUnauthorized(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"invalid x-api-key"}}`)
+	})
+	err := c.Ping(t.Context())
+	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+}
+
 func TestGenerateEditMissingKeyIsUnavailable(t *testing.T) {
-	c := New("", "")
+	c := New(llm.StaticKey(""), "")
 	_, err := c.GenerateEdit(t.Context(), []knowledge.Block{{ID: "01A", Content: "x"}}, "do a thing")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -194,7 +252,7 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 
 func TestGenerateTreeMissingKeyIsUnavailable(t *testing.T) {
 	// No key configured must fail before any network call, as unavailable.
-	c := New("", "")
+	c := New(llm.StaticKey(""), "")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -207,7 +265,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	c := New("test-key", "")
+	c := New(llm.StaticKey("test-key"), "")
 	c.baseURL = url
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")

@@ -9,4 +9,7 @@ type LLMClient interface {
 	// GenerateEdit proposes a structure edit for the given scope
 	// (a block or a subtree) based on a user's text instruction.
 	GenerateEdit(ctx context.Context, scope []Block, instruction string) ([]Op, error)
+	// Ping reports whether the provider is reachable and the credentials are
+	// accepted. The settings screen calls it; no use case depends on it.
+	Ping(ctx context.Context) error
 }

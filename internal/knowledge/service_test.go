@@ -81,6 +81,8 @@ type fakeLLM struct {
 	editErr        error
 	gotScope       []Block
 	gotInstruction string
+
+	pingErr error
 }
 
 func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, error) {
@@ -92,6 +94,8 @@ func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction str
 	l.gotScope, l.gotInstruction = scope, instruction
 	return l.editOps, l.editErr
 }
+
+func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
 
 func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
 	return f.pending, f.listErr

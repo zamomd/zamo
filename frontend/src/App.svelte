@@ -3,14 +3,16 @@
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import BaseView from "./BaseView.svelte";
 	import ReviewView from "./ReviewView.svelte";
+	import SettingsView from "./SettingsView.svelte";
 
-	// Tab shell: the Base view (the tree) and the Review view (the pending
-	// queue). Switching tabs remounts the view, so each one re-reads its data.
+	// Tab shell: the Base view (the tree), the Review view (the pending
+	// queue), and Settings (the provider configuration). Switching tabs
+	// remounts the view, so each one re-reads its data.
 	// The window has no push channel from the MCP server, so it re-reads the
 	// pending queue itself on a timer (and on focus) — see #15: no daemon, no bus.
 	const POLL_MS = 5000;
 
-	let tab: "base" | "review" = $state("base");
+	let tab: "base" | "review" | "settings" = $state("base");
 	let pendingCount = $state(0);
 
 	async function refreshCount(): Promise<void> {
@@ -52,12 +54,17 @@
 		<button type="button" class:active={tab === "review"} onclick={() => (tab = "review")}>
 			Review ({pendingCount})
 		</button>
+		<button type="button" class:active={tab === "settings"} onclick={() => (tab = "settings")}>
+			Settings
+		</button>
 	</nav>
 
 	{#if tab === "base"}
 		<BaseView onqueued={queued} />
-	{:else}
+	{:else if tab === "review"}
 		<ReviewView onchanged={refreshCount} />
+	{:else}
+		<SettingsView />
 	{/if}
 </main>
 

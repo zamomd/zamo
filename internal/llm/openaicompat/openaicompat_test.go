@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/llm"
 )
 
 // tree is a canned expansion the stub server returns as the model's message
@@ -27,7 +28,7 @@ func newTestClient(t *testing.T, apiKey string, handler http.HandlerFunc) *Clien
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, apiKey, "llama3")
+	return New(srv.URL, llm.StaticKey(apiKey), "llama3")
 }
 
 func TestGenerateTreeParsesReply(t *testing.T) {
@@ -108,7 +109,7 @@ func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL+"/", "test-key", "llama3")
+	c := New(srv.URL+"/", llm.StaticKey("test-key"), "llama3")
 	if _, err := c.GenerateTree(t.Context(), "Go contexts", ""); err != nil {
 		t.Fatalf("GenerateTree with trailing slash: %v", err)
 	}
@@ -129,6 +130,47 @@ func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMBadResponse) {
 		t.Errorf("error = %v, want ErrLLMBadResponse (empty first choice, no splicing)", err)
+	}
+}
+
+func TestPingChecksModelsEndpoint(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/v1", llm.StaticKey("test-key"), "llama3")
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("path = %q, want /v1/models", gotPath)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want Bearer test-key", gotAuth)
+	}
+}
+
+func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
+	// Local providers (Ollama, LM Studio) need no key; a bare Bearer header
+	// makes some of them reject the request.
+	var hadAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hadAuth = r.Header["Authorization"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/v1", llm.StaticKey(""), "llama3")
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if hadAuth {
+		t.Error("Authorization header sent with an empty key, want none")
 	}
 }
 
@@ -212,7 +254,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	url := srv.URL
 	srv.Close() // Do() now fails at the transport layer
 
-	c := New(url, "test-key", "llama3")
+	c := New(url, llm.StaticKey("test-key"), "llama3")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)

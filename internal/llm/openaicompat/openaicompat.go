@@ -31,21 +31,22 @@ const (
 // It sticks to the lowest common denominator of the OpenAI dialects:
 // provider quirks stay inside this package.
 type Client struct {
-	baseURL string // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
-	apiKey  string // may be empty (local models)
+	baseURL string        // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
+	key     llm.KeySource // may yield an empty key (local models)
 	model   string
 	http    *http.Client
 }
 
 var _ knowledge.LLMClient = (*Client)(nil)
 
-// New creates a Client. apiKey may be empty for local providers. A trailing
-// slash on baseURL is trimmed so a hand-edited ".../v1/" config does not become
-// ".../v1//chat/completions" and 404.
-func New(baseURL, apiKey, model string) *Client {
+// New creates a Client. The key source may yield an empty key for local
+// providers; it is read on every request, never cached (see llm.KeySource). A
+// trailing slash on baseURL is trimmed so a hand-edited ".../v1/" config does
+// not become ".../v1//chat/completions" and 404.
+func New(baseURL string, key llm.KeySource, model string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
+		key:     key,
 		model:   model,
 		http: &http.Client{
 			Timeout: 60 * time.Second,
@@ -98,8 +99,8 @@ type apiError struct {
 func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
-		// The prompt template is embedded, so this only fails on a build defect;
-		// map it to unavailable so the request-cannot-be-made contract holds.
+		// The template is embedded; failing to render it is a build defect,
+		// still "the request cannot be made".
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	text, err := c.complete(ctx, prompt)
@@ -112,6 +113,11 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 // complete performs one chat-completions call and returns the content of the
 // reply's first choice.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
+	key, err := c.key()
+	if err != nil {
+		return "", fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+
 	payload, err := json.Marshal(chatRequest{
 		Model:     c.model,
 		MaxTokens: maxTokens,
@@ -127,8 +133,8 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" { // a local model is reached without a key
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if key != "" { // a local model is reached without a key
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
 	resp, err := c.http.Do(req)
@@ -150,18 +156,48 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	if parsed.Choices == nil {
-		// A 2xx body that isn't the chat envelope means something between us and
-		// the model (proxy, CDN) answered — the model did not. Only the model's
-		// own text failing to parse (ParseOps, downstream) is a bad response.
+		// A 2xx body without the chat envelope means a proxy or CDN answered,
+		// not the model — unavailable, not a bad response.
 		return "", fmt.Errorf("%w: response is not a chat-completions envelope", knowledge.ErrLLMUnavailable)
 	}
-	// The answer is the first choice; further choices are alternative completions,
-	// never continuations, so they are not concatenated. An empty choice list
-	// yields empty text, which ParseOps reports as a bad response.
+	// Further choices are alternative completions, never continuations, so
+	// only the first is read.
 	if choices := *parsed.Choices; len(choices) > 0 {
 		return choices[0].Message.Content, nil
 	}
 	return "", nil
+}
+
+// Ping implements knowledge.LLMClient: it checks that the endpoint is
+// reachable and the key, if any, is accepted. baseURL already carries the /v1
+// prefix, so the models endpoint hangs directly off it. It deliberately does
+// not exercise the configured model — a typo in the model name surfaces on the
+// first expansion, not here.
+func (c *Client) Ping(ctx context.Context) error {
+	key, err := c.key()
+	if err != nil {
+		return fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxReplyBytes))
+		return statusError(resp.StatusCode, body)
+	}
+	return nil
 }
 
 // statusError turns a non-2xx response into ErrLLMUnavailable, folding in the

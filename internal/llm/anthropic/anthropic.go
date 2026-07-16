@@ -33,7 +33,7 @@ const (
 
 // Client talks to the Anthropic Messages API.
 type Client struct {
-	apiKey  string
+	key     llm.KeySource
 	model   string
 	baseURL string
 	http    *http.Client
@@ -41,13 +41,14 @@ type Client struct {
 
 var _ knowledge.LLMClient = (*Client)(nil)
 
-// New creates a Client. An empty model selects DefaultModel.
-func New(apiKey, model string) *Client {
+// New creates a Client. An empty model selects DefaultModel. The key is read
+// through the source on every request, never cached: see llm.KeySource.
+func New(key llm.KeySource, model string) *Client {
 	if model == "" {
 		model = DefaultModel
 	}
 	return &Client{
-		apiKey:  apiKey,
+		key:     key,
 		model:   model,
 		baseURL: defaultBaseURL,
 		http: &http.Client{
@@ -96,13 +97,10 @@ type apiError struct {
 // key and HTTP-status failures map to ErrLLMUnavailable; a reply that will not
 // parse maps to ErrLLMBadResponse (via ParseOps).
 func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
-	}
 	prompt, err := llm.ExpandPrompt(topic, hint)
 	if err != nil {
-		// The prompt template is embedded, so this only fails on a build defect;
-		// map it to unavailable so the request-cannot-be-made contract holds.
+		// The template is embedded; failing to render it is a build defect,
+		// still "the request cannot be made".
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	text, err := c.complete(ctx, prompt)
@@ -115,6 +113,14 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 // complete performs one Messages API call and returns the concatenated text of
 // the reply's text blocks.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
+	key, err := c.key()
+	if err != nil {
+		return "", fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	if key == "" {
+		return "", fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
+	}
+
 	payload, err := json.Marshal(messagesRequest{
 		Model:     c.model,
 		MaxTokens: maxTokens,
@@ -129,7 +135,7 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("X-Api-Key", key)
 	req.Header.Set("Anthropic-Version", apiVersion)
 
 	resp, err := c.http.Do(req)
@@ -151,9 +157,8 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	if parsed.Content == nil {
-		// A 2xx body that isn't the Messages envelope means something between us
-		// and the model (proxy, CDN) answered — the model did not. Only the
-		// model's own text failing to parse (ParseOps, downstream) is a bad response.
+		// A 2xx body without the Messages envelope means a proxy or CDN
+		// answered, not the model — unavailable, not a bad response.
 		return "", fmt.Errorf("%w: response is not a Messages envelope", knowledge.ErrLLMUnavailable)
 	}
 	var text bytes.Buffer
@@ -163,6 +168,39 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 		}
 	}
 	return text.String(), nil
+}
+
+// Ping implements knowledge.LLMClient: it checks that the endpoint is
+// reachable and the key is accepted, with the cheapest call the API offers.
+// It deliberately does not exercise the configured model — a typo in the model
+// name surfaces on the first expansion, not here.
+func (c *Client) Ping(ctx context.Context) error {
+	key, err := c.key()
+	if err != nil {
+		return fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	if key == "" {
+		return fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models", nil)
+	if err != nil {
+		return fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	req.Header.Set("X-Api-Key", key)
+	req.Header.Set("Anthropic-Version", apiVersion)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxReplyBytes))
+		return statusError(resp.StatusCode, body)
+	}
+	return nil
 }
 
 // statusError turns a non-2xx response into ErrLLMUnavailable, folding in the
@@ -175,19 +213,13 @@ func statusError(status int, body []byte) error {
 	return fmt.Errorf("%w: HTTP %d", knowledge.ErrLLMUnavailable, status)
 }
 
-// GenerateEdit implements knowledge.LLMClient. It renders the edit prompt for
-// the scope and instruction, calls the Messages API, and parses the reply into
-// restructuring operations. Error mapping matches GenerateTree: transport, key
-// and HTTP-status failures are ErrLLMUnavailable; a reply that will not parse is
-// ErrLLMBadResponse (via ParseEditOps).
+// GenerateEdit implements knowledge.LLMClient. Error mapping matches
+// GenerateTree.
 func (c *Client) GenerateEdit(
 	ctx context.Context,
 	scope []knowledge.Block,
 	instruction string,
 ) ([]knowledge.Op, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("%w: no API key configured", knowledge.ErrLLMUnavailable)
-	}
 	prompt, err := llm.EditPrompt(scope, instruction)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)

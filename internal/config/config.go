@@ -23,13 +23,22 @@ type Config struct {
 	// directory. The COMIND_DB environment variable overrides both.
 	Database string `toml:"database"`
 
+	// Declarative turns off the mutable settings layer: settings.toml is
+	// neither read nor written, and the GUI shows values read-only. It lives
+	// here and not in settings.toml on purpose — otherwise the GUI could
+	// unlock itself.
+	Declarative bool `toml:"declarative"`
+
 	LLM LLM `toml:"llm"`
 }
 
 // LLM selects and configures the model provider.
 type LLM struct {
-	// Provider is "anthropic" (default) or "openai-compatible"
-	// (OpenAI, OpenRouter, DeepSeek, local Ollama / LM Studio).
+	// Provider is "anthropic" or "openai-compatible" (OpenAI, OpenRouter,
+	// DeepSeek, local Ollama / LM Studio). Empty is valid and means "no
+	// provider configured": the GUI's AI features (ExpandTopic, ProposeEdit)
+	// are off, but the rest of the application — including comind mcp, where
+	// the AI is the MCP client rather than this field — works fully.
 	Provider string `toml:"provider"`
 	// Model is the model name; empty selects the provider's default.
 	Model string `toml:"model"`
@@ -82,11 +91,8 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	if cfg.LLM.Provider == "" {
-		cfg.LLM.Provider = ProviderAnthropic
-	}
 	switch cfg.LLM.Provider {
-	case ProviderAnthropic, ProviderOpenAICompat:
+	case "", ProviderAnthropic, ProviderOpenAICompat:
 	default:
 		return cfg, fmt.Errorf("config %s: unknown llm.provider %q (available: %s, %s)",
 			path, cfg.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
@@ -115,17 +121,14 @@ func (c Config) DatabasePath() (string, error) {
 }
 
 // APIKeyValue resolves the provider key: environment variable first
-// (ANTHROPIC_API_KEY or OPENAI_API_KEY, per provider), then
-// api_key_file, then the inline api_key. Empty is allowed — local
-// providers need no key, and remote ones will fail with a clear error
-// on first use.
+// (per provider; none when the provider is empty), then api_key_file,
+// then the inline api_key. Empty is allowed — local providers need no
+// key, and remote ones fail with a clear error on first use.
 func (l LLM) APIKeyValue() (string, error) {
-	envName := "ANTHROPIC_API_KEY"
-	if l.Provider == ProviderOpenAICompat {
-		envName = "OPENAI_API_KEY"
-	}
-	if key := os.Getenv(envName); key != "" {
-		return key, nil
+	if envName := keyEnvName(l.Provider); envName != "" {
+		if key := os.Getenv(envName); key != "" {
+			return key, nil
+		}
 	}
 	if l.APIKeyFile != "" {
 		raw, err := os.ReadFile(l.APIKeyFile)
@@ -135,6 +138,24 @@ func (l LLM) APIKeyValue() (string, error) {
 		return strings.TrimSpace(string(raw)), nil
 	}
 	return l.APIKey, nil
+}
+
+// KeyEnvName reports the environment variable holding the key for a provider;
+// empty when the provider has none. It is the single source of the mapping —
+// error messages that name the variable must use it too.
+func KeyEnvName(provider string) string {
+	return keyEnvName(provider)
+}
+
+func keyEnvName(provider string) string {
+	switch provider {
+	case ProviderOpenAICompat:
+		return "OPENAI_API_KEY"
+	case ProviderAnthropic:
+		return "ANTHROPIC_API_KEY"
+	default:
+		return ""
+	}
 }
 
 // dataDir returns the platform directory for application data. Data and
