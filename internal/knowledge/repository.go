@@ -7,6 +7,7 @@ import "context"
 type Repository interface {
 	GetTopics(ctx context.Context) ([]Block, error)
 	GetSubtree(ctx context.Context, root ID) ([]Block, error)
+	GetBlocks(ctx context.Context, ids []ID) (map[ID]Block, error)
 	EditBlockContent(ctx context.Context, id ID, content string) error
 
 	SaveProposal(ctx context.Context, p Proposal) error

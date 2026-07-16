@@ -31,6 +31,14 @@ export function EditBlockContent(id: knowledge$0.ID, content: string): $Cancella
 }
 
 /**
+ * EffectiveSelection previews the apply cascade for the review screen; pure,
+ * no storage.
+ */
+export function EffectiveSelection(ops: knowledge$0.Op[] | null, selected: number[] | null): $CancellablePromise<number[] | null> {
+    return $Call.ByID(4086196224, ops, selected);
+}
+
+/**
  * ExpandTopic passes the call to knowledge.Service.
  */
 export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Proposal> {
@@ -53,11 +61,33 @@ export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
+ * PendingProposals passes the call to knowledge.Service: the review queue.
+ */
+export function PendingProposals(): $CancellablePromise<knowledge$0.Proposal[] | null> {
+    return $Call.ByID(3915205231);
+}
+
+/**
  * ProposeEdit passes the call to knowledge.Service. The frontend supplies the
  * scope (a block or subtree root) and the user's text command.
  */
 export function ProposeEdit(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Proposal> {
     return $Call.ByID(3160651725, scope, instruction);
+}
+
+/**
+ * RejectProposal passes the call to knowledge.Service.
+ */
+export function RejectProposal(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(4105028376, id);
+}
+
+/**
+ * ReviewProposal passes the call to knowledge.Service: a pending proposal
+ * annotated with stale flags and current content for the review screen.
+ */
+export function ReviewProposal(id: knowledge$0.ID): $CancellablePromise<knowledge$0.ProposalReview> {
+    return $Call.ByID(3740461967, id);
 }
 
 /**

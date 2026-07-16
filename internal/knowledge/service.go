@@ -78,23 +78,12 @@ func (s *Service) PendingProposals(ctx context.Context) ([]Proposal, error) {
 // into Proposal.Ops; operations depending on removed ones are dropped
 // in cascade), then storage applies them in a single transaction.
 func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) error {
-	pending, err := s.repo.ListProposals(ctx, StatusPending)
-	if err != nil {
-		return err
-	}
 	// Only a pending proposal can be applied; a decided or unknown id is not in
 	// this queue. Storage re-checks under the write lock, so this read need not be
 	// transactional.
-	var p Proposal
-	found := false
-	for _, cand := range pending {
-		if cand.ID == id {
-			p, found = cand, true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("proposal %s: %w", id, ErrNotPending)
+	p, err := s.pendingProposal(ctx, id)
+	if err != nil {
+		return err
 	}
 
 	ops, err := assemble(p, selected, s.newID)
@@ -102,6 +91,21 @@ func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) erro
 		return err
 	}
 	return s.repo.ApplyProposal(ctx, id, ops)
+}
+
+// pendingProposal finds a proposal in the pending queue. A decided or unknown
+// id is not there: ErrNotPending.
+func (s *Service) pendingProposal(ctx context.Context, id ID) (Proposal, error) {
+	pending, err := s.repo.ListProposals(ctx, StatusPending)
+	if err != nil {
+		return Proposal{}, err
+	}
+	for _, cand := range pending {
+		if cand.ID == id {
+			return cand, nil
+		}
+	}
+	return Proposal{}, fmt.Errorf("proposal %s: %w", id, ErrNotPending)
 }
 
 // RejectProposal declines a pending proposal; nothing reaches the base.

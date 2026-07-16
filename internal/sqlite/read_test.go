@@ -260,6 +260,34 @@ func TestSearchEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestGetBlocks(t *testing.T) {
+	ctx := t.Context()
+	db := openTestDB(t)
+	insertBlock(ctx, t, db, "01A", "", 0, "alpha")
+	insertBlock(ctx, t, db, "01B", "01A", 0, "beta")
+
+	got, err := r(db).GetBlocks(ctx, []knowledge.ID{"01A", "01GONE", "01B"})
+	if err != nil {
+		t.Fatalf("GetBlocks: %v", err)
+	}
+	if len(got) != 2 || got["01A"].Content != "alpha" || got["01B"].Content != "beta" {
+		t.Errorf("blocks = %+v, want 01A and 01B", got)
+	}
+	if _, ok := got["01GONE"]; ok {
+		t.Error("a missing id must be absent, not present")
+	}
+}
+
+func TestGetBlocksEmptyInput(t *testing.T) {
+	ctx := t.Context()
+	db := openTestDB(t)
+
+	got, err := r(db).GetBlocks(ctx, nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("GetBlocks(nil) = %v, %v, want empty map and no error", got, err)
+	}
+}
+
 // r wraps a db in the repository under test.
 func r(db *sql.DB) *Repo { return NewRepo(db, time.Now) }
 

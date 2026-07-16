@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -303,5 +304,42 @@ func TestAssembleResolvesAndOrders(t *testing.T) {
 		if got[i].Content != w.content {
 			t.Errorf("op %d Content = %q, want %q", i, got[i].Content, w.content)
 		}
+	}
+}
+
+func TestEffectiveSelectionCascades(t *testing.T) {
+	// t1 ← t2 ← t3 chain plus one op on an existing block. Deselecting the
+	// middle add must drop its child, keep the root add and the edit.
+	ops := []Op{
+		addOp("t1", "", "root"),
+		addOp("t2", "t1", "child"),
+		addOp("t3", "t2", "grandchild"),
+		{Kind: OpEdit, BlockID: "01EXIST", Content: "new"},
+	}
+	got := EffectiveSelection(ops, []int{0, 2, 3}) // t2 deselected
+	if want := []int{0, 3}; !slices.Equal(got, want) {
+		t.Errorf("EffectiveSelection = %v, want %v (t3 cascades out with t2)", got, want)
+	}
+}
+
+func TestEffectiveSelectionKeepsExistingRefs(t *testing.T) {
+	// A move under an existing block never cascades; link endpoints on temp
+	// blocks do.
+	ops := []Op{
+		addOp("t1", "", "root"),
+		{Kind: OpMove, BlockID: "01B", Parent: "01EXIST"},
+		{Kind: OpLink, From: "t1", To: "01B"},
+	}
+	got := EffectiveSelection(ops, []int{1, 2}) // the add deselected
+	if want := []int{1}; !slices.Equal(got, want) {
+		t.Errorf("EffectiveSelection = %v, want %v (link to t1 cascades out)", got, want)
+	}
+}
+
+func TestEffectiveSelectionNormalizesInput(t *testing.T) {
+	ops := []Op{addOp("t1", "", "a"), addOp("t2", "", "b")}
+	got := EffectiveSelection(ops, []int{1, 1, -5, 99, 0})
+	if want := []int{0, 1}; !slices.Equal(got, want) {
+		t.Errorf("EffectiveSelection = %v, want %v (dedup, drop out-of-range, sort)", got, want)
 	}
 }

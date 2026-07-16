@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -19,8 +20,7 @@ func assemble(p Proposal, selected []int, newID IDGenerator) ([]Op, error) {
 	if err := validateAdds(p.Ops); err != nil {
 		return nil, err
 	}
-	chosen := selectOps(p.Ops, selected)
-	chosen = cascade(chosen, proposalTempIDs(p.Ops))
+	chosen := opsAt(p.Ops, EffectiveSelection(p.Ops, selected))
 
 	if hasCycle(chosen) {
 		return nil, ErrCycle
@@ -82,21 +82,6 @@ func validateAdds(ops []Op) error {
 	return nil
 }
 
-// selectOps keeps the ops at the given indexes, in their original order,
-// ignoring out-of-range and duplicate indexes.
-func selectOps(ops []Op, selected []int) []Op {
-	seen := make(map[int]bool, len(selected))
-	chosen := make([]Op, 0, len(selected))
-	for _, i := range selected {
-		if i < 0 || i >= len(ops) || seen[i] {
-			continue
-		}
-		seen[i] = true
-		chosen = append(chosen, ops[i])
-	}
-	return chosen
-}
-
 // proposalTempIDs is the set of every temp id the proposal's adds introduce,
 // used to tell a reference to a (possibly unselected) new block apart from a
 // reference to an existing block.
@@ -110,36 +95,53 @@ func proposalTempIDs(ops []Op) map[string]bool {
 	return temps
 }
 
-// cascade drops ops that reference a temp block no surviving add creates: a
-// reference to an unselected add's temp id would dangle. Removal repeats to a
-// fixpoint, so dropping a block also drops everything hanging off it. A
-// reference to an existing block (an id not in allTemp) is always kept.
-func cascade(chosen []Op, allTemp map[string]bool) []Op {
+// EffectiveSelection resolves the user's selection into the op indexes that
+// would actually apply: out-of-range and duplicate indexes are ignored, and an
+// op referencing a temp block whose add is not selected is dropped, to a
+// fixpoint. Exported so the review screen previews exactly what assemble will
+// do. The order of selected is not significant; only membership matters. The
+// result is ascending.
+func EffectiveSelection(ops []Op, selected []int) []int {
+	keep := make(map[int]bool, len(selected))
+	for _, i := range selected {
+		if i >= 0 && i < len(ops) {
+			keep[i] = true
+		}
+	}
+	allTemp := proposalTempIDs(ops)
 	for {
-		created := make(map[string]bool, len(chosen))
-		for _, op := range chosen {
-			if op.Kind == OpAdd && op.TempID != "" {
-				created[op.TempID] = true
+		created := make(map[string]bool, len(keep))
+		for i := range ops {
+			if keep[i] && ops[i].Kind == OpAdd && ops[i].TempID != "" {
+				created[ops[i].TempID] = true
 			}
 		}
-		kept := make([]Op, 0, len(chosen))
-		for _, op := range chosen {
-			dangling := false
-			for _, ref := range tempRefs(op) {
+		dropped := false
+		for i := range ops {
+			if !keep[i] {
+				continue
+			}
+			for _, ref := range tempRefs(ops[i]) {
 				if allTemp[ref] && !created[ref] {
-					dangling = true
+					delete(keep, i)
+					dropped = true
 					break
 				}
 			}
-			if !dangling {
-				kept = append(kept, op)
-			}
 		}
-		if len(kept) == len(chosen) {
-			return kept
+		if !dropped {
+			return slices.Sorted(maps.Keys(keep))
 		}
-		chosen = kept
 	}
+}
+
+// opsAt returns the ops at the given indexes, in index order.
+func opsAt(ops []Op, idx []int) []Op {
+	out := make([]Op, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, ops[i])
+	}
+	return out
 }
 
 // hasCycle reports whether the ops' parent relationships form a ring. Edges run

@@ -13,5 +13,7 @@ export type {
     ID,
     Metadata,
     Op,
-    Proposal
+    OpReview,
+    Proposal,
+    ProposalReview
 } from "./models.js";
