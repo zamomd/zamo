@@ -142,6 +142,13 @@ func (l LLM) APIKeyValue() (string, error) {
 	return l.APIKey, nil
 }
 
+// KeyEnvName exposes keyEnvName to callers outside this package (e.g.
+// internal/settings, which names the variable in a refusal message) so the
+// provider-to-variable mapping has a single source of truth.
+func KeyEnvName(provider string) string {
+	return keyEnvName(provider)
+}
+
 // keyEnvName is the environment variable holding the key for a provider.
 // Empty provider has no associated environment variable.
 func keyEnvName(provider string) string {

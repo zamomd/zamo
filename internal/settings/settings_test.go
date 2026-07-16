@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cominddev/comind/internal/config"
@@ -242,19 +243,55 @@ func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
 
 func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
 	// OPENAI_API_KEY is set; submitting an openai-compatible key by hand must
-	// still be refused, and must write nothing.
+	// still be refused, and must write nothing. The message must name the
+	// actual environment variable so the user knows what to clear and retry.
 	m, _, setPath := newManager(t, "")
 	t.Setenv("OPENAI_API_KEY", "ambient-openai-key")
 
 	err := m.Save(t.Context(), In{
 		Provider: config.ProviderOpenAICompat,
+		BaseURL:  "http://127.0.0.1:1/v1",
 		APIKey:   "sk-typed",
 	})
 	if err == nil {
 		t.Fatal("Save = nil, want an error: the submitted provider's own env var must block an override")
 	}
+	if !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Errorf("error = %q, want it to name OPENAI_API_KEY so the user knows what to clear", err.Error())
+	}
 	if _, statErr := os.Stat(setPath); !os.IsNotExist(statErr) {
 		t.Error("settings.toml was written even though the guard should have refused the submission")
+	}
+}
+
+func TestSaveRejectsOpenAICompatWithoutBaseURL(t *testing.T) {
+	// openai-compatible only exists to point at an endpoint; with none
+	// declared anywhere, the submission must be refused before anything is
+	// written, rather than saving happily and failing opaquely later.
+	m, _, setPath := newManager(t, "")
+
+	err := m.Save(t.Context(), In{Provider: config.ProviderOpenAICompat})
+	if err == nil {
+		t.Fatal("Save = nil, want an error: openai-compatible needs a base URL")
+	}
+	if _, statErr := os.Stat(setPath); !os.IsNotExist(statErr) {
+		t.Error("settings.toml was written despite the missing base URL")
+	}
+}
+
+func TestSaveAllowsOpenAICompatWithBaseURLFromConfig(t *testing.T) {
+	// The base URL is declared in config.toml, not in the submission; the
+	// guard must check the resolved value, not in.BaseURL, or this legitimate
+	// save would be refused too.
+	configTOML := "[llm]\nprovider = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n"
+	m, _, setPath := newManager(t, configTOML)
+
+	err := m.Save(t.Context(), In{Provider: config.ProviderOpenAICompat})
+	if err != nil {
+		t.Fatalf("Save = %v, want nil: a base URL declared in config.toml should satisfy the guard", err)
+	}
+	if _, statErr := os.Stat(setPath); statErr != nil {
+		t.Errorf("settings.toml was not written: %v", statErr)
 	}
 }
 

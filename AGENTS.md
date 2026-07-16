@@ -29,9 +29,16 @@ just check          # lint + race tests + go mod tidy -diff
   `for i := range n`, `new(expr)`.
 - `context.Context` is the first argument of every method that crosses
   a boundary.
-- Config: TOML at `~/.config/comind/config.toml`, precedence
-  env > file > defaults; secrets via `api_key_file` or env, never
-  committed. The database lives in the XDG data dir, not the config dir.
+- Config: `config.toml` (`~/.config/comind/config.toml`) is declarative
+  and read-only to the app — safe to be a nix-store symlink. The GUI
+  writes a separate mutable layer, `settings.toml`, in the XDG data
+  dir (0600; only fields the user changed in the GUI land there, may
+  hold the key). Precedence: env > settings.toml > config.toml >
+  defaults. `declarative = true` in config.toml (only) turns the
+  mutable layer off entirely, so the GUI cannot unlock itself. The LLM
+  provider has no default; empty means AI features are off. Secrets
+  via `api_key_file` or env, never committed. The database lives in
+  the XDG data dir, not the config dir.
 - Prompts are embedded template files in `internal/llm/prompts/` —
   edit them there, not as string literals in Go.
 

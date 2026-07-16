@@ -135,6 +135,15 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	if err != nil {
 		return err
 	}
+	// Checked against the resolved value, not in.BaseURL: a submission that
+	// relies on a base_url already declared in config.toml must still be
+	// accepted. openai-compatible only exists to point at some endpoint
+	// (OpenAI, OpenRouter, Ollama, LM Studio...), so without one it saves a
+	// provider that can never work and fails later with an opaque transport
+	// error instead of this clear one.
+	if resolved.Config.LLM.Provider == config.ProviderOpenAICompat && resolved.Config.LLM.BaseURL == "" {
+		return errors.New("openai-compatible requires a base URL")
+	}
 	// Checked against the newly-resolved state, i.e. the provider being
 	// submitted: config.keyOrigin already looks at whichever provider it is
 	// given, so this correctly guards the submitted provider's env var rather
@@ -143,7 +152,9 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	// SaveOverrides, so a refusal leaves both the file and the live client
 	// untouched.
 	if resolved.Origins.APIKey == config.OriginEnv && in.APIKey != "" {
-		return errors.New("the API key comes from the environment and cannot be overridden here")
+		envName := config.KeyEnvName(resolved.Config.LLM.Provider)
+		return fmt.Errorf("%s already supplies the API key and is in use; "+
+			"clear the key field and save again to keep the rest of your change", envName)
 	}
 	client, err := BuildClient(resolved)
 	if err != nil {
@@ -192,8 +203,7 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 // provider. An empty field drops the override rather than storing an empty
 // string: absent means "not overridden", "" would be a real override. An
 // empty provider is accepted too — it means "not overridden", not "AI off";
-// config.ResolveWith is what turns an all-empty result into the disabled
-// state.
+// BuildClient is what turns an all-empty result into the disabled state.
 func (m *Manager) overrides(current config.Resolved, in In) (config.Overrides, error) {
 	if in.Provider != "" && in.Provider != config.ProviderAnthropic && in.Provider != config.ProviderOpenAICompat {
 		return config.Overrides{}, fmt.Errorf("unknown llm provider %q (available: %s, %s)",
