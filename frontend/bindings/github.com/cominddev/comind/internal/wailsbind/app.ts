@@ -14,12 +14,23 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as knowledge$0 from "../knowledge/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as settings$0 from "../settings/models.js";
 
 /**
  * ApplyProposal passes the call to knowledge.Service.
  */
 export function ApplyProposal(id: knowledge$0.ID, selected: number[] | null): $CancellablePromise<void> {
     return $Call.ByID(3093822193, id, selected);
+}
+
+/**
+ * CheckSettings passes the call to settings.Manager: a reachability check for
+ * values the user has not saved yet.
+ */
+export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
+    return $Call.ByID(1418756582, $in);
 }
 
 /**
@@ -91,11 +102,28 @@ export function ReviewProposal(id: knowledge$0.ID): $CancellablePromise<knowledg
 }
 
 /**
+ * SaveSettings passes the call to settings.Manager. It takes effect
+ * immediately: the live client is swapped, no restart.
+ */
+export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
+    return $Call.ByID(2896257, $in);
+}
+
+/**
  * Search passes the call to knowledge.Service. The frontend supplies the raw
  * query string; the backend owns the FTS syntax and its neutralisation.
  */
 export function Search(query: string): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(1512770581, query);
+}
+
+/**
+ * Settings passes the call to settings.Manager: the effective provider
+ * configuration and the origin of each field. The API key is never part of the
+ * result — only whether one is set.
+ */
+export function Settings(): $CancellablePromise<settings$0.View> {
+    return $Call.ByID(4032669524);
 }
 
 /**

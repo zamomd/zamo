@@ -7,16 +7,20 @@ import (
 	"context"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/settings"
 )
 
 // App is the object bound into the Wails runtime; the frontend calls
 // its methods.
 type App struct {
-	svc *knowledge.Service
+	svc      *knowledge.Service
+	settings *settings.Manager
 }
 
-// New wraps the service for binding.
-func New(svc *knowledge.Service) *App { return &App{svc: svc} }
+// New wraps the service and the settings manager for binding.
+func New(svc *knowledge.Service, mgr *settings.Manager) *App {
+	return &App{svc: svc, settings: mgr}
+}
 
 // The methods below are direct pass-throughs; the Wails frontend binds
 // to them. The set grows with the screens (tree, review, search, export).
@@ -85,4 +89,23 @@ func (a *App) ReviewProposal(ctx context.Context, id knowledge.ID) (knowledge.Pr
 // no storage.
 func (a *App) EffectiveSelection(_ context.Context, ops []knowledge.Op, selected []int) []int {
 	return knowledge.EffectiveSelection(ops, selected)
+}
+
+// Settings passes the call to settings.Manager: the effective provider
+// configuration and the origin of each field. The API key is never part of the
+// result — only whether one is set.
+func (a *App) Settings(ctx context.Context) (settings.View, error) {
+	return a.settings.Current(ctx)
+}
+
+// SaveSettings passes the call to settings.Manager. It takes effect
+// immediately: the live client is swapped, no restart.
+func (a *App) SaveSettings(ctx context.Context, in settings.In) error {
+	return a.settings.Save(ctx, in)
+}
+
+// CheckSettings passes the call to settings.Manager: a reachability check for
+// values the user has not saved yet.
+func (a *App) CheckSettings(ctx context.Context, in settings.In) error {
+	return a.settings.Check(ctx, in)
 }
