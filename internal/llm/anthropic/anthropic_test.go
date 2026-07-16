@@ -134,6 +134,35 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 	}
 }
 
+func TestPingChecksModelsEndpoint(t *testing.T) {
+	var gotPath, gotKey string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotKey = r.URL.Path, r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	})
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("path = %q, want /v1/models", gotPath)
+	}
+	if gotKey != "test-key" {
+		t.Errorf("X-Api-Key = %q, want test-key", gotKey)
+	}
+}
+
+func TestPingMapsUnauthorized(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"invalid x-api-key"}}`)
+	})
+	err := c.Ping(t.Context())
+	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+}
+
 func TestGenerateEditMissingKeyIsUnavailable(t *testing.T) {
 	c := New(llm.StaticKey(""), "")
 	_, err := c.GenerateEdit(t.Context(), []knowledge.Block{{ID: "01A", Content: "x"}}, "do a thing")

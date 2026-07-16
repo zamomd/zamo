@@ -133,6 +133,47 @@ func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
 	}
 }
 
+func TestPingChecksModelsEndpoint(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/v1", llm.StaticKey("test-key"), "llama3")
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Errorf("path = %q, want /v1/models", gotPath)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want Bearer test-key", gotAuth)
+	}
+}
+
+func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
+	// Local providers (Ollama, LM Studio) need no key; a bare Bearer header
+	// makes some of them reject the request.
+	var hadAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hadAuth = r.Header["Authorization"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL+"/v1", llm.StaticKey(""), "llama3")
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v, want nil", err)
+	}
+	if hadAuth {
+		t.Error("Authorization header sent with an empty key, want none")
+	}
+}
+
 func TestGenerateTreeMapsErrors(t *testing.T) {
 	respond := func(status int, body string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {

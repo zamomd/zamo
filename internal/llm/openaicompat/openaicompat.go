@@ -170,6 +170,38 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 	return "", nil
 }
 
+// Ping implements knowledge.LLMClient: it checks that the endpoint is
+// reachable and the key, if any, is accepted. baseURL already carries the /v1
+// prefix, so the models endpoint hangs directly off it. It deliberately does
+// not exercise the configured model — a typo in the model name surfaces on the
+// first expansion, not here.
+func (c *Client) Ping(ctx context.Context) error {
+	key, err := c.key()
+	if err != nil {
+		return fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxReplyBytes))
+		return statusError(resp.StatusCode, body)
+	}
+	return nil
+}
+
 // statusError turns a non-2xx response into ErrLLMUnavailable, folding in the
 // API's error message when the body carries one.
 func statusError(status int, body []byte) error {
