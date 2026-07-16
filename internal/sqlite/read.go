@@ -107,6 +107,35 @@ func preorder(blocks []knowledge.Block, root knowledge.ID) []knowledge.Block {
 	return out
 }
 
+// GetBlocks implements knowledge.Repository: the blocks with the given ids in
+// one query. Missing ids are simply absent from the map — absence is the
+// caller's stale signal, not an error.
+func (r *Repo) GetBlocks(ctx context.Context, ids []knowledge.ID) (map[knowledge.ID]knowledge.Block, error) {
+	out := make(map[knowledge.ID]knowledge.Block, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = string(id)
+	}
+	q := `SELECT ` + blockColumns + ` FROM blocks WHERE id IN (?` +
+		strings.Repeat(",?", len(ids)-1) + `)`
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, translate(err)
+	}
+	defer rows.Close()
+	blocks, err := scanBlocks(rows)
+	if err != nil {
+		return nil, translate(err)
+	}
+	for _, b := range blocks {
+		out[b.ID] = b
+	}
+	return out, nil
+}
+
 // searchLimit caps how many hits Search returns. Full-text results past the
 // most relevant few hundred are noise for a personal knowledge base.
 const searchLimit = 200

@@ -58,3 +58,25 @@ func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content str
 func (a *App) ExportMarkdown(ctx context.Context, dir string) error {
 	return a.svc.ExportMarkdown(ctx, dir)
 }
+
+// PendingProposals passes the call to knowledge.Service: the review queue.
+func (a *App) PendingProposals(ctx context.Context) ([]knowledge.Proposal, error) {
+	return a.svc.PendingProposals(ctx)
+}
+
+// RejectProposal passes the call to knowledge.Service.
+func (a *App) RejectProposal(ctx context.Context, id knowledge.ID) error {
+	return a.svc.RejectProposal(ctx, id)
+}
+
+// ReviewProposal passes the call to knowledge.Service: a pending proposal
+// annotated with stale flags and current content for the review screen.
+func (a *App) ReviewProposal(ctx context.Context, id knowledge.ID) (knowledge.ProposalReview, error) {
+	return a.svc.ReviewProposal(ctx, id)
+}
+
+// EffectiveSelection previews the apply cascade for the review screen; pure,
+// no storage.
+func (a *App) EffectiveSelection(_ context.Context, ops []knowledge.Op, selected []int) []int {
+	return knowledge.EffectiveSelection(ops, selected)
+}

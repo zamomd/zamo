@@ -92,6 +92,23 @@ export enum OpKind {
 };
 
 /**
+ * OpReview is one operation annotated for the review screen.
+ */
+export interface OpReview {
+    "Op": Op;
+
+    /**
+     * current text of an edit target, for the diff
+     */
+    "CurrentContent": string;
+
+    /**
+     * the op references an existing block that is gone
+     */
+    "Stale": boolean;
+}
+
+/**
  * Proposal is a change proposal: the only way any AI (from any input)
  * modifies the base. Only an explicit user action applies it; manual
  * human edits bypass the queue.
@@ -108,6 +125,15 @@ export interface Proposal {
      * zero while the proposal is pending
      */
     "DecidedAt": string;
+}
+
+/**
+ * ProposalReview is a pending proposal annotated for the review screen:
+ * Ops is parallel to Proposal.Ops.
+ */
+export interface ProposalReview {
+    "Proposal": Proposal;
+    "Ops": OpReview[] | null;
 }
 
 /**
