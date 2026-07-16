@@ -41,3 +41,35 @@ func BenchmarkParseOps(b *testing.B) {
 		}
 	}
 }
+
+// benchEditReply builds an edit-command reply: a JSON array of n add ops forming
+// a chain (each parents the previous). Called just over maxBlocks, so the parser
+// emits the full cap and also runs its truncation break — the realistic worst
+// case for the temp-id reservation and dedup passes. It marshals the production
+// editOp, so a json-tag change is caught here rather than silently altering the
+// measured workload.
+func benchEditReply(n int) []byte {
+	edits := make([]editOp, n)
+	for i := range n {
+		parent := ""
+		if i > 0 {
+			parent = fmt.Sprintf("t%d", i-1)
+		}
+		edits[i] = editOp{Op: "add", TempID: fmt.Sprintf("t%d", i), Parent: parent, Content: fmt.Sprintf("block %d", i)}
+	}
+	raw, err := json.Marshal(edits)
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
+func BenchmarkParseEditOps(b *testing.B) {
+	reply := benchEditReply(maxBlocks + 5)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := ParseEditOps(reply); err != nil {
+			b.Fatalf("ParseEditOps: %v", err)
+		}
+	}
+}

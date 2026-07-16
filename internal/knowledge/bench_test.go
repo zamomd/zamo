@@ -21,6 +21,43 @@ func benchProposal(n int) Proposal {
 	return Proposal{Ops: ops}
 }
 
+// benchSubtrees builds topics subtrees of blocksPer blocks each, pre-ordered
+// (root first, then children), the shape Repository.GetSubtree returns and
+// RenderMarkdown consumes. Half the children are nested a level deeper so the
+// depth walk and indentation do real work; one block per topic is multi-line so
+// the continuation-alignment path is exercised.
+func benchSubtrees(topics, blocksPer int) [][]Block {
+	subtrees := make([][]Block, topics)
+	for t := range topics {
+		sub := make([]Block, blocksPer)
+		root := ID(fmt.Sprintf("t%d-root", t))
+		sub[0] = Block{ID: root, Content: fmt.Sprintf("Topic %d overview", t)}
+		for i := 1; i < blocksPer; i++ {
+			parent := root
+			if i%2 == 0 {
+				parent = sub[i-1].ID // nest under the previous child
+			}
+			content := fmt.Sprintf("block %d of topic %d", i, t)
+			if i == 1 {
+				content += "\nsecond line kept aligned under the bullet"
+			}
+			sub[i] = Block{ID: ID(fmt.Sprintf("t%d-b%d", t, i)), ParentID: parent, Position: i, Content: content}
+		}
+		subtrees[t] = sub
+	}
+	return subtrees
+}
+
+func BenchmarkRenderMarkdown(b *testing.B) {
+	subtrees := benchSubtrees(20, 25) // ~500 blocks, an export-sized base
+	b.ReportAllocs()
+	for b.Loop() {
+		if files := RenderMarkdown(subtrees); len(files) != 20 {
+			b.Fatalf("RenderMarkdown: got %d files, want 20", len(files))
+		}
+	}
+}
+
 func BenchmarkAssemble(b *testing.B) {
 	p := benchProposal(60)
 	selected := make([]int, len(p.Ops))
