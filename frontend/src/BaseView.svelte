@@ -11,11 +11,10 @@
 	let { onqueued }: { onqueued: () => void } = $props();
 
 	// One command field feeds both AI flows. The target decides which: none means
-	// expand a new topic (the whole base is the context), a block/page means ask
-	// the AI to restructure it. scopeID null is the no-target (expansion) case.
+	// expand a new topic from scratch, a block/page means ask the AI to
+	// restructure it. scopeID null is the no-target (expansion) case.
 	let command: string = $state("");
 	let scopeID: string | null = $state(null);
-	let scopeLabel: string = $state("");
 	let status: string = $state("");
 	let error: string = $state("");
 	let busy: boolean = $state(false);
@@ -80,18 +79,40 @@
 		forest = trees;
 	}
 
+	// findBlock walks the forest for a block by id; the forest is a personal
+	// base's worth of nodes, so a plain walk is cheap enough.
+	function findBlock(nodes: TreeNode[], id: string): Block | null {
+		for (const node of nodes) {
+			if (node.block.ID === id) {
+				return node.block;
+			}
+			const hit = findBlock(node.children, id);
+			if (hit) {
+				return hit;
+			}
+		}
+		return null;
+	}
+
+	// The scope label is read out of the live forest rather than copied on
+	// targeting: a targeted block that is edited or disappears can never leave a
+	// stale label behind.
+	let scopeLabel: string = $derived(
+		scopeID === null ? "" : (findBlock(forest, scopeID)?.Content ?? ""),
+	);
+
+	// setScope toggles: targeting the already-targeted row clears it, which is
+	// what the button's aria-pressed state promises.
 	function setScope(block: Block): void {
 		// Ignore while busy or mid inline-edit, mirroring the tree's other actions.
 		if (busy || editingID !== null) {
 			return;
 		}
-		scopeID = block.ID;
-		scopeLabel = block.Content;
+		scopeID = scopeID === block.ID ? null : block.ID;
 	}
 
 	function clearScope(): void {
 		scopeID = null;
-		scopeLabel = "";
 	}
 
 	// askAI routes the one command field to the matching AI flow: a new-topic
@@ -114,7 +135,11 @@
 				scope === null
 					? await App.ExpandTopic(text, "")
 					: await App.ProposeEdit(scope, text);
-			status = `queued for review (${(proposal.Ops ?? []).length} ops)`;
+			const ops = (proposal.Ops ?? []).length;
+			status =
+				scope === null
+					? `queued "${text}" for review (${ops} ops)`
+					: `queued the restructure for review (${ops} ops)`;
 			command = "";
 			clearScope();
 			onqueued();
@@ -151,10 +176,6 @@
 		try {
 			await App.EditBlockContent(editingID, editText);
 			await reload();
-			// Keep the scope indicator honest if the targeted block is the one edited.
-			if (scopeID === editingID) {
-				scopeLabel = editText;
-			}
 			status = "saved edit";
 			cancelEdit();
 		} catch (err: unknown) {
@@ -250,7 +271,7 @@
 	>
 		<p class="scope">
 			{#if scopeID === null}
-				New topic — the whole base is the context.
+				New topic — expanded from scratch.
 			{:else}
 				Editing <code>{scopeLabel}</code>
 				<button type="button" class="scope-clear" onclick={clearScope} disabled={busy}>
