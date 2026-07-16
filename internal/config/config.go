@@ -34,8 +34,11 @@ type Config struct {
 
 // LLM selects and configures the model provider.
 type LLM struct {
-	// Provider is "anthropic" (default) or "openai-compatible"
-	// (OpenAI, OpenRouter, DeepSeek, local Ollama / LM Studio).
+	// Provider is "anthropic" or "openai-compatible" (OpenAI, OpenRouter,
+	// DeepSeek, local Ollama / LM Studio). Empty is valid and means "no
+	// provider configured": the GUI's AI features (ExpandTopic, ProposeEdit)
+	// are off, but the rest of the application — including comind mcp, where
+	// the AI is the MCP client rather than this field — works fully.
 	Provider string `toml:"provider"`
 	// Model is the model name; empty selects the provider's default.
 	Model string `toml:"model"`
@@ -88,11 +91,8 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	if cfg.LLM.Provider == "" {
-		cfg.LLM.Provider = ProviderAnthropic
-	}
 	switch cfg.LLM.Provider {
-	case ProviderAnthropic, ProviderOpenAICompat:
+	case "", ProviderAnthropic, ProviderOpenAICompat:
 	default:
 		return cfg, fmt.Errorf("config %s: unknown llm.provider %q (available: %s, %s)",
 			path, cfg.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)

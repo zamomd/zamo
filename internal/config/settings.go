@@ -144,14 +144,9 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 		return Resolved{}, err
 	}
 
-	providerDeclared, err := configDeclaresProvider(configPath)
-	if err != nil {
-		return Resolved{}, err
-	}
-
 	r := Resolved{Config: cfg}
 	r.Origins = Origins{
-		Provider: declaredOrigin(providerDeclared),
+		Provider: declaredOrigin(cfg.LLM.Provider != ""),
 		Model:    declaredOrigin(cfg.LLM.Model != ""),
 		BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
 	}
@@ -181,33 +176,12 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 	r.Origins.APIKey = keyOrigin(cfg, o)
 
 	switch r.Config.LLM.Provider {
-	case ProviderAnthropic, ProviderOpenAICompat:
+	case "", ProviderAnthropic, ProviderOpenAICompat:
 	default:
 		return Resolved{}, fmt.Errorf("settings %s: unknown llm.provider %q (available: %s, %s)",
 			settingsPath, r.Config.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
 	}
 	return r, nil
-}
-
-// configDeclaresProvider reports whether config.toml sets llm.provider
-// explicitly, as opposed to leaving it unset. Load already replaces an empty
-// provider with the default before ResolveFrom can see it, so origin tracking
-// needs a second, undefaulted look at the same file to tell "declared
-// anthropic" apart from "defaulted to anthropic".
-func configDeclaresProvider(path string) (bool, error) {
-	if path == "" {
-		p, err := DefaultPath()
-		if err != nil {
-			return false, err
-		}
-		path = p
-	}
-	var raw Config
-	if _, err := toml.DecodeFile(path, &raw); err != nil && !os.IsNotExist(err) {
-		// Load has already decoded (and would have surfaced) this error.
-		return false, nil
-	}
-	return raw.LLM.Provider != "", nil
 }
 
 // declaredOrigin maps "config.toml set this field" to an Origin.

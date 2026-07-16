@@ -17,6 +17,7 @@ import (
 
 	"github.com/cominddev/comind/internal/config"
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/llm"
 	"github.com/cominddev/comind/internal/llm/anthropic"
 	"github.com/cominddev/comind/internal/llm/openaicompat"
 	"github.com/cominddev/comind/internal/mcp"
@@ -105,6 +106,10 @@ func buildService(ctx context.Context) (*knowledge.Service, func(), error) {
 
 func buildLLMClient(cfg config.LLM) (knowledge.LLMClient, error) {
 	switch cfg.Provider {
+	case "":
+		// No provider configured is a supported state: AI features are off,
+		// but the rest of the application (including comind mcp) works fully.
+		return llm.Disabled{}, nil
 	case config.ProviderAnthropic:
 		return anthropic.New(cfg.APIKeyValue, cfg.Model), nil
 	case config.ProviderOpenAICompat:

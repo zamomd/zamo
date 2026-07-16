@@ -82,8 +82,8 @@ func TestResolveMissingOverridesIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing settings.toml must be fine, got: %v", err)
 	}
-	if r.Config.LLM.Provider != ProviderAnthropic {
-		t.Errorf("provider = %q, want the default", r.Config.LLM.Provider)
+	if r.Config.LLM.Provider != "" {
+		t.Errorf("provider = %q, want empty (no provider is the supported default)", r.Config.LLM.Provider)
 	}
 	if r.Origins.Provider != OriginDefault {
 		t.Errorf("provider origin = %q, want %q", r.Origins.Provider, OriginDefault)
@@ -91,6 +91,9 @@ func TestResolveMissingOverridesIsNotAnError(t *testing.T) {
 }
 
 func TestResolvedAPIKeyPrecedence(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
 	keyFile := writeAt(t, "key.txt", "from-file\n")
 	cfgPath := writeAt(t, "config.toml", `
 [llm]
@@ -138,6 +141,9 @@ api_key = "from-gui"
 }
 
 func TestAPIKeyValueIsReadLazily(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
 	// Regression for sops-nix rotation: the file is rewritten under a symlink
 	// that flips on activation, so the value must be read per call.
 	keyFile := writeAt(t, "key.txt", "old\n")
