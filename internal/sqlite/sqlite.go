@@ -56,12 +56,25 @@ func initialize(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-// sqliteBusy is the SQLITE_BUSY primary result code.
-const sqliteBusy = 5
+// sqliteBusy is the SQLITE_BUSY primary result code;
+// sqliteConstraintForeignKey is the SQLITE_CONSTRAINT_FOREIGNKEY extended code.
+const (
+	sqliteBusy                 = 5
+	sqliteConstraintForeignKey = 787
+)
 
 func isBusy(err error) bool {
 	if e, ok := errors.AsType[*sqlite3.Error](err); ok {
 		return e.Code()&0xFF == sqliteBusy
+	}
+	return false
+}
+
+// isForeignKey reports a foreign-key violation, matched on the extended code so
+// it is not confused with other constraint failures (unique, not-null).
+func isForeignKey(err error) bool {
+	if e, ok := errors.AsType[*sqlite3.Error](err); ok {
+		return e.Code() == sqliteConstraintForeignKey
 	}
 	return false
 }
@@ -75,6 +88,8 @@ func translate(err error) error {
 		return knowledge.ErrNotFound
 	case isBusy(err):
 		return knowledge.ErrBusy
+	case isForeignKey(err):
+		return knowledge.ErrReferenced
 	default:
 		return err
 	}
