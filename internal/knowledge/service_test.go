@@ -56,7 +56,13 @@ func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 	if f.subtreeErr != nil {
 		return nil, f.subtreeErr
 	}
-	return f.subtrees[root], nil
+	// Match the real Repo: a root that is not in the base is ErrNotFound, never
+	// an empty slice with a nil error.
+	sub, ok := f.subtrees[root]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return sub, nil
 }
 
 func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
@@ -291,6 +297,59 @@ func TestServiceApplyExpandsDeleteToDescendants(t *testing.T) {
 	}
 	if !slices.Equal(repo.appliedOps, want) {
 		t.Errorf("applied ops = %+v, want the subtree deleted descendants-first %+v", repo.appliedOps, want)
+	}
+}
+
+func TestServiceApplyDeleteSparesAMovedOutChild(t *testing.T) {
+	// "Flatten X but keep its child": move childA out to a grandparent, then
+	// delete X. The cascade must run against the post-move tree — childA has
+	// left X's subtree, so deleting X must not take childA with it.
+	repo := &fakeRepo{
+		pending: []Proposal{{ID: "P1", Status: StatusPending, Ops: []Op{
+			{Kind: OpMove, BlockID: "childA", Parent: "GP"},
+			{Kind: OpDelete, BlockID: "X"},
+		}}},
+		subtrees: map[ID][]Block{
+			"X": {blk("X", "", 0, "X"), blk("childA", "X", 0, "child")},
+		},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.ApplyProposal(context.Background(), "P1", []int{0, 1}); err != nil {
+		t.Fatalf("ApplyProposal: %v", err)
+	}
+	for _, op := range repo.appliedOps {
+		if op.Kind == OpDelete && op.BlockID == "childA" {
+			t.Fatalf("childA was deleted despite being moved out of X; ops = %+v", repo.appliedOps)
+		}
+	}
+	// X itself is still deleted.
+	if !slices.ContainsFunc(repo.appliedOps, func(op Op) bool {
+		return op.Kind == OpDelete && op.BlockID == "X"
+	}) {
+		t.Errorf("X was not deleted; ops = %+v", repo.appliedOps)
+	}
+}
+
+func TestServiceApplyDeleteOfVanishedBlockPassesThrough(t *testing.T) {
+	// The delete target disappeared between the proposal and the apply (a
+	// concurrent proposal removed it). expandDeletes cannot read a subtree that
+	// is gone; it must pass the delete through unchanged so storage surfaces the
+	// "base moved" signal (ErrStale), not swallow it or abort with ErrNotFound.
+	repo := &fakeRepo{
+		pending: []Proposal{{ID: "P1", Status: StatusPending, Ops: []Op{
+			{Kind: OpDelete, BlockID: "GONE"},
+		}}},
+		subtrees: map[ID][]Block{}, // GONE is not in the base
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.ApplyProposal(context.Background(), "P1", []int{0}); err != nil {
+		t.Fatalf("ApplyProposal: %v", err)
+	}
+	want := []Op{{Kind: OpDelete, BlockID: "GONE"}}
+	if !slices.Equal(repo.appliedOps, want) {
+		t.Errorf("applied ops = %+v, want the delete passed through unchanged %+v", repo.appliedOps, want)
 	}
 }
 
