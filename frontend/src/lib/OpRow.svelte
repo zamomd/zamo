@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { OpReview } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+	import type { OpReview } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import Diff from "./Diff.svelte";
 
 	let {

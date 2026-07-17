@@ -1,49 +1,23 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import BaseView from "./BaseView.svelte";
 	import ReviewView from "./ReviewView.svelte";
 	import SettingsView from "./SettingsView.svelte";
+	import { queue } from "./stores/queue.svelte";
 
 	// Tab shell: the Base view (the tree), the Review view (the pending
 	// queue), and Settings (the provider configuration). Switching tabs
-	// remounts the view, so each one re-reads its data.
-	// The window has no push channel from the MCP server, so it re-reads the
-	// pending queue itself on a timer (and on focus) — see #15: no daemon, no bus.
-	const POLL_MS = 5000;
-
+	// remounts the view: each one re-reads its data on mount while its UI
+	// state survives in its store. The pending badge reads the shared queue
+	// store, whose polling starts here for the window's lifetime.
 	let tab: "base" | "review" | "settings" = $state("base");
-	let pendingCount = $state(0);
-
-	async function refreshCount(): Promise<void> {
-		pendingCount = ((await App.PendingProposals()) ?? []).length;
-	}
 
 	function queued(): void {
-		refreshCount().catch(() => {});
+		queue.refresh().catch(() => {});
 		tab = "review";
 	}
 
-	onMount(() => {
-		refreshCount().catch(() => {});
-		// An MCP-submitted proposal arrives out of band while the window sits idle;
-		// re-read it into the badge without a restart. Poll only while the window is
-		// visible (no wakeups when minimized) and re-read the moment it regains focus
-		// or visibility, so a return from the background is never left stale.
-		const refresh = (): void => {
-			if (!document.hidden) {
-				refreshCount().catch(() => {});
-			}
-		};
-		const timer = setInterval(refresh, POLL_MS);
-		window.addEventListener("focus", refresh);
-		document.addEventListener("visibilitychange", refresh);
-		return () => {
-			clearInterval(timer);
-			window.removeEventListener("focus", refresh);
-			document.removeEventListener("visibilitychange", refresh);
-		};
-	});
+	onMount(() => queue.start());
 </script>
 
 <main>
@@ -52,7 +26,7 @@
 			Base
 		</button>
 		<button type="button" class:active={tab === "review"} onclick={() => (tab = "review")}>
-			Review ({pendingCount})
+			Review ({queue.count})
 		</button>
 		<button type="button" class:active={tab === "settings"} onclick={() => (tab = "settings")}>
 			Settings
@@ -62,7 +36,7 @@
 	{#if tab === "base"}
 		<BaseView onqueued={queued} />
 	{:else if tab === "review"}
-		<ReviewView onchanged={refreshCount} />
+		<ReviewView />
 	{:else}
 		<SettingsView />
 	{/if}
