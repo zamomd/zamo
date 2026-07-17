@@ -86,6 +86,39 @@ func TestReviewProposalTempRefsAreNeverStale(t *testing.T) {
 	}
 }
 
+func TestReviewProposalShowsDeleteScope(t *testing.T) {
+	// A delete of a block with descendants really removes the whole subtree
+	// (see Service.expandDeletes). The review must make that scope visible, so
+	// the delete op carries the descendants it will also take.
+	repo := &fakeRepo{
+		blocks: map[ID]Block{"01ROOT": {ID: "01ROOT", Content: "Root"}},
+		subtrees: map[ID][]Block{
+			"01ROOT": {
+				{ID: "01ROOT", Content: "Root"},
+				{ID: "01KID", ParentID: "01ROOT", Content: "Kid"},
+				{ID: "01GK", ParentID: "01KID", Content: "Grandkid"},
+			},
+		},
+		pending: []Proposal{{ID: "P1", Status: StatusPending, Ops: []Op{
+			{Kind: OpDelete, BlockID: "01ROOT"},
+		}}},
+	}
+	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)))
+
+	got, err := svc.ReviewProposal(context.Background(), "P1")
+	if err != nil {
+		t.Fatalf("ReviewProposal: %v", err)
+	}
+	// The op list stays parallel to Proposal.Ops; the scope hangs off the delete.
+	if len(got.Ops) != 1 {
+		t.Fatalf("got %d review ops, want 1 parallel to the proposal", len(got.Ops))
+	}
+	also := got.Ops[0].DeletesAlso
+	if len(also) != 2 || also[0].ID != "01KID" || also[1].ID != "01GK" {
+		t.Errorf("DeletesAlso = %+v, want the two descendants 01KID, 01GK", also)
+	}
+}
+
 func TestReviewProposalNotPending(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)))

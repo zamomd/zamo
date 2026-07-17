@@ -7,6 +7,11 @@ type OpReview struct {
 	Op             Op
 	CurrentContent string // current text of an edit target, for the diff
 	Stale          bool   // the op references an existing block that is gone
+	// DeletesAlso lists the descendants a delete will also remove, so the
+	// review can show the true scope of the delete. Empty for other kinds and
+	// for a delete of a childless or vanished block. The parallel op list is
+	// unchanged: the scope hangs off the delete, it is not its own op.
+	DeletesAlso []Block
 }
 
 // ProposalReview is a pending proposal annotated for the review screen:
