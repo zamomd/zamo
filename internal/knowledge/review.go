@@ -60,6 +60,21 @@ func (s *Service) ReviewProposal(ctx context.Context, id ID) (ProposalReview, er
 		if op.Kind == OpEdit {
 			r.CurrentContent = blocks[op.BlockID].Content
 		}
+		// A delete of a live block takes its whole subtree with it (see
+		// Service.expandDeletes); surface the descendants so the reviewer sees
+		// the real scope. A stale delete has no live subtree to show.
+		//
+		// ponytail: one GetSubtree per delete (N+1). Deletes in a proposal are
+		// rare; batch if a mass-delete proposal ever appears.
+		if op.Kind == OpDelete && !r.Stale {
+			sub, err := s.repo.GetSubtree(ctx, op.BlockID)
+			if err != nil {
+				return ProposalReview{}, err
+			}
+			if len(sub) > 1 {
+				r.DeletesAlso = sub[1:] // drop the target itself; keep descendants
+			}
+		}
 		review[i] = r
 	}
 	return ProposalReview{Proposal: p, Ops: review}, nil
