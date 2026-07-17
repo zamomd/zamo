@@ -1,0 +1,155 @@
+import { SvelteSet } from "svelte/reactivity";
+import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { buildTree, findBlock, type TreeNodeData } from "../lib/tree";
+
+// BaseStore is the Base tab's view-model: browse the tree and drive the two AI
+// flows from one command field. Expansion (no target) and restructuring (a
+// targeted block) both queue a proposal for review — never a direct write —
+// then the base is re-read.
+//
+// It lives at module level so the view can unmount on a tab switch and come
+// back to the same place: the fold state, the targeted block, a half-typed
+// command and an open edit all survive; only the data is re-read on return.
+class BaseStore {
+	// One command field feeds both AI flows. The target decides which: none
+	// means expand a new topic from scratch, a block/page means ask the AI to
+	// restructure it. scopeID null is the no-target (expansion) case.
+	command = $state("");
+	scopeID = $state<string | null>(null);
+	status = $state("");
+	error = $state("");
+	busy = $state(false);
+	forest = $state<TreeNodeData[]>([]);
+
+	// collapsed holds the ids of nodes whose children are hidden. The base
+	// opens fully expanded; the reader folds away what they are not looking at.
+	collapsed = new SvelteSet<string>();
+
+	// Inline block editing: the owner's own edits apply straight to the base,
+	// bypassing the review queue (review guards against AI, not the owner).
+	editingID = $state<string | null>(null);
+	editText = $state("");
+
+	// The scope label is read out of the live forest rather than copied on
+	// targeting: a targeted block that is edited or disappears can never leave
+	// a stale label behind.
+	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""));
+
+	// activate re-reads the data on every mount; the UI state above persists.
+	activate(): void {
+		this.reload().catch((err: unknown) => {
+			this.error = String(err);
+		});
+	}
+
+	// reload reads every topic root and its full subtree, rebuilding the forest.
+	async reload(): Promise<void> {
+		const topics = (await App.TopicMap()) ?? [];
+		const roots = topics.filter((b) => b.ParentID === "");
+		const trees: TreeNodeData[] = [];
+		for (const r of roots) {
+			const blocks = (await App.GetSubtree(r.ID)) ?? [];
+			const tree = buildTree(blocks);
+			if (tree) {
+				trees.push(tree);
+			}
+		}
+		this.forest = trees;
+	}
+
+	toggle(id: string): void {
+		if (this.collapsed.has(id)) {
+			this.collapsed.delete(id);
+		} else {
+			this.collapsed.add(id);
+		}
+	}
+
+	// setScope toggles: targeting the already-targeted row clears it, which is
+	// what the button's aria-pressed state promises.
+	setScope(block: Block): void {
+		// Ignore while busy or mid inline-edit, mirroring the tree's other actions.
+		if (this.busy || this.editingID !== null) {
+			return;
+		}
+		this.scopeID = this.scopeID === block.ID ? null : block.ID;
+	}
+
+	clearScope(): void {
+		this.scopeID = null;
+	}
+
+	// askAI routes the one command field to the matching AI flow: a new-topic
+	// expansion when nothing is targeted, a structure edit on the targeted
+	// block/page otherwise. Both return a proposal that lands in the review
+	// queue, never a direct write. Reports whether one was queued, so the
+	// caller can hand focus to the queue.
+	async askAI(): Promise<boolean> {
+		const text = this.command.trim();
+		// Locked mid inline-edit like every other tree action: queueing moves
+		// focus off this view, so submitting here would silently drop an open
+		// edit.
+		if (text === "" || this.busy || this.editingID !== null) {
+			return false;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			const scope = this.scopeID;
+			this.status = scope === null ? `expanding "${text}"…` : "asking the AI to restructure…";
+			const proposal = scope === null ? await App.ExpandTopic(text, "") : await App.ProposeEdit(scope, text);
+			const ops = (proposal.Ops ?? []).length;
+			this.status =
+				scope === null ? `queued "${text}" for review (${ops} ops)` : `queued the restructure for review (${ops} ops)`;
+			this.command = "";
+			this.clearScope();
+			return true;
+		} catch (err: unknown) {
+			this.error = String(err);
+			this.status = "";
+			return false;
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	startEdit(block: Block): void {
+		// Ignore while busy or while another block is already being edited, so
+		// an in-progress edit is never silently discarded by switching blocks.
+		if (this.busy || this.editingID !== null) {
+			return;
+		}
+		this.editingID = block.ID;
+		this.editText = block.Content;
+	}
+
+	cancelEdit(): void {
+		this.editingID = null;
+		this.editText = "";
+	}
+
+	// saveEdit writes the block's new content directly, then re-reads the base.
+	async saveEdit(): Promise<void> {
+		if (this.editingID === null || this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.EditBlockContent(this.editingID, this.editText);
+			await this.reload();
+			this.status = "saved edit";
+			this.cancelEdit();
+		} catch (err: unknown) {
+			this.error = String(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+}
+
+// base is the single window-wide instance; module state outlives the views
+// that render it.
+export const base = new BaseStore();
