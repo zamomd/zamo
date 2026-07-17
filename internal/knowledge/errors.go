@@ -4,9 +4,6 @@ import "errors"
 
 // The error vocabulary of the domain.
 var (
-	// ErrNotImplemented marks methods that have not been implemented yet.
-	ErrNotImplemented = errors.New("not implemented")
-
 	// ErrNotFound reports that a referenced block or proposal
 	// does not exist.
 	ErrNotFound = errors.New("not found")
