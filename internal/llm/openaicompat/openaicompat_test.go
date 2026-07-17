@@ -76,6 +76,34 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 	}
 }
 
+func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
+	var gotBody map[string]any
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("request body is not JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(
+			`[{"op":"edit","block_id":"01A","content":"revised"},`+
+				`{"op":"delete","block_id":"01B"}]`))
+	})
+
+	scope := []knowledge.Block{{ID: "01A", Content: "old text"}, {ID: "01B", Content: "remove me"}}
+	ops, err := c.GenerateEdit(t.Context(), scope, "revise the first, drop the second")
+	if err != nil {
+		t.Fatalf("GenerateEdit: %v", err)
+	}
+	if len(ops) != 2 || ops[0].Kind != knowledge.OpEdit || ops[1].Kind != knowledge.OpDelete {
+		t.Fatalf("ops = %+v, want an edit and a delete", ops)
+	}
+	// The instruction and the scope block ids must reach the model.
+	prompt := bodyText(gotBody)
+	if !strings.Contains(prompt, "revise the first, drop the second") || !strings.Contains(prompt, "01A") {
+		t.Errorf("request did not carry the instruction and scope to the model:\n%s", prompt)
+	}
+}
+
 func TestGenerateTreeWorksWithoutAPIKey(t *testing.T) {
 	// A local model (Ollama, LM Studio) needs no key; the request must still be
 	// made and must NOT carry an Authorization header. This is the "data never
