@@ -10,6 +10,10 @@ type Repository interface {
 	GetBlocks(ctx context.Context, ids []ID) (map[ID]Block, error)
 	EditBlockContent(ctx context.Context, id ID, content string) error
 
+	GetEdges(ctx context.Context, id ID) ([]Edge, error)
+	AddEdge(ctx context.Context, from, to ID, rel Relation) error
+	RemoveEdge(ctx context.Context, from, to ID, rel Relation) error
+
 	SaveProposal(ctx context.Context, p Proposal) error
 	ListProposals(ctx context.Context, status Status) ([]Proposal, error)
 
