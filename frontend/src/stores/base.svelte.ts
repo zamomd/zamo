@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { callError } from "../lib/callerror";
 import { buildTree, findBlock, type TreeNodeData } from "../lib/tree";
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
@@ -39,7 +40,7 @@ class BaseStore {
 	// activate re-reads the data on every mount; the UI state above persists.
 	activate(): void {
 		this.reload().catch((err: unknown) => {
-			this.error = String(err);
+			this.error = callError(err).message;
 		});
 	}
 
@@ -106,7 +107,7 @@ class BaseStore {
 			this.clearScope();
 			return true;
 		} catch (err: unknown) {
-			this.error = String(err);
+			this.error = callError(err).message;
 			this.status = "";
 			return false;
 		} finally {
@@ -142,7 +143,7 @@ class BaseStore {
 			this.status = "saved edit";
 			this.cancelEdit();
 		} catch (err: unknown) {
-			this.error = String(err);
+			this.error = callError(err).message;
 			this.status = "";
 		} finally {
 			this.busy = false;

@@ -2,6 +2,7 @@
 	import { onMount } from "svelte";
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
+	import { callError } from "./lib/callerror";
 
 	// The screen edits the mutable layer (settings.toml) only. "config" fields
 	// are declared in config.toml, "gui" fields override them and can be
@@ -112,7 +113,7 @@
 			await load();
 			status = "Saved. The change is already in effect.";
 		} catch (e) {
-			error = String(e);
+			error = callError(e).message;
 		} finally {
 			busy = false;
 		}
@@ -126,7 +127,7 @@
 			await App.CheckSettings(input());
 			status = "The provider answered.";
 		} catch (e) {
-			error = String(e);
+			error = callError(e).message;
 		} finally {
 			busy = false;
 		}
@@ -146,7 +147,7 @@
 			// config.toml may still supply a key; only the GUI override is gone.
 			status = "GUI key override removed.";
 		} catch (e) {
-			error = String(e);
+			error = callError(e).message;
 		} finally {
 			busy = false;
 		}
@@ -172,7 +173,7 @@
 			await load();
 			status = "Reset to config.toml.";
 		} catch (e) {
-			error = String(e);
+			error = callError(e).message;
 		} finally {
 			busy = false;
 		}
@@ -180,7 +181,7 @@
 
 	onMount(() => {
 		load().catch((e: unknown) => {
-			error = String(e);
+			error = callError(e).message;
 		});
 	});
 </script>

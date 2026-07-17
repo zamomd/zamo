@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { callError } from "./lib/callerror";
 	import OpRow from "./lib/OpRow.svelte";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import { queue } from "./stores/queue.svelte";
@@ -53,7 +54,7 @@
 
 	onMount(() => {
 		review.activate().catch((err: unknown) => {
-			review.error = String(err);
+			review.error = callError(err).message;
 		});
 	});
 </script>

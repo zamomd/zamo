@@ -119,6 +119,10 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 		Services: []application.Service{
 			application.NewService(wailsbind.New(svc, mgr)),
 		},
+		// Binding errors cross to the frontend as {code, message}, mapped
+		// from the domain sentinels in one place; the GUI switches on the
+		// code, never on error text.
+		MarshalError: wailsbind.MarshalError,
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},

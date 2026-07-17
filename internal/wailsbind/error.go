@@ -1,0 +1,56 @@
+package wailsbind
+
+import (
+	"encoding/json"
+	"errors"
+
+	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/cominddev/comind/internal/settings"
+)
+
+// ErrorPayload is the machine-readable envelope every binding error crosses
+// the Wails boundary in. The frontend switches on Code; Message is for the
+// human and stays free to change.
+type ErrorPayload struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// codes maps sentinel errors to their stable wire codes. The list is ordered
+// but order does not matter: the sentinels are distinct errors and at most one
+// can sit in a chain. Anything unlisted crosses as "internal".
+var codes = []struct {
+	err  error
+	code string
+}{
+	{knowledge.ErrNotFound, "not_found"},
+	{knowledge.ErrStale, "stale"},
+	{knowledge.ErrCycle, "cycle"},
+	{knowledge.ErrNotPending, "not_pending"},
+	{knowledge.ErrInvalidProposal, "invalid_proposal"},
+	{knowledge.ErrEmptyProposal, "empty_proposal"},
+	{knowledge.ErrBusy, "busy"},
+	{knowledge.ErrLLMUnavailable, "llm_unavailable"},
+	{knowledge.ErrLLMBadResponse, "llm_bad_response"},
+	{settings.ErrDeclarative, "declarative"},
+}
+
+// MarshalError is plugged into application.Options.MarshalError: Wails calls
+// it for every error a bound method returns and delivers the JSON to the
+// frontend as the call error's cause. Mapping happens here and nowhere else —
+// the frontend must never match on error text (see #58).
+func MarshalError(err error) []byte {
+	p := ErrorPayload{Code: "internal", Message: err.Error()}
+	for _, c := range codes {
+		if errors.Is(err, c.err) {
+			p.Code = c.code
+			break
+		}
+	}
+	b, jsonErr := json.Marshal(p)
+	if jsonErr != nil {
+		// The contract forbids failing; nil defers to Wails' default marshaling.
+		return nil
+	}
+	return b
+}
