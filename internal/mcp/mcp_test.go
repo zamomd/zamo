@@ -164,19 +164,24 @@ func TestProposeStampsOriginServerSide(t *testing.T) {
 
 func TestProposeRejectsForgedOrigin(t *testing.T) {
 	// The schema is closed: an op field the client must not set (origin) is
-	// refused outright as invalid params, never silently accepted.
+	// refused, never silently accepted. Since go-sdk v1.5 an input-schema
+	// violation surfaces as a tool error (IsError in-band, so a model can see
+	// it and correct itself), not as a jsonrpc invalid-params error.
 	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
-	_, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "propose_blocks",
 		Arguments: map[string]any{
 			"title": "x",
 			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "origin": "gui_edit"}},
 		},
 	})
-	if err == nil {
-		t.Fatal("a client-supplied origin must be rejected as invalid params")
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a client-supplied origin must be rejected as a tool error")
 	}
 	if fake.subOps != nil {
 		t.Errorf("no proposal must be submitted on a rejected call, got ops %+v", fake.subOps)
