@@ -106,6 +106,14 @@ export interface OpReview {
      * the op references an existing block that is gone
      */
     "Stale": boolean;
+
+    /**
+     * DeletesAlso lists the descendants a delete will also remove, so the
+     * review can show the true scope of the delete. Empty for other kinds and
+     * for a delete of a childless or vanished block. The parallel op list is
+     * unchanged: the scope hangs off the delete, it is not its own op.
+     */
+    "DeletesAlso": Block[] | null;
 }
 
 /**
