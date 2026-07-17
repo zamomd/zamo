@@ -88,6 +88,12 @@ type Repo struct {
 
 var _ knowledge.Repository = (*Repo)(nil)
 
+// metaAuthorPath is the json_set path to the authorship stamp. Every writer of
+// a block's content must restamp it: the badge names the last writer, so a
+// content write that leaves the stamp behind attributes one side's text to the
+// other.
+const metaAuthorPath = "$." + knowledge.MetaKeyAuthor
+
 // NewRepo wraps an opened database (see Open) in the Repository
 // implementation. now supplies decision timestamps (decided_at); inject a
 // fixed clock in tests. A nil now defaults to time.Now. Method semantics are
@@ -101,9 +107,10 @@ func NewRepo(db *sql.DB, now func() time.Time) *Repo {
 
 // EditBlockContent implements knowledge.Repository.
 func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
+	// The owner editing a block by hand takes authorship of it (see metaAuthorPath).
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		content, formatTime(r.now()), string(id))
+		`UPDATE blocks SET content = ?, metadata = json_set(metadata, ?, ?), updated_at = ? WHERE id = ?`,
+		content, metaAuthorPath, string(knowledge.AuthorHuman), formatTime(r.now()), string(id))
 	if err != nil {
 		return fmt.Errorf("edit block %s: %w", id, translate(err))
 	}
@@ -306,7 +313,10 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 		parent).Scan(&pos); err != nil {
 		return fmt.Errorf("apply add %s: next position: %w", op.BlockID, translate(err))
 	}
-	meta := knowledge.Metadata{"author": "ai", "source": string(source)}
+	meta := knowledge.Metadata{
+		knowledge.MetaKeyAuthor: string(knowledge.AuthorAI),
+		"source":                string(source),
+	}
 	if op.Origin != "" {
 		meta["origin"] = op.Origin
 	}
@@ -323,11 +333,13 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 	return nil
 }
 
-// applyEdit replaces a block's content, refreshing updated_at.
+// applyEdit replaces a block's content, refreshing updated_at. An accepted
+// proposal makes the AI the author of the new content, even where the owner
+// had written the old (see metaAuthorPath).
 func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
 	res, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		op.Content, now, string(op.BlockID))
+		`UPDATE blocks SET content = ?, metadata = json_set(metadata, ?, ?), updated_at = ? WHERE id = ?`,
+		op.Content, metaAuthorPath, string(knowledge.AuthorAI), now, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}

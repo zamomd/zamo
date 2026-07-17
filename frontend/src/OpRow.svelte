@@ -63,23 +63,33 @@
 
 <style>
 	li {
-		padding: 0.25rem 0.5rem;
+		padding: 0.35rem 0.55rem;
 		list-style: none;
+		border-radius: 6px;
 	}
 	li.focused {
-		outline: 2px solid #36c;
+		outline: 1px solid var(--sea);
+		background: rgba(91, 124, 250, 0.08);
 	}
 	li.cascaded {
 		opacity: 0.45;
 	}
+	label {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
 	.provenance {
-		margin: 0 0 0 1.5rem;
+		margin: 0.15rem 0 0 1.65rem;
 		font-size: 0.8em;
-		color: #666;
+		color: var(--muted);
 	}
 	.stale {
-		background: #fc6;
-		padding: 0 0.3em;
 		margin-left: 0.4em;
+		padding: 0 0.4em;
+		border-radius: 999px;
+		font-size: 0.75em;
+		background: var(--amber);
+		color: #08101c;
 	}
 </style>

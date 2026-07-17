@@ -71,11 +71,12 @@
 <style>
 	nav {
 		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
+		gap: 0.4rem;
+		margin-bottom: 1.25rem;
 	}
 	nav button.active {
-		font-weight: bold;
-		text-decoration: underline;
+		color: var(--sea);
+		border-color: var(--sea);
+		font-weight: 600;
 	}
 </style>

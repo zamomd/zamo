@@ -24,6 +24,19 @@ const (
 // provenance, model, etc. Stored in the database as JSON.
 type Metadata map[string]any
 
+// MetaKeyAuthor is the Metadata key holding an Author.
+const MetaKeyAuthor = "author"
+
+// Author names who wrote a block's current content. It tracks the last writer,
+// not the creator: whoever replaces the content takes authorship of it.
+type Author string
+
+// The authors a block's content can be attributed to.
+const (
+	AuthorHuman Author = "human" // written by the owner, by hand
+	AuthorAI    Author = "ai"    // written by the AI, via an accepted proposal
+)
+
 // Block is the unit of knowledge: a short markdown fragment in a topic
 // tree. Portability rule: Content is pure markdown; all structure lives
 // in fields, never as service markup inside the text.

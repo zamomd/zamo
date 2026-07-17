@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Dialogs } from "@wailsio/runtime";
 	import { onMount } from "svelte";
 	import type { Block } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
@@ -7,6 +8,13 @@
 	// field. Expansion (no target) and restructuring (a targeted block) both queue
 	// a proposal for review — never a direct write — then the base is re-read.
 	type TreeNode = { block: Block; children: TreeNode[] };
+
+	// Block.Meta is an untyped map across the binding, so these mirror
+	// knowledge.MetaKeyAuthor and knowledge.Author by hand: change one side and
+	// the badge silently misattributes every block. Keep the names greppable
+	// together.
+	const META_KEY_AUTHOR = "author";
+	const AUTHOR_HUMAN = "human";
 
 	let { onqueued }: { onqueued: () => void } = $props();
 
@@ -77,6 +85,92 @@
 			}
 		}
 		forest = trees;
+	}
+
+	// Search (Scene 4): a query runs the FTS index, the hits list to blocks, and
+	// clicking a hit reveals it in the tree (ancestors expanded, scrolled, flashed).
+	let searchQuery: string = $state("");
+	let searchResults: Block[] | null = $state(null);
+	let flashID: string | null = $state(null);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	// Every search takes a ticket; only the newest one may paint. clearTimeout
+	// alone cannot do this — it drops an unfired timer, but a request already in
+	// flight still resolves and would repaint a panel the user has moved on from.
+	let searchSeq = 0;
+
+	// dropSearch abandons the pending and in-flight searches and hides the panel.
+	function dropSearch(): void {
+		clearTimeout(searchTimer);
+		searchSeq++;
+		searchResults = null;
+	}
+
+	function onSearchInput(): void {
+		clearTimeout(searchTimer);
+		const q = searchQuery.trim();
+		const seq = ++searchSeq;
+		if (q === "") {
+			searchResults = null;
+			return;
+		}
+		// Debounce: the FTS read is cheap, but not worth a call per keystroke.
+		searchTimer = setTimeout(() => {
+			// The banner belongs to the action in progress, as in every other flow
+			// here: claim it on the way in, never clear it on the way out, or a
+			// search would silently retract a failure the user has not addressed.
+			error = "";
+			App.Search(q)
+				.then((hits) => {
+					if (seq !== searchSeq) {
+						return;
+					}
+					searchResults = hits ?? [];
+				})
+				.catch((err: unknown) => {
+					if (seq !== searchSeq) {
+						return;
+					}
+					error = String(err);
+					searchResults = [];
+				});
+		}, 180);
+	}
+
+	// ancestorsOf returns the ids on the path from a root down to id (exclusive),
+	// or null if id is not in the forest — the nodes that must be uncollapsed for
+	// a hit to be visible.
+	function ancestorsOf(nodes: TreeNode[], id: string, trail: string[] = []): string[] | null {
+		for (const node of nodes) {
+			if (node.block.ID === id) {
+				return trail;
+			}
+			const hit = ancestorsOf(node.children, id, [...trail, node.block.ID]);
+			if (hit) {
+				return hit;
+			}
+		}
+		return null;
+	}
+
+	function revealBlock(id: string): void {
+		const next = new Set(collapsed);
+		for (const a of ancestorsOf(forest, id) ?? []) {
+			next.delete(a);
+		}
+		collapsed = next;
+		// Assigning searchQuery fires no input event, so the debounce would
+		// otherwise survive the dismissal and repaint the panel over the block
+		// this call is about to scroll to.
+		dropSearch();
+		searchQuery = "";
+		// Scroll and flash once the reveal has rendered.
+		requestAnimationFrame(() => {
+			document.getElementById(`blk-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+			flashID = id;
+			setTimeout(() => {
+				flashID = null;
+			}, 1500);
+		});
 	}
 
 	// findBlock walks the forest for a block by id; the forest is a personal
@@ -186,6 +280,42 @@
 		}
 	}
 
+	// exportBase (Scene 8) picks a folder and writes the whole base as markdown —
+	// the portability promise. The picker is the Wails native directory dialog.
+	async function exportBase(): Promise<void> {
+		if (busy) {
+			return;
+		}
+		let picked: string | string[];
+		try {
+			picked = await Dialogs.OpenFile({
+				Title: "Export the base to a folder",
+				CanChooseDirectories: true,
+				CanChooseFiles: false,
+				CanCreateDirectories: true,
+				ButtonText: "Export here",
+			});
+		} catch (err: unknown) {
+			error = String(err);
+			return;
+		}
+		const dir = Array.isArray(picked) ? picked[0] : picked;
+		if (!dir) {
+			return; // cancelled
+		}
+		busy = true;
+		error = "";
+		try {
+			await App.ExportMarkdown(dir);
+			status = `exported the base to ${dir}`;
+		} catch (err: unknown) {
+			error = String(err);
+			status = "";
+		} finally {
+			busy = false;
+		}
+	}
+
 	onMount(() => {
 		reload().catch((err: unknown) => {
 			error = String(err);
@@ -197,7 +327,12 @@
 	{@const hasChildren = node.children.length > 0}
 	{@const expanded = !collapsed.has(node.block.ID)}
 	<li>
-		<div class="row" class:targeted={scopeID === node.block.ID}>
+		<div
+			id="blk-{node.block.ID}"
+			class="row"
+			class:targeted={scopeID === node.block.ID}
+			class:flash={flashID === node.block.ID}
+		>
 			<!-- Toggles are locked while an edit is open: collapsing an ancestor would
 			     unmount the editor while editingID lingers, silently dead-ending every
 			     other block (startEdit no-ops when a block is already being edited). -->
@@ -236,6 +371,13 @@
 				</button>
 			{/if}
 
+			{#if node.block.Meta?.[META_KEY_AUTHOR] && editingID !== node.block.ID}
+				{@const byHuman = node.block.Meta[META_KEY_AUTHOR] === AUTHOR_HUMAN}
+				<span class="author" class:you={byHuman}>
+					{byHuman ? "you" : "AI"}
+				</span>
+			{/if}
+
 			{#if editingID !== node.block.ID}
 				<button
 					type="button"
@@ -261,7 +403,10 @@
 {/snippet}
 
 <section>
-	<h1>Comind</h1>
+	<header class="head">
+		<h1>Comind</h1>
+		<button type="button" class="export" onclick={exportBase} disabled={busy}>Export ↓</button>
+	</header>
 
 	<form
 		onsubmit={(e) => {
@@ -294,6 +439,33 @@
 		</div>
 	</form>
 
+	<div class="search">
+		<input
+			aria-label="search the base"
+			placeholder="search the base…"
+			bind:value={searchQuery}
+			oninput={onSearchInput}
+		/>
+	</div>
+
+	{#if searchResults !== null}
+		<div class="results">
+			{#if searchResults.length === 0}
+				<p class="muted">No matches.</p>
+			{:else}
+				<ul class="hits">
+					{#each searchResults as hit (hit.ID)}
+						<li>
+							<button type="button" class="hit" onclick={() => revealBlock(hit.ID)}>
+								<code>{hit.Content}</code>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
+	{/if}
+
 	{#if status !== ""}
 		<p><code>{status}</code></p>
 	{/if}
@@ -313,9 +485,15 @@
 </section>
 
 <style>
+	.head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.75rem;
+	}
 	h1 {
 		font-size: 1.3rem;
-		margin: 0 0 0.75rem;
+		margin: 0;
 	}
 	form {
 		display: flex;
@@ -352,6 +530,45 @@
 	}
 	.ask input {
 		flex: 1;
+	}
+	.search {
+		margin-bottom: 0.75rem;
+	}
+	.search input {
+		width: 100%;
+	}
+	.results {
+		margin: 0 0 1rem;
+		padding: 0.4rem 0.5rem;
+		background: var(--ink-2);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+	}
+	.results .muted {
+		margin: 0.2rem 0.3rem;
+		color: var(--muted);
+	}
+	.hits {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.hit {
+		display: block;
+		width: 100%;
+		text-align: left;
+		border: none;
+		background: none;
+		padding: 0.3rem 0.4rem;
+		border-radius: 5px;
+		cursor: pointer;
+		color: inherit;
+	}
+	.hit:hover {
+		background: rgba(91, 124, 250, 0.14);
+	}
+	.hit code {
+		white-space: pre-wrap;
 	}
 	/* The forest is a plain nested list; indentation and a faint guide rail carry
 	   the hierarchy. Colours are theme-neutral (grey alpha) so the rail and hover
@@ -400,19 +617,52 @@
 		background: rgba(127, 127, 127, 0.15);
 	}
 	.row.targeted {
-		background: rgba(127, 127, 127, 0.12);
+		background: var(--amber-soft);
+		box-shadow: inset 2px 0 0 var(--amber);
 		border-radius: 3px;
+	}
+	/* A search hit flashes with the sea accent when revealed in the tree. */
+	.row.flash {
+		animation: flash 1.5s ease-out;
+		border-radius: 3px;
+	}
+	@keyframes flash {
+		0%,
+		30% {
+			background: rgba(91, 124, 250, 0.28);
+		}
+		100% {
+			background: transparent;
+		}
+	}
+	/* The badge names the last writer of the content; muted by default so the
+	   tree stays quiet, and sea-blue when the owner wrote it. */
+	.author {
+		flex: none;
+		align-self: center;
+		font-size: 0.62rem;
+		letter-spacing: 0.02em;
+		padding: 0.03rem 0.4rem;
+		border-radius: 999px;
+		border: 1px solid var(--line);
+		color: var(--muted);
+		opacity: 0.65;
+	}
+	.author.you {
+		color: var(--sea);
+		border-color: rgba(91, 124, 250, 0.4);
+		opacity: 0.9;
 	}
 	/* The AI target is a per-row affordance kept out of the way until the row is
 	   hovered or focused, so the tree stays quiet; the currently-targeted row keeps
-	   it visible. Grey-alpha again, for both themes. */
+	   it visible. Amber — the knowledge/blocks side of the mark. */
 	.target {
 		flex: none;
 		border: none;
 		background: none;
 		padding: 0 0.3rem;
 		cursor: pointer;
-		color: inherit;
+		color: var(--amber);
 		opacity: 0;
 	}
 	.row:hover .target,

@@ -232,13 +232,18 @@
 							/>
 						{/each}
 					</ul>
-					<p>
-						<button type="button" onclick={applySelected} disabled={busy || effective.length === 0}>
+					<div class="actions">
+						<button
+							type="button"
+							class="apply"
+							onclick={applySelected}
+							disabled={busy || effective.length === 0}
+						>
 							Apply ({effective.length})
 						</button>
 						<button type="button" onclick={rejectCurrent} disabled={busy}>Reject</button>
-						<small>j/k · Space · a/Enter apply · r reject · n/p proposal · d diff</small>
-					</p>
+						<small class="hint">j/k · Space · a/Enter apply · r reject · n/p proposal · d diff</small>
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -248,24 +253,70 @@
 <style>
 	.split {
 		display: flex;
-		gap: 1.5rem;
+		gap: 1.75rem;
 		align-items: flex-start;
 	}
 	.queue {
-		min-width: 14rem;
-		padding: 0;
+		min-width: 15rem;
 		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
 	}
 	.queue li {
 		list-style: none;
 	}
+	.queue li button {
+		display: block;
+		width: 100%;
+		text-align: left;
+		padding: 0.5rem 0.7rem;
+	}
+	.queue li button small {
+		color: var(--muted);
+		font-weight: 400;
+	}
 	.queue li.active button {
-		font-weight: bold;
+		color: var(--sea);
+		border-color: var(--sea);
+		font-weight: 600;
+	}
+	.queue li.active button small {
+		color: var(--sea);
+		opacity: 0.85;
 	}
 	.proposal {
 		flex: 1;
 	}
+	.proposal h2 {
+		font-size: 1.1rem;
+		font-weight: 600;
+		margin: 0 0 0.9rem;
+	}
 	.proposal ul {
+		margin: 0 0 1.1rem;
 		padding: 0;
+	}
+	/* Apply and Reject stand apart, with the primary action carrying the sea. */
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+	}
+	.actions .apply {
+		background: var(--sea);
+		border-color: var(--sea);
+		color: #08101c;
+		font-weight: 600;
+	}
+	.actions .apply:hover:not(:disabled) {
+		background: var(--sea-bright);
+		border-color: var(--sea-bright);
+	}
+	.hint {
+		margin-left: 0.35rem;
+		color: var(--muted);
 	}
 </style>
