@@ -230,6 +230,10 @@ class BaseStore {
 			if (this.linkingID === id) {
 				this.cancelLink();
 			}
+			// Link writes from another panel only refresh the OTHER endpoint's
+			// cache when its panel is open; a closed panel's cache can go stale.
+			// Drop it here so reopening always re-fetches instead of rendering it.
+			this.linksById.delete(id);
 			return;
 		}
 		this.openLinks.add(id);
