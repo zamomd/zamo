@@ -13,19 +13,30 @@ import (
 // on the standard library alone.
 type IDGenerator func() ID
 
+// FileWriter persists a rendered export. Writing to disk is an effect outside
+// the database, so the domain does not do it: the implementation lives outside
+// this package and is injected like IDGenerator, keeping knowledge on the
+// standard library alone and the export use case testable without a disk.
+type FileWriter interface {
+	// WriteFiles writes each file into dir. Names are unique within files
+	// (RenderMarkdown guarantees it), so order does not matter.
+	WriteFiles(ctx context.Context, dir string, files []ExportFile) error
+}
+
 // Service holds the product's use cases. It is the only place where the
 // logic lives; every input calls its methods.
 type Service struct {
-	llm   LLMClient
-	repo  Repository
-	newID IDGenerator
-	now   func() time.Time
+	llm    LLMClient
+	repo   Repository
+	newID  IDGenerator
+	writer FileWriter
+	now    func() time.Time
 }
 
 // NewService wires the domain to its boundaries: the LLM provider,
-// storage, and the injected ID and time sources.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, now func() time.Time) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, now: now}
+// storage, and the injected ID, file-writer, and time sources.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, now func() time.Time) *Service {
+	return &Service{llm: llm, repo: repo, newID: newID, writer: writer, now: now}
 }
 
 // ExpandTopic expands a topic into a block tree and puts the result into

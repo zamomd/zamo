@@ -13,6 +13,24 @@ import (
 // clockAt returns a now-source pinned to a fixed instant.
 func clockAt(ts time.Time) func() time.Time { return func() time.Time { return ts } }
 
+// fakeFileWriter is a FileWriter double: it records the files it was handed
+// instead of touching disk, so export tests assert what the domain produced
+// without a filesystem.
+type fakeFileWriter struct {
+	dir      string
+	files    []ExportFile
+	writeErr error
+}
+
+func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []ExportFile) error {
+	if w.writeErr != nil {
+		return w.writeErr
+	}
+	w.dir = dir
+	w.files = files
+	return nil
+}
+
 // fakeRepo is a Repository double: it serves a fixed pending queue and records
 // what ApplyProposal was handed, so tests can assert the assembled op list.
 type fakeRepo struct {
@@ -110,7 +128,7 @@ func (f *fakeRepo) ApplyProposal(_ context.Context, id ID, ops []Op) error {
 func TestServiceSubmitProposalQueuesPending(t *testing.T) {
 	repo := &fakeRepo{}
 	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(nil, repo, seqIDs(), clockAt(at))
+	svc := NewService(nil, repo, seqIDs(), nil, clockAt(at))
 
 	ops := []Op{addOp("t1", "", "A")}
 	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "My topic", ops)
@@ -142,7 +160,7 @@ func TestServiceSubmitProposalQueuesPending(t *testing.T) {
 func TestServiceSubmitProposalPropagatesSaveError(t *testing.T) {
 	sentinel := errors.New("disk full")
 	repo := &fakeRepo{saveErr: sentinel}
-	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "t", []Op{addOp("t1", "", "A")})
 	if !errors.Is(err, sentinel) {
@@ -157,7 +175,7 @@ func TestServiceSubmitProposalRejectsEmptyOps(t *testing.T) {
 	// A proposal that changes nothing is not a proposal; it must be refused and
 	// never reach the queue.
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "empty", nil)
 	if !errors.Is(err, ErrEmptyProposal) {
@@ -175,7 +193,7 @@ func TestServiceExpandTopicQueuesProposal(t *testing.T) {
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
 	repo := &fakeRepo{}
 	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(llm, repo, seqIDs(), clockAt(at))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(at))
 
 	got, err := svc.ExpandTopic(context.Background(), "Go contexts", "cancellation")
 	if err != nil {
@@ -202,7 +220,7 @@ func TestServiceExpandTopicSurfacesLLMError(t *testing.T) {
 	// nothing is queued.
 	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	_, err := svc.ExpandTopic(context.Background(), "Go contexts", "")
 	if !errors.Is(err, ErrLLMUnavailable) {
@@ -218,7 +236,7 @@ func TestServiceExpandTopicRejectsEmptyTree(t *testing.T) {
 	// the empty-proposal invariant surfaces instead.
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	if _, err := svc.ExpandTopic(context.Background(), "Go contexts", ""); !errors.Is(err, ErrEmptyProposal) {
 		t.Errorf("error = %v, want ErrEmptyProposal", err)
@@ -238,7 +256,7 @@ func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
 			addOp("t3", "t2", "Grandchild"),
 		},
 	}}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
 	// Accept the root and child but not the grandchild.
 	if err := svc.ApplyProposal(context.Background(), "P1", []int{0, 1}); err != nil {
@@ -261,7 +279,7 @@ func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
 
 func TestServiceApplyProposalNotPending(t *testing.T) {
 	repo := &fakeRepo{pending: nil} // the id is not in the review queue
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
 	err := svc.ApplyProposal(context.Background(), "GONE", []int{0})
 	if !errors.Is(err, ErrNotPending) {
@@ -277,7 +295,7 @@ func TestServiceProposeEditQueuesProposal(t *testing.T) {
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
 	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(llm, repo, seqIDs(), clockAt(at))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(at))
 
 	got, err := svc.ProposeEdit(context.Background(), "01A", "revise this block")
 	if err != nil {
@@ -305,7 +323,7 @@ func TestServiceProposeEditQueuesProposal(t *testing.T) {
 func TestServiceProposeEditSurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{editErr: ErrLLMUnavailable}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	if _, err := svc.ProposeEdit(context.Background(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -319,7 +337,7 @@ func TestServiceProposeEditPropagatesReadError(t *testing.T) {
 	boom := errors.New("db down")
 	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
 	repo := &fakeRepo{subtreeErr: boom}
-	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	_, err := svc.ProposeEdit(context.Background(), "01A", "do a thing")
 	if !errors.Is(err, boom) {
@@ -335,7 +353,7 @@ func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
 	// proposal; the empty-proposal invariant surfaces instead.
 	llm := &fakeLLM{editOps: nil}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	if _, err := svc.ProposeEdit(context.Background(), "01A", "do nothing"); !errors.Is(err, ErrEmptyProposal) {
 		t.Errorf("error = %v, want ErrEmptyProposal", err)
@@ -360,7 +378,7 @@ func TestServiceExportMarkdownWritesOneFilePerTopic(t *testing.T) {
 			"t2": {blk("t2", "", 1, "# Beta")},
 		},
 	}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
 	dir := t.TempDir()
 
 	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
@@ -386,9 +404,42 @@ func TestServiceExportMarkdownWritesOneFilePerTopic(t *testing.T) {
 	}
 }
 
+func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
+	// The domain must render and hand the files to the injected writer, never
+	// touch the disk itself. The writer records what it received.
+	repo := &fakeRepo{
+		topics: []Block{
+			blk("t1", "", 0, "# Alpha"),
+			blk("c1", "t1", 0, "child of alpha"),
+			blk("t2", "", 1, "# Beta"),
+		},
+		subtrees: map[ID][]Block{
+			"t1": {blk("t1", "", 0, "# Alpha"), blk("c1", "t1", 0, "child of alpha")},
+			"t2": {blk("t2", "", 1, "# Beta")},
+		},
+	}
+	writer := &fakeFileWriter{}
+	svc := NewService(nil, repo, seqIDs(), writer, nil)
+
+	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
+		t.Fatalf("ExportMarkdown: %v", err)
+	}
+
+	if writer.dir != "/export/here" {
+		t.Errorf("writer got dir %q, want the dir passed to ExportMarkdown", writer.dir)
+	}
+	want := []ExportFile{
+		{Name: "alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
+		{Name: "beta.md", Content: "- # Beta\n"},
+	}
+	if !reflect.DeepEqual(writer.files, want) {
+		t.Errorf("writer got files %+v, want %+v", writer.files, want)
+	}
+}
+
 func TestServiceExportMarkdownEmptyBase(t *testing.T) {
 	repo := &fakeRepo{topics: nil}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
 	dir := t.TempDir()
 
 	if err := svc.ExportMarkdown(context.Background(), dir); err != nil {
@@ -406,7 +457,7 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 		topics:     []Block{blk("t1", "", 0, "# Alpha")},
 		subtreeErr: boom,
 	}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
 	err := svc.ExportMarkdown(context.Background(), t.TempDir())
 	if !errors.Is(err, boom) {

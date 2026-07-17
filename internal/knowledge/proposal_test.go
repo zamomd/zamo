@@ -60,7 +60,7 @@ func TestNewProposalRejectsMalformedShape(t *testing.T) {
 // The queue entry point refuses a malformed op: nothing is saved.
 func TestServiceSubmitProposalRejectsMalformedOp(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
 
 	_, err := svc.SubmitProposal(t.Context(), SourceMCP, "t", []Op{{Kind: "explode"}})
 	if !errors.Is(err, ErrInvalidProposal) {

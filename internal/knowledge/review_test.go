@@ -18,7 +18,7 @@ func reviewFixture(t *testing.T, ops []Op) (*Service, ID) {
 		},
 		pending: []Proposal{{ID: "P1", Status: StatusPending, Title: "t", Ops: ops}},
 	}
-	return NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC))), "P1"
+	return NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC))), "P1"
 }
 
 func TestReviewProposalAnnotatesEditWithCurrentContent(t *testing.T) {
@@ -88,7 +88,7 @@ func TestReviewProposalTempRefsAreNeverStale(t *testing.T) {
 
 func TestReviewProposalNotPending(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)))
 	if _, err := svc.ReviewProposal(context.Background(), "NOPE"); !errors.Is(err, ErrNotPending) {
 		t.Errorf("error = %v, want ErrNotPending", err)
 	}

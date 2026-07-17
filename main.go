@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"github.com/cominddev/comind/internal/config"
@@ -107,8 +108,26 @@ func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string,
 		return nil, nil, "", nil, err
 	}
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, time.Now)
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, osFileWriter{}, time.Now)
 	return svc, holder, settingsPath, func() { db.Close() }, nil
+}
+
+// osFileWriter is the production knowledge.FileWriter: it writes an export to
+// the local filesystem. It lives here, at the composition root, so the domain
+// stays free of os. Cancellation is honoured between files; a write failure
+// part-way can still leave earlier files on disk.
+type osFileWriter struct{}
+
+func (osFileWriter) WriteFiles(ctx context.Context, dir string, files []knowledge.ExportFile) error {
+	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.
