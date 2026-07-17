@@ -1,5 +1,9 @@
-import { SvelteSet } from "svelte/reactivity";
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import {
+	type Block,
+	type LinkedBlock,
+	Relation,
+} from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
@@ -38,6 +42,19 @@ class BaseStore {
 	highlightID = $state<string | null>(null);
 	highlightNonce = $state(0);
 
+	// Typed links, loaded lazily per open panel. openLinks holds the blocks
+	// whose panels are open; linksById caches what GetLinks returned. Both are
+	// rebuilt on reload: an edit can change a neighbour's text.
+	openLinks = new SvelteSet<string>();
+	linksById = new SvelteMap<string, LinkedBlock[]>();
+
+	// The +link picker: the block a link is created from, the live target
+	// search, and the relation to record.
+	linkingID = $state<string | null>(null);
+	linkQuery = $state("");
+	linkResults = $state<Block[]>([]);
+	linkRelation = $state<Relation>(Relation.RelationRelated);
+
 	// A reveal whose block is not yet in the forest, flushed at the end of reload.
 	private pendingReveal: string | null = null;
 
@@ -66,6 +83,16 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		// Links reflect the re-read base: drop the cache, close panels whose
+		// block vanished, and re-load the panels still open.
+		this.linksById.clear();
+		for (const id of [...this.openLinks]) {
+			if (findBlock(this.forest, id) === null) {
+				this.openLinks.delete(id);
+				continue;
+			}
+			await this.refreshLinks(id);
+		}
 		// Apply a reveal that raced the initial load. reveal re-parks it if the
 		// block is still absent, so a missing target self-heals on a later reload.
 		if (this.pendingReveal !== null) {
@@ -177,6 +204,108 @@ class BaseStore {
 			await this.reload();
 			this.status = "saved edit";
 			this.cancelEdit();
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// toggleLinks opens or closes a block's links panel, loading the links on
+	// first open. Closing also drops a picker opened from that panel.
+	async toggleLinks(id: string): Promise<void> {
+		if (this.openLinks.has(id)) {
+			this.openLinks.delete(id);
+			if (this.linkingID === id) {
+				this.cancelLink();
+			}
+			return;
+		}
+		this.openLinks.add(id);
+		if (!this.linksById.has(id)) {
+			await this.refreshLinks(id);
+		}
+	}
+
+	// refreshLinks re-reads one block's links into the cache.
+	async refreshLinks(id: string): Promise<void> {
+		try {
+			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+		}
+	}
+
+	startLink(id: string): void {
+		// Locked while busy or mid inline-edit, like the tree's other actions.
+		if (this.busy || this.editingID !== null) {
+			return;
+		}
+		this.linkingID = id;
+		this.linkQuery = "";
+		this.linkResults = [];
+		this.linkRelation = Relation.RelationRelated;
+	}
+
+	cancelLink(): void {
+		this.linkingID = null;
+		this.linkQuery = "";
+		this.linkResults = [];
+	}
+
+	// setLinkQuery live-searches for a link target; the source block is
+	// excluded — a block cannot link to itself.
+	async setLinkQuery(q: string): Promise<void> {
+		this.linkQuery = q;
+		if (q.trim() === "") {
+			this.linkResults = [];
+			return;
+		}
+		try {
+			const hits = (await App.Search(q)) ?? [];
+			this.linkResults = hits.filter((b) => b.ID !== this.linkingID);
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+		}
+	}
+
+	// createLink records the picker's link and refreshes the source panel.
+	async createLink(target: Block): Promise<void> {
+		if (this.linkingID === null || this.busy) {
+			return;
+		}
+		const from = this.linkingID;
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.CreateLink(from, target.ID, this.linkRelation);
+			this.cancelLink();
+			await this.refreshLinks(from);
+			this.status = "linked";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// removeLink deletes one link from a block's panel. The edge identity is
+	// rebuilt from the panel's view: an outgoing entry keeps the panel's block
+	// as the source, an incoming one flips it.
+	async removeLink(id: string, link: LinkedBlock): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const from = link.Outgoing ? id : link.Block.ID;
+		const to = link.Outgoing ? link.Block.ID : id;
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RemoveLink(from, to, link.Relation);
+			await this.refreshLinks(id);
+			this.status = "unlinked";
 		} catch (err: unknown) {
 			this.error = callError(err).message;
 			this.status = "";
