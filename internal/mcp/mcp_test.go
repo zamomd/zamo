@@ -290,12 +290,23 @@ func TestReadToolsNeverWrite(t *testing.T) {
 		searchBlocks: []knowledge.Block{{ID: "01A"}},
 		subtree:      []knowledge.Block{{ID: "01ROOT"}},
 		topic:        []knowledge.Block{{ID: "01T"}},
+		links:        []knowledge.LinkedBlock{{Relation: knowledge.RelationRelated, Block: knowledge.Block{ID: "01L"}}},
 	}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
 	callBlocks(t, cs, "search", map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	callBlocks(t, cs, "topic_map", map[string]any{})
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_links",
+		Arguments: map[string]any{"block_id": "01BLK"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool get_links: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("get_links reported a tool error: %+v", res.Content)
+	}
 
 	if fake.subCalls != 0 {
 		t.Errorf("read tools submitted %d proposals, want 0", fake.subCalls)
@@ -314,6 +325,7 @@ func TestToolSurfacesDomainError(t *testing.T) {
 		{"search", &fakeBase{searchErr: boom}, map[string]any{"query": "x"}},
 		{"get_subtree", &fakeBase{treeErr: boom}, map[string]any{"root": "01A"}},
 		{"topic_map", &fakeBase{treeErr: boom}, map[string]any{}},
+		{"get_links", &fakeBase{linksErr: boom}, map[string]any{"block_id": "01A"}},
 		{"propose_blocks", &fakeBase{subErr: boom}, map[string]any{
 			"title": "t", "ops": []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
 		}},
