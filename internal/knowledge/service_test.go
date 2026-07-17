@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -256,6 +257,40 @@ func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
 	}
 	if got := repo.appliedOps[1]; got.Parent != "U1" {
 		t.Errorf("child parent = %q, want the resolved root id U1", got.Parent)
+	}
+}
+
+func TestServiceApplyExpandsDeleteToDescendants(t *testing.T) {
+	// A delete targets a block with children. The model emits only the parent's
+	// delete, but the foreign key forbids removing a block a child still points
+	// at. The domain must expand the delete to the whole subtree, descendants
+	// first, so the apply satisfies the key.
+	repo := &fakeRepo{
+		pending: []Proposal{{ID: "P1", Status: StatusPending, Ops: []Op{
+			{Kind: OpDelete, BlockID: "root"},
+		}}},
+		subtrees: map[ID][]Block{
+			// GetSubtree is pre-order: root, then its children.
+			"root": {
+				blk("root", "", 0, "Root"),
+				blk("kid", "root", 0, "Kid"),
+				blk("grandkid", "kid", 0, "Grandkid"),
+			},
+		},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.ApplyProposal(context.Background(), "P1", []int{0}); err != nil {
+		t.Fatalf("ApplyProposal: %v", err)
+	}
+	// Descendants before the parent, deepest first.
+	want := []Op{
+		{Kind: OpDelete, BlockID: "grandkid"},
+		{Kind: OpDelete, BlockID: "kid"},
+		{Kind: OpDelete, BlockID: "root"},
+	}
+	if !slices.Equal(repo.appliedOps, want) {
+		t.Errorf("applied ops = %+v, want the subtree deleted descendants-first %+v", repo.appliedOps, want)
 	}
 }
 
