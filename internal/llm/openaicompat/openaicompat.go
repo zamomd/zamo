@@ -210,11 +210,22 @@ func statusError(status int, body []byte) error {
 	return fmt.Errorf("%w: HTTP %d", knowledge.ErrLLMUnavailable, status)
 }
 
-// GenerateEdit implements knowledge.LLMClient.
+// GenerateEdit implements knowledge.LLMClient: it renders the edit prompt over
+// the scope subtree and the instruction, calls the chat-completions API, and
+// parses the reply into edit operations. Mirrors GenerateTree; the error
+// taxonomy is the same (ErrLLMUnavailable / ErrLLMBadResponse via ParseEditOps).
 func (c *Client) GenerateEdit(
 	ctx context.Context,
 	scope []knowledge.Block,
 	instruction string,
 ) ([]knowledge.Op, error) {
-	return nil, knowledge.ErrNotImplemented
+	prompt, err := llm.EditPrompt(scope, instruction)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	text, err := c.complete(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return llm.ParseEditOps([]byte(text))
 }
