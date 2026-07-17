@@ -3,8 +3,6 @@ package knowledge
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -148,10 +146,9 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
 // rendered as nested lists (RenderMarkdown). It reads every topic's full
-// subtree, renders the set, then writes the files under dir. All reads complete
-// before any write, so a read failure aborts with nothing written; a write
-// failure part-way (disk full, permissions) can still leave earlier files on
-// disk. Cancellation is honoured between writes.
+// subtree, renders the set, then hands the files to the injected writer. All
+// reads complete before any write, so a read failure aborts with nothing
+// written; how a mid-write failure is handled is the writer's concern.
 //
 // ponytail: one GetSubtree query per topic (N+1). Fine for a personal base;
 // upgrade to a single bulk "all subtrees" read if export ever gets slow.
@@ -173,13 +170,5 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	for _, f := range RenderMarkdown(subtrees) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
 }
