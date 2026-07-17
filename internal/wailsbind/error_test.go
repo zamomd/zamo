@@ -36,6 +36,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrNotPending, "not_pending"},
 		{knowledge.ErrInvalidProposal, "invalid_proposal"},
 		{knowledge.ErrEmptyProposal, "empty_proposal"},
+		{knowledge.ErrInvalidLink, "invalid_link"},
 		{knowledge.ErrBusy, "busy"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 		{knowledge.ErrLLMBadResponse, "llm_bad_response"},

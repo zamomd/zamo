@@ -51,6 +51,23 @@ func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Bl
 	return a.svc.GetSubtree(ctx, root)
 }
 
+// GetLinks passes the call to knowledge.Service: the block's typed links,
+// hydrated with their neighbour blocks.
+func (a *App) GetLinks(ctx context.Context, id knowledge.ID) ([]knowledge.LinkedBlock, error) {
+	return a.svc.LinkedBlocks(ctx, id)
+}
+
+// CreateLink passes the call to knowledge.Service. The owner links directly,
+// without the review queue — like EditBlockContent.
+func (a *App) CreateLink(ctx context.Context, from, to knowledge.ID, relation knowledge.Relation) error {
+	return a.svc.CreateLink(ctx, from, to, relation)
+}
+
+// RemoveLink passes the call to knowledge.Service.
+func (a *App) RemoveLink(ctx context.Context, from, to knowledge.ID, relation knowledge.Relation) error {
+	return a.svc.RemoveLink(ctx, from, to, relation)
+}
+
 // EditBlockContent passes the call to knowledge.Service. A manual edit by the
 // owner applies directly, without the review queue.
 func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
