@@ -155,6 +155,36 @@ func TestApplyProposalDeletesSubtreeChildFirst(t *testing.T) {
 	}
 }
 
+func TestApplyProposalDeleteReferencedByEdgeIsDomainError(t *testing.T) {
+	// Deleting a block an edge still points at violates the edges foreign key.
+	// expandDeletes handles the parent_id case, but an edge reference can still
+	// escape (until unlink lands, #53); whatever escapes must surface as a
+	// domain error, not a raw driver error.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
+		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "example"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	savePending(t, repo, "01LINK", knowledge.SourceMCP)
+	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("link apply: %v", err)
+	}
+
+	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
+	err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01TO"},
+	})
+	if !errors.Is(err, knowledge.ErrReferenced) {
+		t.Errorf("error = %v, want ErrReferenced (a foreign-key violation must be a domain error)", err)
+	}
+}
+
 func TestApplyProposalCreatesLink(t *testing.T) {
 	// A resolved link between two existing blocks lands in the edges table. The
 	// domain (assemble) emits OpLink, so storage must apply it — the schema has an
