@@ -31,6 +31,7 @@ func (s *Service) ReviewProposal(ctx context.Context, id ID) (ProposalReview, er
 		return ProposalReview{}, err
 	}
 
+	moves := collectMoves(p.Ops)
 	temps := proposalTempIDs(p.Ops)
 	ids := make([]ID, 0, len(p.Ops))
 	seen := make(map[ID]bool)
@@ -62,17 +63,19 @@ func (s *Service) ReviewProposal(ctx context.Context, id ID) (ProposalReview, er
 		}
 		// A delete of a live block takes its whole subtree with it (see
 		// Service.expandDeletes); surface the descendants so the reviewer sees
-		// the real scope. A stale delete has no live subtree to show.
+		// the real scope. The scope is computed against the proposal's moves, so
+		// a child this proposal moves out is not shown as deleted. A stale delete
+		// has no live subtree to show.
 		//
 		// ponytail: one GetSubtree per delete (N+1). Deletes in a proposal are
 		// rare; batch if a mass-delete proposal ever appears.
 		if op.Kind == OpDelete && !r.Stale {
-			sub, err := s.repo.GetSubtree(ctx, op.BlockID)
+			blocks, err := s.deletedBlocks(ctx, op.BlockID, moves)
 			if err != nil {
 				return ProposalReview{}, err
 			}
-			if len(sub) > 1 {
-				r.DeletesAlso = sub[1:] // drop the target itself; keep descendants
+			if len(blocks) > 1 {
+				r.DeletesAlso = blocks[1:] // drop the target itself (pre-order: first)
 			}
 		}
 		review[i] = r

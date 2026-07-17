@@ -35,8 +35,9 @@ var (
 	ErrBusy = errors.New("database is busy")
 
 	// ErrReferenced reports that an operation would leave a dangling reference:
-	// a block cannot be removed while an edge still points at it. A foreign-key
-	// violation surfaced as a domain error rather than a raw driver one.
+	// a block cannot be removed while a child or an edge still points at it. A
+	// foreign-key violation surfaced as a domain error rather than a raw driver
+	// one.
 	ErrReferenced = errors.New("block is still referenced")
 
 	// ErrLLMUnavailable reports that the model could not be reached:

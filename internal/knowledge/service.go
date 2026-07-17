@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,13 +102,16 @@ func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) erro
 // whole subtree, descendants first. The parent_id foreign key has no ON DELETE
 // CASCADE, so a block cannot be removed while a child still points at it; the
 // domain owns the rule that deleting a block deletes what hangs off it, and
-// makes it explicit in the op list rather than leaving it to storage. Ids
-// already scheduled for deletion are not repeated; a delete of a block that is
-// already gone passes through so storage still surfaces it as stale.
+// makes it explicit in the op list rather than leaving it to storage. The
+// cascade runs against the post-move tree (see deletedBlocks), so a block the
+// same proposal moves out of the subtree is spared. Ids already scheduled are
+// not repeated; a delete of a block that is already gone passes through so
+// storage still surfaces it as stale.
 //
 // ponytail: one GetSubtree per delete (N+1). Deletes are rare and small; batch
 // if a mass delete ever shows up.
 func (s *Service) expandDeletes(ctx context.Context, ops []Op) ([]Op, error) {
+	moves := collectMoves(ops)
 	out := make([]Op, 0, len(ops))
 	scheduled := make(map[ID]bool)
 	for _, op := range ops {
@@ -115,23 +119,76 @@ func (s *Service) expandDeletes(ctx context.Context, ops []Op) ([]Op, error) {
 			out = append(out, op)
 			continue
 		}
-		sub, err := s.repo.GetSubtree(ctx, op.BlockID)
+		blocks, err := s.deletedBlocks(ctx, op.BlockID, moves)
+		if errors.Is(err, ErrNotFound) {
+			out = append(out, op) // already gone; storage surfaces it as stale
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		if len(sub) == 0 {
-			out = append(out, op)
-			continue
-		}
-		// GetSubtree is pre-order (parents before children); reverse it so every
-		// child is deleted before the parent it references.
-		for i := len(sub) - 1; i >= 0; i-- {
-			id := sub[i].ID
+		// deletedBlocks is pre-order (parents first); reverse it so every child
+		// is deleted before the parent it references.
+		for i := len(blocks) - 1; i >= 0; i-- {
+			id := blocks[i].ID
 			if scheduled[id] {
 				continue
 			}
 			scheduled[id] = true
 			out = append(out, Op{Kind: OpDelete, BlockID: id})
+		}
+	}
+	return out, nil
+}
+
+// collectMoves indexes a proposal's move ops as block id → new parent, so the
+// delete cascade can be computed against where blocks end up, not where they
+// currently sit.
+func collectMoves(ops []Op) map[ID]ID {
+	moves := make(map[ID]ID)
+	for _, op := range ops {
+		if op.Kind == OpMove {
+			moves[op.BlockID] = ID(op.Parent)
+		}
+	}
+	return moves
+}
+
+// deletedBlocks returns the blocks a delete of target actually removes, in
+// pre-order and including target itself. The cascade is computed against the
+// tree as the proposal's moves leave it: a block reparented out of target's
+// subtree (its post-move parent chain no longer reaches target) escapes, and
+// so does everything under it. Returns ErrNotFound if target is already gone.
+func (s *Service) deletedBlocks(ctx context.Context, target ID, moves map[ID]ID) ([]Block, error) {
+	sub, err := s.repo.GetSubtree(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	parent := make(map[ID]ID, len(sub))
+	for _, b := range sub {
+		p := b.ParentID
+		if np, moved := moves[b.ID]; moved {
+			p = np
+		}
+		parent[b.ID] = p
+	}
+	// A block is removed iff its post-move parent chain still leads to target.
+	// Iterate to a fixpoint over the flat subtree; pre-order means one pass
+	// usually settles it, but a move can reorder ancestry, so loop until stable.
+	removed := map[ID]bool{target: true}
+	for changed := true; changed; {
+		changed = false
+		for _, b := range sub {
+			if !removed[b.ID] && removed[parent[b.ID]] {
+				removed[b.ID] = true
+				changed = true
+			}
+		}
+	}
+	out := make([]Block, 0, len(sub))
+	for _, b := range sub { // keep pre-order
+		if removed[b.ID] {
+			out = append(out, b)
 		}
 	}
 	return out, nil
