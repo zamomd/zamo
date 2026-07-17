@@ -410,7 +410,11 @@ func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id str
 // applyLink records a non-hierarchical edge between two existing blocks. Either
 // endpoint gone maps to ErrStale (the base moved), not a raw foreign-key error;
 // the relation defaults to "related" when the op leaves it unset, matching the
-// domain's default and the schema's CHECK.
+// domain's default and the schema's CHECK. The insert shares AddEdge's ON
+// CONFLICT DO NOTHING: the owner can hand-create the same link (AddEdge) while
+// an AI proposal carrying it is still pending, and re-applying an edge that
+// already exists is a no-op — the goal state already holds — so a manual link
+// can never fail a proposal apply.
 func applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
 	if err := requireBlock(ctx, tx, op.Kind, op.From); err != nil {
 		return err
@@ -423,7 +427,8 @@ func applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 		relation = knowledge.RelationRelated
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO edges (from_id, to_id, relation, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO edges (from_id, to_id, relation, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT (from_id, to_id, relation) DO NOTHING`,
 		op.From, op.To, string(relation), now); err != nil {
 		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
 	}
