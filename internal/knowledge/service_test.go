@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -392,8 +393,23 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 		{Name: "alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
 		{Name: "beta.md", Content: "- # Beta\n"},
 	}
-	if !reflect.DeepEqual(writer.files, want) {
+	if !slices.Equal(writer.files, want) {
 		t.Errorf("writer got files %+v, want %+v", writer.files, want)
+	}
+}
+
+func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
+	// A write failure must reach the caller, mirroring the read-error path.
+	boom := errors.New("disk full")
+	repo := &fakeRepo{
+		topics:   []Block{blk("t1", "", 0, "# Alpha")},
+		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Alpha")}},
+	}
+	svc := NewService(nil, repo, seqIDs(), &fakeFileWriter{writeErr: boom}, nil)
+
+	err := svc.ExportMarkdown(context.Background(), "/export/here")
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the writer error surfaced", err)
 	}
 }
 
