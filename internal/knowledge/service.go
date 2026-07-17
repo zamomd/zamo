@@ -3,8 +3,6 @@ package knowledge
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -13,19 +11,30 @@ import (
 // on the standard library alone.
 type IDGenerator func() ID
 
+// FileWriter persists a rendered export. Writing to disk is an effect outside
+// the database, so the domain does not do it: the implementation lives outside
+// this package and is injected like IDGenerator, keeping knowledge on the
+// standard library alone and the export use case testable without a disk.
+type FileWriter interface {
+	// WriteFiles writes each file into dir. Names are unique within files
+	// (RenderMarkdown guarantees it), so order does not matter.
+	WriteFiles(ctx context.Context, dir string, files []ExportFile) error
+}
+
 // Service holds the product's use cases. It is the only place where the
 // logic lives; every input calls its methods.
 type Service struct {
-	llm   LLMClient
-	repo  Repository
-	newID IDGenerator
-	now   func() time.Time
+	llm    LLMClient
+	repo   Repository
+	newID  IDGenerator
+	writer FileWriter
+	now    func() time.Time
 }
 
 // NewService wires the domain to its boundaries: the LLM provider,
-// storage, and the injected ID and time sources.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, now func() time.Time) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, now: now}
+// storage, and the injected ID, file-writer, and time sources.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, now func() time.Time) *Service {
+	return &Service{llm: llm, repo: repo, newID: newID, writer: writer, now: now}
 }
 
 // ExpandTopic expands a topic into a block tree and puts the result into
@@ -137,10 +146,9 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
 // rendered as nested lists (RenderMarkdown). It reads every topic's full
-// subtree, renders the set, then writes the files under dir. All reads complete
-// before any write, so a read failure aborts with nothing written; a write
-// failure part-way (disk full, permissions) can still leave earlier files on
-// disk. Cancellation is honoured between writes.
+// subtree, renders the set, then hands the files to the injected writer. All
+// reads complete before any write, so a read failure aborts with nothing
+// written; how a mid-write failure is handled is the writer's concern.
 //
 // ponytail: one GetSubtree query per topic (N+1). Fine for a personal base;
 // upgrade to a single bulk "all subtrees" read if export ever gets slow.
@@ -162,13 +170,5 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	for _, f := range RenderMarkdown(subtrees) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, f.Name), []byte(f.Content), 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
 }

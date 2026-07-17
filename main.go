@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cominddev/comind/internal/config"
+	"github.com/cominddev/comind/internal/fsexport"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
 	"github.com/cominddev/comind/internal/mcp"
@@ -107,7 +108,7 @@ func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string,
 		return nil, nil, "", nil, err
 	}
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, time.Now)
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, fsexport.Writer{}, time.Now)
 	return svc, holder, settingsPath, func() { db.Close() }, nil
 }
 
