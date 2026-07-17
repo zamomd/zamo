@@ -37,6 +37,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrInvalidProposal, "invalid_proposal"},
 		{knowledge.ErrEmptyProposal, "empty_proposal"},
 		{knowledge.ErrBusy, "busy"},
+		{knowledge.ErrReferenced, "referenced"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 		{knowledge.ErrLLMBadResponse, "llm_bad_response"},
 		{settings.ErrDeclarative, "declarative"},
