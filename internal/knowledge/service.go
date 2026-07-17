@@ -90,7 +90,51 @@ func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) erro
 	if err != nil {
 		return err
 	}
+	ops, err = s.expandDeletes(ctx, ops)
+	if err != nil {
+		return err
+	}
 	return s.repo.ApplyProposal(ctx, id, ops)
+}
+
+// expandDeletes replaces every delete of an existing block with deletes of its
+// whole subtree, descendants first. The parent_id foreign key has no ON DELETE
+// CASCADE, so a block cannot be removed while a child still points at it; the
+// domain owns the rule that deleting a block deletes what hangs off it, and
+// makes it explicit in the op list rather than leaving it to storage. Ids
+// already scheduled for deletion are not repeated; a delete of a block that is
+// already gone passes through so storage still surfaces it as stale.
+//
+// ponytail: one GetSubtree per delete (N+1). Deletes are rare and small; batch
+// if a mass delete ever shows up.
+func (s *Service) expandDeletes(ctx context.Context, ops []Op) ([]Op, error) {
+	out := make([]Op, 0, len(ops))
+	scheduled := make(map[ID]bool)
+	for _, op := range ops {
+		if op.Kind != OpDelete {
+			out = append(out, op)
+			continue
+		}
+		sub, err := s.repo.GetSubtree(ctx, op.BlockID)
+		if err != nil {
+			return nil, err
+		}
+		if len(sub) == 0 {
+			out = append(out, op)
+			continue
+		}
+		// GetSubtree is pre-order (parents before children); reverse it so every
+		// child is deleted before the parent it references.
+		for i := len(sub) - 1; i >= 0; i-- {
+			id := sub[i].ID
+			if scheduled[id] {
+				continue
+			}
+			scheduled[id] = true
+			out = append(out, Op{Kind: OpDelete, BlockID: id})
+		}
+	}
+	return out, nil
 }
 
 // pendingProposal finds a proposal in the pending queue. A decided or unknown
