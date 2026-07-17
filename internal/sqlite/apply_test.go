@@ -125,6 +125,36 @@ func TestApplyProposalDeleteWithChildFails(t *testing.T) {
 	}
 }
 
+func TestApplyProposalDeletesSubtreeChildFirst(t *testing.T) {
+	// The domain expands a delete into descendants-first deletes (see
+	// Service.expandDeletes). Storage must apply that list cleanly: with the
+	// child removed before the parent, the parent_id foreign key holds and the
+	// whole subtree is gone.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "01KID", Parent: "01ROOT", Content: "Kid"},
+	}); err != nil {
+		t.Fatalf("setup apply: %v", err)
+	}
+
+	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
+	if err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01KID"},
+		{Kind: knowledge.OpDelete, BlockID: "01ROOT"},
+	}); err != nil {
+		t.Fatalf("descendants-first delete must apply cleanly, got %v", err)
+	}
+	if _, _, ok := blockRow(t, repo, "01KID"); ok {
+		t.Error("child still present after subtree delete")
+	}
+	if _, _, ok := blockRow(t, repo, "01ROOT"); ok {
+		t.Error("root still present after subtree delete")
+	}
+}
+
 func TestApplyProposalCreatesLink(t *testing.T) {
 	// A resolved link between two existing blocks lands in the edges table. The
 	// domain (assemble) emits OpLink, so storage must apply it — the schema has an
