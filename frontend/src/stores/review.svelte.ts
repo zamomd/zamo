@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import type { ProposalReview } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { callError } from "../lib/callerror";
 import { queue } from "./queue.svelte";
 
 // ReviewStore is the Review tab's view-model. The pending list itself lives in
@@ -114,21 +115,22 @@ class ReviewStore {
 			this.notice = "applied";
 		} catch (err: unknown) {
 			if (my !== this.seq) return;
-			const msg = String(err);
-			// The Wails JS runtime surfaces a rejected Go call by throwing the
-			// raw error-body text as the message (undocumented behavior), so
-			// these substrings must keep matching the Go domain error text in
-			// internal/knowledge/errors.go: "proposal is stale" and "proposal
-			// already decided".
-			if (msg.includes("stale")) {
-				// The base moved under the proposal: re-read, fresh flags deselect
-				// what vanished.
-				await this.open(this.detail.Proposal.ID, my);
-				this.notice = "base changed — check again";
-			} else if (msg.includes("already decided")) {
-				await this.loadQueue(nextID, my);
-			} else {
-				this.error = msg;
+			// Codes are assigned in internal/wailsbind MarshalError — the one
+			// place errors are mapped; the message text is free to change and
+			// is never matched on.
+			const ce = callError(err);
+			switch (ce.code) {
+				case "stale":
+					// The base moved under the proposal: re-read, fresh flags
+					// deselect what vanished.
+					await this.open(this.detail.Proposal.ID, my);
+					this.notice = "base changed — check again";
+					break;
+				case "not_pending":
+					await this.loadQueue(nextID, my);
+					break;
+				default:
+					this.error = ce.message;
 			}
 		} finally {
 			this.busy = false;
@@ -150,7 +152,7 @@ class ReviewStore {
 			this.notice = "rejected";
 		} catch (err: unknown) {
 			if (my !== this.seq) return;
-			this.error = String(err);
+			this.error = callError(err).message;
 		} finally {
 			this.busy = false;
 		}
