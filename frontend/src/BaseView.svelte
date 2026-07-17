@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import CommandBox from "./lib/CommandBox.svelte";
+	import SearchBox from "./lib/SearchBox.svelte";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import TreeNode from "./lib/TreeNode.svelte";
 	import { base } from "./stores/base.svelte";
@@ -20,6 +21,7 @@
 	<h1>Comind</h1>
 
 	<CommandBox {onqueued} />
+	<SearchBox />
 	<StatusLine status={base.status} error={base.error} />
 
 	{#if base.forest.length === 0}

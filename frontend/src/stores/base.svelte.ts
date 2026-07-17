@@ -2,7 +2,7 @@ import { SvelteSet } from "svelte/reactivity";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError } from "../lib/callerror";
-import { buildTree, findBlock, type TreeNodeData } from "../lib/tree";
+import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
 // flows from one command field. Expansion (no target) and restructuring (a
@@ -32,6 +32,15 @@ class BaseStore {
 	editingID = $state<string | null>(null);
 	editText = $state("");
 
+	// Jump-to-block target for a search result. highlightID names the row to
+	// flash and scroll to; highlightNonce is bumped on every reveal so a second
+	// jump to the same row re-triggers the one-shot flash the id alone would not.
+	highlightID = $state<string | null>(null);
+	highlightNonce = $state(0);
+
+	// A reveal whose block is not yet in the forest, flushed at the end of reload.
+	private pendingReveal: string | null = null;
+
 	// The scope label is read out of the live forest rather than copied on
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
@@ -57,6 +66,32 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		// Apply a reveal that raced the initial load. reveal re-parks it if the
+		// block is still absent, so a missing target self-heals on a later reload.
+		if (this.pendingReveal !== null) {
+			const id = this.pendingReveal;
+			this.pendingReveal = null;
+			this.reveal(id);
+		}
+	}
+
+	// reveal un-collapses a block's ancestors and arms its flash. It only ever
+	// expands, never collapses, so unlike toggle it is safe with an inline edit
+	// open: it cannot unmount a live editor. A block absent from the forest is
+	// parked (see pendingReveal) rather than dropped, for the first-mount race
+	// where the field is usable before reload has built the forest.
+	reveal(id: string): void {
+		const path = findPath(this.forest, id);
+		if (path === null) {
+			this.pendingReveal = id;
+			return;
+		}
+		this.pendingReveal = null;
+		for (const ancestor of path) {
+			this.collapsed.delete(ancestor);
+		}
+		this.highlightID = id;
+		this.highlightNonce++;
 	}
 
 	toggle(id: string): void {

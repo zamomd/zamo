@@ -11,10 +11,28 @@
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
+
+	// Scroll this row into view and flash it when a search jump targets it. The
+	// effect keys on highlightNonce so a repeat jump to the same block re-fires;
+	// flash is toggled off then back on across a frame so the CSS animation
+	// restarts rather than sitting at its finished state.
+	let rowEl: HTMLElement | undefined;
+	let flash = $state(false);
+	$effect(() => {
+		void base.highlightNonce; // subscribe: bumped on every reveal
+		if (base.highlightID !== node.block.ID) {
+			return;
+		}
+		rowEl?.scrollIntoView({ block: "center", behavior: "smooth" });
+		flash = false;
+		requestAnimationFrame(() => {
+			flash = true;
+		});
+	});
 </script>
 
 <li>
-	<div class="row" class:targeted={base.scopeID === node.block.ID}>
+	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash>
 		<!-- Toggles are locked while an edit is open: collapsing an ancestor would
 		     unmount the editor while editingID lingers, silently dead-ending every
 		     other block (startEdit no-ops when a block is already being edited). -->
@@ -118,6 +136,21 @@
 	.row.targeted {
 		background: rgba(127, 127, 127, 0.12);
 		border-radius: 3px;
+	}
+	/* A jump from search flashes the row once, then fades back — long enough for
+	   the eye to catch it after the scroll, leaving no lingering state. The tint
+	   is a yellow alpha that reads on both themes. */
+	.row.flash {
+		border-radius: 3px;
+		animation: flash 1.8s ease-out;
+	}
+	@keyframes flash {
+		0% {
+			background: rgba(255, 213, 0, 0.55);
+		}
+		100% {
+			background: rgba(255, 213, 0, 0);
+		}
 	}
 	/* The AI target is a per-row affordance kept out of the way until the row is
 	   hovered or focused, so the tree stays quiet; the currently-targeted row keeps

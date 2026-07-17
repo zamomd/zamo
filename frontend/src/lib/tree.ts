@@ -41,3 +41,20 @@ export function findBlock(nodes: TreeNodeData[], id: string): Block | null {
 	}
 	return null;
 }
+
+// findPath returns the block's ancestor ids, root-first and excluding the block
+// itself, so a jump can un-collapse exactly the rows above the target. The empty
+// slice (a root) is distinct from null (id absent from the forest), which the
+// caller needs to tell "reveal a root" from "not here".
+export function findPath(nodes: TreeNodeData[], id: string): string[] | null {
+	for (const node of nodes) {
+		if (node.block.ID === id) {
+			return [];
+		}
+		const sub = findPath(node.children, id);
+		if (sub) {
+			return [node.block.ID, ...sub];
+		}
+	}
+	return null;
+}
