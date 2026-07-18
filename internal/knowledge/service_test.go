@@ -427,6 +427,29 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 	}
 }
 
+func TestServiceExportMarkdownIncludesOutgoingLinks(t *testing.T) {
+	// A block's outgoing typed links must reach the export, hydrated with the
+	// target's first line, so nothing in the base is dropped.
+	repo := &fakeRepo{
+		topics:   []Block{blk("t1", "", 0, "# Root")},
+		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Root")}},
+		edges:    []Edge{{From: "t1", To: "x9", Relation: RelationExample}},
+		blocks:   map[ID]Block{"x9": {ID: "x9", Content: "Target block\nsecond line"}},
+	}
+	writer := &fakeFileWriter{}
+	svc := NewService(nil, repo, seqIDs(), writer, nil)
+
+	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
+		t.Fatalf("ExportMarkdown: %v", err)
+	}
+	want := "- # Root\n" +
+		"  - links:\n" +
+		"    - example → Target block\n"
+	if len(writer.files) != 1 || writer.files[0].Content != want {
+		t.Errorf("content = %+v, want %q", writer.files, want)
+	}
+}
+
 func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
 	// A write failure must reach the caller, mirroring the read-error path.
 	boom := errors.New("disk full")
