@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -260,11 +262,7 @@ func (s *Service) exportLinks(ctx context.Context, subtrees [][]Block) (map[ID][
 	if len(targets) == 0 {
 		return nil, nil
 	}
-	ids := make([]ID, 0, len(targets))
-	for id := range targets {
-		ids = append(ids, id)
-	}
-	blocks, err := s.repo.GetBlocks(ctx, ids)
+	blocks, err := s.repo.GetBlocks(ctx, slices.Collect(maps.Keys(targets)))
 	if err != nil {
 		return nil, err
 	}
