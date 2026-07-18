@@ -651,6 +651,108 @@ func TestAcceptDeletedSubtreeCascades(t *testing.T) {
 	}
 }
 
+// TestAcceptDeletedSubtreeCascadesMultiLevel pins that the cascade is not
+// just one generation deep: P→C→G all tombstoned by one AI delete of P,
+// MarkBlockReviewed(P) must walk the chain and resolve every level, not
+// only C.
+func TestAcceptDeletedSubtreeCascadesMultiLevel(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
+		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
+		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "c", Content: "G text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	for _, id := range []string{"p", "c", "g"} {
+		if err := repo.MarkBlockReviewed(ctx, knowledge.ID(id)); err != nil {
+			t.Fatalf("mark %s reviewed: %v", id, err)
+		}
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "p"},
+	}); err != nil {
+		t.Fatalf("ai delete: %v", err)
+	}
+	for _, id := range []string{"p", "c", "g"} {
+		assertInUnreviewed(t, repo, id)
+	}
+
+	if err := repo.MarkBlockReviewed(ctx, "p"); err != nil {
+		t.Fatalf("MarkBlockReviewed(p): %v", err)
+	}
+
+	changes, err := repo.ListUnreviewed(ctx)
+	if err != nil {
+		t.Fatalf("ListUnreviewed: %v", err)
+	}
+	if len(changes.Blocks) != 0 {
+		t.Errorf("ListUnreviewed.Blocks after accepting the deleted subtree's root = %+v, want none", changes.Blocks)
+	}
+	for _, id := range []string{"p", "c", "g"} {
+		for _, rev := range revisionsOf(t, repo, id) {
+			if !rev.reviewed {
+				t.Errorf("%s revision %+v still unreviewed after MarkBlockReviewed(p)", id, rev)
+			}
+		}
+	}
+}
+
+// TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings pins that the cascade
+// is scoped to the accepted block's own chain: two unrelated AI-deleted
+// subtrees under the same topic, and accepting one root must not touch the
+// other's tombstones.
+func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "topic", Content: "topic"},
+		{Kind: knowledge.OpAdd, BlockID: "p1", Parent: "topic", Content: "P1 text"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "p1", Content: "C1 text"},
+		{Kind: knowledge.OpAdd, BlockID: "p2", Parent: "topic", Content: "P2 text"},
+		{Kind: knowledge.OpAdd, BlockID: "c2", Parent: "p2", Content: "C2 text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	for _, id := range []string{"topic", "p1", "c1", "p2", "c2"} {
+		if err := repo.MarkBlockReviewed(ctx, knowledge.ID(id)); err != nil {
+			t.Fatalf("mark %s reviewed: %v", id, err)
+		}
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-del1", aiMeta("ai delete p1"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "p1"},
+	}); err != nil {
+		t.Fatalf("ai delete p1: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-del2", aiMeta("ai delete p2"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "p2"},
+	}); err != nil {
+		t.Fatalf("ai delete p2: %v", err)
+	}
+
+	if err := repo.MarkBlockReviewed(ctx, "p1"); err != nil {
+		t.Fatalf("MarkBlockReviewed(p1): %v", err)
+	}
+
+	assertNotInUnreviewed(t, repo, "p1")
+	assertNotInUnreviewed(t, repo, "c1")
+	assertInUnreviewed(t, repo, "p2")
+	assertInUnreviewed(t, repo, "c2")
+
+	changes, err := repo.ListUnreviewed(ctx)
+	if err != nil {
+		t.Fatalf("ListUnreviewed: %v", err)
+	}
+	if len(changes.Blocks) != 2 {
+		t.Errorf("ListUnreviewed.Blocks after accepting p1 only = %+v, want exactly p2 and c2", changes.Blocks)
+	}
+}
+
 // TestMarkGroupReviewedMarksEdges pins that accepting a whole ApplyOps
 // batch does not leave a link op it contained pending: applyLink stamps
 // the edge with the batch's group_id, and MarkGroupReviewed must flip its
