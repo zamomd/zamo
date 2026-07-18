@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { base } from "../stores/base.svelte";
 	import BlockLinks from "./BlockLinks.svelte";
+	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import TreeNode from "./TreeNode.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
@@ -13,6 +14,7 @@
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
 	const linksOpen = $derived(base.openLinks.has(node.block.ID));
+	const historyOpen = $derived(base.historyID === node.block.ID);
 	// unreviewed marks a block carrying its own pending revision; ghost is the
 	// subset that is also a pending deletion (merged into the forest by
 	// base.svelte.ts's reload — see base.ghosts). A topic root additionally
@@ -107,6 +109,22 @@
 			</button>
 		{/if}
 
+		<!-- History is allowed on ghosts too: it is how a pending deletion is
+		     inspected or undone before review, unlike edit/target/links which stay
+		     hidden until the block is restored. -->
+		<button
+			type="button"
+			class="history-toggle"
+			class:open={historyOpen}
+			title="show this block's revision history"
+			aria-expanded={historyOpen}
+			aria-label="toggle this block's revision history"
+			disabled={base.busy}
+			onclick={() => base.toggleHistory(node.block.ID)}
+		>
+			⌚
+		</button>
+
 		{#if unreviewed}
 			<button
 				type="button"
@@ -151,6 +169,9 @@
 	</div>
 	{#if linksOpen}
 		<BlockLinks block={node.block} />
+	{/if}
+	{#if historyOpen}
+		<HistoryPanel block={node.block} />
 	{/if}
 	{#if hasChildren && expanded}
 		<ul>
@@ -262,6 +283,23 @@
 		opacity: 0.6;
 	}
 	.links-toggle:hover:not(:disabled) {
+		opacity: 1;
+	}
+	.history-toggle {
+		flex: none;
+		border: none;
+		background: none;
+		padding: 0 0.3rem;
+		cursor: pointer;
+		color: inherit;
+		opacity: 0;
+	}
+	.row:hover .history-toggle,
+	.row:focus-within .history-toggle,
+	.history-toggle.open {
+		opacity: 0.6;
+	}
+	.history-toggle:hover:not(:disabled) {
 		opacity: 1;
 	}
 	/* Unreviewed rows get a standing orange rail — unlike .target/.links-toggle

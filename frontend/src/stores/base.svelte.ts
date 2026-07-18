@@ -3,6 +3,7 @@ import {
 	type Block,
 	type LinkedBlock,
 	Relation,
+	type Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError } from "../lib/callerror";
@@ -65,6 +66,13 @@ class BaseStore {
 	linkQuery = $state("");
 	linkResults = $state<Block[]>([]);
 	linkRelation = $state<Relation>(Relation.RelationRelated);
+
+	// The history panel: at most one block's revisions are loaded at a time,
+	// newest first as BlockHistory returns them. Deleting revisions IS the
+	// rollback mechanism (see internal/sqlite/revision.go), so this doubles as
+	// the undo UI, not just a read-only log.
+	historyID = $state<string | null>(null);
+	revisions = $state<Revision[]>([]);
 
 	// A reveal whose block is not yet in the forest, flushed at the end of reload.
 	private pendingReveal: string | null = null;
@@ -149,6 +157,13 @@ class BaseStore {
 				continue;
 			}
 			await this.refreshLinks(id);
+		}
+		// A history panel whose block vanished entirely (its last revision was
+		// finalized away by Accept, not by deleteRevision's own not_found path)
+		// closes rather than keep showing a dead block's stale history.
+		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
+			this.historyID = null;
+			this.revisions = [];
 		}
 		// Apply a reveal that raced the initial load. reveal re-parks it if the
 		// block is still absent, so a missing target self-heals on a later reload.
@@ -489,6 +504,60 @@ class BaseStore {
 				await this.refreshLinks(link.Block.ID);
 			}
 			this.status = "unlinked";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// toggleHistory opens or closes a block's revision-history panel, loading
+	// the revisions on open. Allowed on ghosts too: a pending deletion's
+	// history is exactly how its removal is inspected or undone before review.
+	async toggleHistory(id: string): Promise<void> {
+		if (this.historyID === id) {
+			this.historyID = null;
+			this.revisions = [];
+			return;
+		}
+		this.historyID = id;
+		this.error = "";
+		try {
+			this.revisions = (await App.BlockHistory(id)) ?? [];
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.revisions = [];
+		}
+	}
+
+	// deleteRevision removes one revision from a block's history — the
+	// rollback mechanism. Deleting the head reverts the block to the previous
+	// revision; deleting the last remaining revision removes the block
+	// entirely, in which case the follow-up BlockHistory errors not_found —
+	// that closes the panel rather than surfacing as an error. An invalid
+	// rollback (a live parent or children in the way) is refused by the
+	// backend with a message surfaced verbatim in base.error.
+	async deleteRevision(blockID: string, revID: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.DeleteRevision(blockID, revID);
+			try {
+				this.revisions = (await App.BlockHistory(blockID)) ?? [];
+			} catch (err: unknown) {
+				if (callError(err).code !== "not_found") {
+					throw err;
+				}
+				this.historyID = null;
+				this.revisions = [];
+			}
+			await this.reload();
+			await changes.refresh();
+			this.status = "deleted revision";
 		} catch (err: unknown) {
 			this.error = callError(err).message;
 			this.status = "";
