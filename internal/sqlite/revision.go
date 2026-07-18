@@ -554,15 +554,22 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		if err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: topic of %s: %w", id, translate(err))
 		}
-		var title string
+		// GroupID and GroupTitle both come from the same row — the block's
+		// newest unreviewed revision — so a batch's title never labels a
+		// different group's id (see UnreviewedBlock's doc: that row is not
+		// always head, e.g. a reviewed owner edit sitting on top of a still-
+		// unreviewed AI edit).
+		var groupID, title string
 		if err := r.db.QueryRowContext(ctx, `
-			SELECT COALESCE(g.title, '') FROM block_revisions rv
+			SELECT COALESCE(rv.group_id, ''), COALESCE(g.title, '') FROM block_revisions rv
 			LEFT JOIN revision_groups g ON g.id = rv.group_id
 			WHERE rv.block_id = ? AND rv.reviewed = 0
-			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&title); err != nil {
-			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group title of %s: %w", id, translate(err))
+			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title); err != nil {
+			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, translate(err))
 		}
-		out = append(out, knowledge.UnreviewedBlock{Head: head, TopicID: topic, GroupTitle: title})
+		out = append(out, knowledge.UnreviewedBlock{
+			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].TopicID != out[j].TopicID {

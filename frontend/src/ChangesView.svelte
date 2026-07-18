@@ -31,13 +31,19 @@
 	// Batches: one row per distinct ApplyOps group across every unreviewed
 	// block, regardless of which page it lands on — the compact "accept the
 	// whole AI turn at once" affordance AcceptGroup exposes but nothing in
-	// the UI called yet. A block with no GroupID (should not happen for an
-	// unreviewed change, but the field is technically optional) is skipped
-	// defensively rather than grouped under an empty-string batch.
+	// the UI called yet. Keyed by b.GroupID, NOT b.Head.GroupID: the two
+	// diverge whenever a reviewed owner edit sits on top of a still-
+	// unreviewed AI edit (Head is then the owner's revision, but GroupID/
+	// GroupTitle name the AI batch actually awaiting review — see
+	// UnreviewedBlock's doc). Keying by Head.GroupID would accept the wrong,
+	// already-reviewed group: a no-op that leaves the row sitting there.
+	// A block with no GroupID (should not happen for an unreviewed change,
+	// but the field is technically optional) is skipped defensively rather
+	// than grouped under an empty-string batch.
 	const batches = $derived.by(() => {
 		const map = new Map<ID, { title: string; count: number }>();
 		for (const b of changes.blocks) {
-			const groupID = b.Head.GroupID;
+			const groupID = b.GroupID;
 			if (!groupID) continue;
 			const entry = map.get(groupID);
 			if (entry) {

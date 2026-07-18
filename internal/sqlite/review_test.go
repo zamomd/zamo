@@ -354,14 +354,14 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "live", Parent: "root", Content: "live v1"},
 		{Kind: knowledge.OpAdd, BlockID: "gone", Parent: "root", Content: "gone v1"},
+		{Kind: knowledge.OpAdd, BlockID: "buried", Parent: "root", Content: "buried v1"},
 	}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if err := repo.MarkBlockReviewed(ctx, "live"); err != nil {
-		t.Fatalf("mark live reviewed: %v", err)
-	}
-	if err := repo.MarkBlockReviewed(ctx, "gone"); err != nil {
-		t.Fatalf("mark gone reviewed: %v", err)
+	for _, id := range []string{"live", "gone", "buried"} {
+		if err := repo.MarkBlockReviewed(ctx, knowledge.ID(id)); err != nil {
+			t.Fatalf("mark %s reviewed: %v", id, err)
+		}
 	}
 
 	if err := repo.ApplyOps(ctx, "grp-edit", aiMeta("ai edit"), []knowledge.Op{
@@ -374,16 +374,32 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ai delete: %v", err)
 	}
+	// buried: an AI edit lands unreviewed, then the owner edits straight on
+	// top of it (owner writes are born reviewed and bypass the queue). The
+	// head is now the owner's revision, but the AI revision underneath is
+	// still unreviewed — GroupID/GroupTitle must come from that AI revision
+	// (the "newest unreviewed" one ListUnreviewed's query targets), not from
+	// the head's own (reviewed, unrelated) group.
+	if err := repo.ApplyOps(ctx, "grp-ai-buried", aiMeta("ai edit buried"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "buried", Content: "buried v2 ai"},
+	}); err != nil {
+		t.Fatalf("ai edit buried: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-owner-buried", ownerMeta("owner edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "buried", Content: "buried v3 owner"},
+	}); err != nil {
+		t.Fatalf("owner edit buried: %v", err)
+	}
 
 	changes, err := repo.ListUnreviewed(ctx)
 	if err != nil {
 		t.Fatalf("ListUnreviewed: %v", err)
 	}
-	if len(changes.Blocks) != 2 {
-		t.Fatalf("ListUnreviewed.Blocks = %+v, want 2 entries", changes.Blocks)
+	if len(changes.Blocks) != 3 {
+		t.Fatalf("ListUnreviewed.Blocks = %+v, want 3 entries", changes.Blocks)
 	}
 
-	byID := make(map[string]knowledge.UnreviewedBlock, 2)
+	byID := make(map[string]knowledge.UnreviewedBlock, 3)
 	for _, ub := range changes.Blocks {
 		byID[string(ub.Head.BlockID)] = ub
 	}
@@ -401,6 +417,9 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	if live.GroupTitle != "ai edit" {
 		t.Errorf("live GroupTitle = %q, want %q", live.GroupTitle, "ai edit")
 	}
+	if live.GroupID != "grp-edit" {
+		t.Errorf("live GroupID = %q, want %q", live.GroupID, "grp-edit")
+	}
 
 	gone, ok := byID["gone"]
 	if !ok {
@@ -412,8 +431,31 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	if gone.GroupTitle != "ai delete" {
 		t.Errorf("gone GroupTitle = %q, want %q", gone.GroupTitle, "ai delete")
 	}
+	if gone.GroupID != "grp-del" {
+		t.Errorf("gone GroupID = %q, want %q", gone.GroupID, "grp-del")
+	}
 	if gone.TopicID != "root" {
 		t.Errorf("gone TopicID = %q, want root", gone.TopicID)
+	}
+
+	buried, ok := byID["buried"]
+	if !ok {
+		t.Fatalf("ListUnreviewed missing 'buried'")
+	}
+	if buried.Head.Deleted || buried.Head.Content != "buried v3 owner" {
+		t.Errorf("buried head = %+v, want Deleted=false Content=buried v3 owner", buried.Head)
+	}
+	if buried.Head.GroupID != "grp-owner-buried" {
+		t.Errorf("buried Head.GroupID = %q, want %q (the head's own, reviewed group)",
+			buried.Head.GroupID, "grp-owner-buried")
+	}
+	if buried.GroupTitle != "ai edit buried" {
+		t.Errorf("buried GroupTitle = %q, want %q", buried.GroupTitle, "ai edit buried")
+	}
+	// The newest *unreviewed* revision's group, matching GroupTitle — must
+	// differ from Head.GroupID (asserted above).
+	if buried.GroupID != "grp-ai-buried" {
+		t.Errorf("buried GroupID = %q, want %q", buried.GroupID, "grp-ai-buried")
 	}
 }
 

@@ -194,11 +194,18 @@ export enum Source {
 /**
  * UnreviewedBlock is one entry of the Changes screen: the block's head
  * revision (Deleted=true for a pending deletion — the ghost), the topic root
- * it lives under, and the description of the batch that touched it.
+ * it lives under, and the id/description of the batch awaiting review.
+ * GroupID and GroupTitle both come from the block's newest *unreviewed*
+ * revision, which is not always Head: an owner edit applied straight on top
+ * of a still-pending AI edit becomes the new (already-reviewed) head while
+ * the AI revision underneath it is what is actually awaiting review, so
+ * GroupID can differ from Head.GroupID. "Accept batch" must key off GroupID,
+ * not Head.GroupID, or it accepts the wrong — already-reviewed — batch.
  */
 export interface UnreviewedBlock {
     "Head": Revision;
     "TopicID": ID;
+    "GroupID": ID;
     "GroupTitle": string;
 }
 
