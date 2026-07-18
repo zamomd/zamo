@@ -65,6 +65,18 @@ func renderSubtree(sub []Block, links map[ID][]ExportLink) string {
 		for _, line := range lines[1:] {
 			b.WriteString(indent + "  " + line + "\n")
 		}
+
+		// Outgoing links render as a nested "links" list one level under the
+		// block, so no edge is dropped from the export and the connection reads
+		// in plain markdown.
+		if bl := links[block.ID]; len(bl) > 0 {
+			head := strings.Repeat("  ", d+1)
+			item := strings.Repeat("  ", d+2)
+			b.WriteString(head + "- links:\n")
+			for _, l := range bl {
+				b.WriteString(item + "- " + string(l.Relation) + " → " + l.Target + "\n")
+			}
+		}
 	}
 	return b.String()
 }
