@@ -207,7 +207,7 @@ type opInput struct {
 	From      string `json:"from,omitzero" jsonschema:"link source (temp_id or existing id)"`
 	To        string `json:"to,omitzero" jsonschema:"link target (temp_id or existing id)"`
 	Relation  string `json:"relation,omitzero" jsonschema:"the link relation"`
-	Rationale string `json:"rationale,omitzero" jsonschema:"why this operation is proposed"`
+	Rationale string `json:"rationale,omitzero" jsonschema:"why the AI makes this change"`
 }
 
 // toOp maps the MCP input onto a domain op, stamping the fixed mcp origin.

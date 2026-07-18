@@ -44,7 +44,7 @@ type Op struct {
 	To       string   `json:"to,omitzero"`
 	Relation Relation `json:"relation,omitzero"`
 
-	// Provenance: why the AI proposes this and where it came from.
+	// Provenance: why the AI makes this change and where it came from.
 	// The review screen shows both fields.
 	Rationale string `json:"rationale,omitzero"`
 	Origin    string `json:"origin,omitzero"`
