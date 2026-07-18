@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -237,5 +239,57 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
+	links, err := s.exportLinks(ctx, subtrees)
+	if err != nil {
+		return err
+	}
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees, links))
+}
+
+// exportLinks collects each block's outgoing typed links for the export,
+// hydrated with the first line of the target block so the connection reads in
+// plain markdown. Edges whose target vanished mid-read are dropped, like
+// LinkedBlocks. Only outgoing edges are rendered, so a link appears once, under
+// its source.
+//
+// ponytail: one GetEdges per block (N+1). Fine for a personal base; batch into
+// a single edges read if export ever gets slow (same corner as the subtree N+1
+// above).
+func (s *Service) exportLinks(ctx context.Context, subtrees [][]Block) (map[ID][]ExportLink, error) {
+	outgoing := make(map[ID][]Edge)
+	targets := make(map[ID]bool)
+	for _, sub := range subtrees {
+		for _, block := range sub {
+			edges, err := s.repo.GetEdges(ctx, block.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, e := range edges {
+				if e.From != block.ID {
+					continue // render a link once, under its source
+				}
+				outgoing[block.ID] = append(outgoing[block.ID], e)
+				targets[e.To] = true
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	blocks, err := s.repo.GetBlocks(ctx, slices.Collect(maps.Keys(targets)))
+	if err != nil {
+		return nil, err
+	}
+	links := make(map[ID][]ExportLink, len(outgoing))
+	for blockID, edges := range outgoing {
+		for _, e := range edges {
+			target, ok := blocks[e.To]
+			if !ok {
+				continue // the neighbour vanished mid-read
+			}
+			first, _, _ := strings.Cut(target.Content, "\n")
+			links[blockID] = append(links[blockID], ExportLink{Relation: e.Relation, Target: first})
+		}
+	}
+	return links, nil
 }
