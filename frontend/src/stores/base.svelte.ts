@@ -83,6 +83,12 @@ class BaseStore {
 	// to land. Mirrors the search store's guard.
 	private linkQuerySeq = 0;
 
+	// historySeq stamps every BlockHistory fetch (open, switch, close, and
+	// deleteRevision's own refresh) so a slow response for a panel the user
+	// has since switched away from — or closed — cannot land and overwrite
+	// another block's revisions. Same pattern as linkQuerySeq.
+	private historySeq = 0;
+
 	// The scope label is read out of the live forest rather than copied on
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
@@ -515,7 +521,12 @@ class BaseStore {
 	// toggleHistory opens or closes a block's revision-history panel, loading
 	// the revisions on open. Allowed on ghosts too: a pending deletion's
 	// history is exactly how its removal is inspected or undone before review.
+	// Bumping historySeq on every call — open, switch, or close — invalidates
+	// whatever fetch a previous call started, so a slow response for a panel
+	// the user has since switched away from can never land and overwrite the
+	// now-current block's revisions.
 	async toggleHistory(id: string): Promise<void> {
+		this.historySeq++;
 		if (this.historyID === id) {
 			this.historyID = null;
 			this.revisions = [];
@@ -523,9 +534,17 @@ class BaseStore {
 		}
 		this.historyID = id;
 		this.error = "";
+		const mine = this.historySeq;
 		try {
-			this.revisions = (await App.BlockHistory(id)) ?? [];
+			const revs = (await App.BlockHistory(id)) ?? [];
+			if (mine !== this.historySeq) {
+				return;
+			}
+			this.revisions = revs;
 		} catch (err: unknown) {
+			if (mine !== this.historySeq) {
+				return;
+			}
 			this.error = callError(err).message;
 			this.revisions = [];
 		}
@@ -537,23 +556,33 @@ class BaseStore {
 	// entirely, in which case the follow-up BlockHistory errors not_found —
 	// that closes the panel rather than surfacing as an error. An invalid
 	// rollback (a live parent or children in the way) is refused by the
-	// backend with a message surfaced verbatim in base.error.
+	// backend with a message surfaced verbatim in base.error. The refresh is
+	// stamped with historySeq too, like toggleHistory: history-toggle buttons
+	// are disabled while busy so a panel switch cannot race this in practice,
+	// but the guard keeps the two call sites' invariant in one place rather
+	// than relying on that UI lock.
 	async deleteRevision(blockID: string, revID: string): Promise<void> {
 		if (this.busy) {
 			return;
 		}
 		this.busy = true;
 		this.error = "";
+		const mine = ++this.historySeq;
 		try {
 			await App.DeleteRevision(blockID, revID);
 			try {
-				this.revisions = (await App.BlockHistory(blockID)) ?? [];
+				const revs = (await App.BlockHistory(blockID)) ?? [];
+				if (mine === this.historySeq) {
+					this.revisions = revs;
+				}
 			} catch (err: unknown) {
 				if (callError(err).code !== "not_found") {
 					throw err;
 				}
-				this.historyID = null;
-				this.revisions = [];
+				if (mine === this.historySeq) {
+					this.historyID = null;
+					this.revisions = [];
+				}
 			}
 			await this.reload();
 			await changes.refresh();
