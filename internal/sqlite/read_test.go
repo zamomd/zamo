@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -288,8 +289,15 @@ func TestGetBlocksEmptyInput(t *testing.T) {
 	}
 }
 
-// r wraps a db in the repository under test.
-func r(db *sql.DB) *Repo { return NewRepo(db, time.Now) }
+// r wraps a db in the repository under test. Read-only tests never mint a
+// revision, so the id generator only needs to satisfy the signature.
+func r(db *sql.DB) *Repo {
+	seq := 0
+	return NewRepo(db, time.Now, func() knowledge.ID {
+		seq++
+		return knowledge.ID(fmt.Sprintf("r-%03d", seq))
+	})
+}
 
 func equalIDs(a, b []knowledge.ID) bool {
 	if len(a) != len(b) {

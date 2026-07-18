@@ -1,23 +1,27 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import BaseView from "./BaseView.svelte";
-	import ReviewView from "./ReviewView.svelte";
+	import ChangesView from "./ChangesView.svelte";
 	import SettingsView from "./SettingsView.svelte";
-	import { queue } from "./stores/queue.svelte";
+	import { base } from "./stores/base.svelte";
+	import { changes } from "./stores/changes.svelte";
 
-	// Tab shell: the Base view (the tree), the Review view (the pending
-	// queue), and Settings (the provider configuration). Switching tabs
-	// remounts the view: each one re-reads its data on mount while its UI
-	// state survives in its store. The pending badge reads the shared queue
+	// Tab shell: the Base view (the tree), the Changes view (everything
+	// awaiting review), and Settings (the provider configuration). Switching
+	// tabs remounts the view: each one re-reads its data on mount while its UI
+	// state survives in its store. The nav badge reads the shared changes
 	// store, whose polling starts here for the window's lifetime.
-	let tab: "base" | "review" | "settings" = $state("base");
+	let tab: "base" | "changes" | "settings" = $state("base");
 
-	function queued(): void {
-		queue.refresh().catch(() => {});
-		tab = "review";
+	// jump lands a Changes-screen row back in the tree: switch tabs, then
+	// reveal (base.reveal already un-collapses ancestors and flashes the row —
+	// the same jump the search box uses).
+	function jump(id: string): void {
+		tab = "base";
+		base.reveal(id);
 	}
 
-	onMount(() => queue.start());
+	onMount(() => changes.start());
 </script>
 
 <main>
@@ -25,8 +29,8 @@
 		<button type="button" class:active={tab === "base"} onclick={() => (tab = "base")}>
 			Base
 		</button>
-		<button type="button" class:active={tab === "review"} onclick={() => (tab = "review")}>
-			Review ({queue.count})
+		<button type="button" class:active={tab === "changes"} onclick={() => (tab = "changes")}>
+			Changes ({changes.count})
 		</button>
 		<button type="button" class:active={tab === "settings"} onclick={() => (tab = "settings")}>
 			Settings
@@ -34,9 +38,9 @@
 	</nav>
 
 	{#if tab === "base"}
-		<BaseView onqueued={queued} />
-	{:else if tab === "review"}
-		<ReviewView />
+		<BaseView />
+	{:else if tab === "changes"}
+		<ChangesView onjump={jump} />
 	{:else}
 		<SettingsView />
 	{/if}

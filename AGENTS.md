@@ -1,8 +1,8 @@
 # Comind — agent guide
 
-Local-first block-based knowledge base: AI proposes changes, the human
-reviews. One Go binary, two modes: `comind` (Wails v3 GUI) and
-`comind mcp` (stdio MCP server).
+Local-first block-based knowledge base: AI writes directly; every change is
+flagged, reversible, and reviewed by the human. One Go binary, two modes:
+`comind` (Wails v3 GUI) and `comind mcp` (stdio MCP server).
 Stack: Go 1.26, Wails v3 alpha, Svelte 5 + TS + Vite, modernc.org/sqlite.
 
 ## Commands

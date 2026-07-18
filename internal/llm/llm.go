@@ -20,7 +20,7 @@ import (
 var Prompts embed.FS
 
 // Tree limits. A single expansion must stay reviewable, so the parser caps how deep
-// and how wide a proposal can grow; anything past the caps is dropped, not an error.
+// and how wide a batch of ops can grow; anything past the caps is dropped, not an error.
 // Depth counts emitted blocks, not raw JSON nesting: blank nodes are skipped without
 // adding a level (see the walk in ParseOps).
 const (

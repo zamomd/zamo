@@ -36,7 +36,7 @@ type Config struct {
 type LLM struct {
 	// Provider is "anthropic" or "openai-compatible" (OpenAI, OpenRouter,
 	// DeepSeek, local Ollama / LM Studio). Empty is valid and means "no
-	// provider configured": the GUI's AI features (ExpandTopic, ProposeEdit)
+	// provider configured": the GUI's AI features (ExpandTopic, EditWithAI)
 	// are off, but the rest of the application — including comind mcp, where
 	// the AI is the MCP client rather than this field — works fully.
 	Provider string `toml:"provider"`

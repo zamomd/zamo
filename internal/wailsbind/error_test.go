@@ -25,17 +25,16 @@ func unmarshalPayload(t *testing.T, raw []byte) ErrorPayload {
 
 func TestMarshalErrorCodes(t *testing.T) {
 	// Every sentinel the frontend can react to must keep its wire code: the
-	// stale/decided/busy reactions in the GUI switch on these strings.
+	// rollback/busy/LLM reactions in the GUI switch on these strings.
 	cases := []struct {
 		err  error
 		code string
 	}{
 		{knowledge.ErrNotFound, "not_found"},
-		{knowledge.ErrStale, "stale"},
 		{knowledge.ErrCycle, "cycle"},
-		{knowledge.ErrNotPending, "not_pending"},
-		{knowledge.ErrInvalidProposal, "invalid_proposal"},
-		{knowledge.ErrEmptyProposal, "empty_proposal"},
+		{knowledge.ErrInvalidOps, "invalid_ops"},
+		{knowledge.ErrEmptyOps, "empty_ops"},
+		{knowledge.ErrInvalidRollback, "invalid_rollback"},
 		{knowledge.ErrInvalidLink, "invalid_link"},
 		{knowledge.ErrBusy, "busy"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
@@ -46,7 +45,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		t.Run(c.code, func(t *testing.T) {
 			// Wrapped like the service does it: the code must survive the
 			// chain, and the message must keep the wrapping context.
-			wrapped := fmt.Errorf("apply proposal: %w", c.err)
+			wrapped := fmt.Errorf("apply ops: %w", c.err)
 			p := unmarshalPayload(t, MarshalError(wrapped))
 			if p.Code != c.code {
 				t.Errorf("code = %q, want %q", p.Code, c.code)
