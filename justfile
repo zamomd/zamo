@@ -18,6 +18,13 @@ build:
 test:
     go test -race ./...
 
+# fresh-run smoke: build the binary and drive it to the first proposal over MCP
+# (a throwaway data dir, no provider key), verifying first-run works end to end
+smoke:
+    go build -o bin/comind .
+    go build -o bin/smoke ./cmd/smoke
+    ./bin/smoke ./bin/comind
+
 # static analysis + formatting check
 lint:
     golangci-lint run ./...
