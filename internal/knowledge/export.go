@@ -13,6 +13,14 @@ type ExportFile struct {
 	Content string
 }
 
+// ExportLink is one outgoing typed link rendered under its source block: the
+// relation and the first line of the target block, enough to read the
+// connection in plain markdown. The target may live in another file.
+type ExportLink struct {
+	Relation Relation
+	Target   string
+}
+
 // untitledSlug is the filename base for a topic whose content yields no
 // slug-able characters. Deduplication keeps concurrent fallbacks distinct.
 const untitledSlug = "untitled"
@@ -24,7 +32,7 @@ const untitledSlug = "untitled"
 // Obsidian reads with the hierarchy intact. Filenames are slugged from the
 // topic content and de-duplicated within the returned set so no file is
 // overwritten. Content is assumed to be clean markdown with no service markup.
-func RenderMarkdown(subtrees [][]Block) []ExportFile {
+func RenderMarkdown(subtrees [][]Block, links map[ID][]ExportLink) []ExportFile {
 	files := make([]ExportFile, 0, len(subtrees))
 	taken := make(map[string]bool, len(subtrees))
 	for _, sub := range subtrees {
@@ -32,7 +40,7 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 			continue
 		}
 		name := uniqueName(topicSlug(sub[0].Content), taken)
-		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub)})
+		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub, links)})
 	}
 	return files
 }
@@ -41,7 +49,7 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 // is the length of the parent chain up to the root, so indentation reflects the
 // tree even though the input is flat. Multi-line block content keeps its extra
 // lines aligned under the bullet text, so the list stays valid markdown.
-func renderSubtree(sub []Block) string {
+func renderSubtree(sub []Block, links map[ID][]ExportLink) string {
 	depth := make(map[ID]int, len(sub))
 	var b strings.Builder
 	for i, block := range sub {

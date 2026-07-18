@@ -222,5 +222,5 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees, nil))
 }
