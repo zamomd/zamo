@@ -2,7 +2,7 @@
 	import { SvelteSet } from "svelte/reactivity";
 	import type { Edge, ID, UnreviewedBlock } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
-	import { callError } from "./lib/callerror";
+	import { messageFor } from "./lib/callerror";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import { findBlock } from "./lib/tree";
 	import { base } from "./stores/base.svelte";
@@ -70,7 +70,7 @@
 			await changes.refresh();
 			base.status = "accepted batch";
 		} catch (err: unknown) {
-			base.error = callError(err).message;
+			base.error = messageFor(err);
 			base.status = "";
 		} finally {
 			base.busy = false;
@@ -102,7 +102,7 @@
 			await App.AcceptEdge(e.From, e.To, e.Relation);
 			await changes.refresh();
 		} catch (err: unknown) {
-			edgeError = callError(err).message;
+			edgeError = messageFor(err);
 		} finally {
 			edgeBusy.delete(key);
 		}
@@ -117,7 +117,7 @@
 			await App.RejectEdge(e.From, e.To, e.Relation);
 			await changes.refresh();
 		} catch (err: unknown) {
-			edgeError = callError(err).message;
+			edgeError = messageFor(err);
 		} finally {
 			edgeBusy.delete(key);
 		}

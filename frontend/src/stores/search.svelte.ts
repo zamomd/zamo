@@ -1,6 +1,6 @@
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
-import { callError } from "../lib/callerror";
+import { messageFor } from "../lib/callerror";
 import { base } from "./base.svelte";
 
 // How long typing settles before a query is sent, so search-as-you-type is not
@@ -62,7 +62,7 @@ class SearchStore {
 			}
 			this.results = [];
 			this.status = "";
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 

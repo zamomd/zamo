@@ -6,7 +6,7 @@ import {
 	type Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
-import { callError } from "../lib/callerror";
+import { callError, messageFor } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
 import { changes } from "./changes.svelte";
 
@@ -97,7 +97,7 @@ class BaseStore {
 	// activate re-reads the data on every mount; the UI state above persists.
 	activate(): void {
 		this.reload().catch((err: unknown) => {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		});
 	}
 
@@ -249,7 +249,7 @@ class BaseStore {
 			await this.reload();
 			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -284,7 +284,7 @@ class BaseStore {
 			this.status = "saved edit";
 			this.cancelEdit();
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -305,7 +305,7 @@ class BaseStore {
 			await this.reload();
 			this.status = "accepted";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -326,7 +326,7 @@ class BaseStore {
 			await this.reload();
 			this.status = "rejected";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -345,7 +345,7 @@ class BaseStore {
 			await this.reload();
 			this.status = "accepted page";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -365,7 +365,7 @@ class BaseStore {
 			await this.reload();
 			this.status = "rejected page";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -395,7 +395,7 @@ class BaseStore {
 		try {
 			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -462,7 +462,7 @@ class BaseStore {
 			if (mine !== this.linkQuerySeq) {
 				return;
 			}
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -484,7 +484,7 @@ class BaseStore {
 			}
 			this.status = "linked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -511,7 +511,7 @@ class BaseStore {
 			}
 			this.status = "unlinked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -545,7 +545,7 @@ class BaseStore {
 			if (mine !== this.historySeq) {
 				return;
 			}
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.revisions = [];
 		}
 	}
@@ -588,7 +588,7 @@ class BaseStore {
 			await changes.refresh();
 			this.status = "deleted revision";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
