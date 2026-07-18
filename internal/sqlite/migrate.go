@@ -7,8 +7,10 @@ import (
 )
 
 // The full-text index blocks_fts is kept in sync with blocks by
-// triggers: search can never fall behind the data.
-// proposals.source has no CHECK — the value set is open
+// triggers: search can never fall behind the data. block_revisions holds a
+// full snapshot per change: blocks is a projection of each block's head
+// revision, and edges keep no FK so a tombstoned block's links survive
+// for restoration.
 var migrations = []string{
 	`
 CREATE TABLE blocks (
@@ -24,25 +26,44 @@ CREATE TABLE blocks (
 CREATE INDEX idx_blocks_parent ON blocks(parent_id, position);
 
 CREATE TABLE edges (
-    from_id    TEXT NOT NULL REFERENCES blocks(id),
-    to_id      TEXT NOT NULL REFERENCES blocks(id),
+    from_id    TEXT NOT NULL,
+    to_id      TEXT NOT NULL,
     relation   TEXT NOT NULL CHECK (relation IN ('example', 'related')),
+    author     TEXT NOT NULL DEFAULT 'owner',
+    origin     TEXT,
+    reviewed   INTEGER NOT NULL DEFAULT 1,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    group_id   TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (from_id, to_id, relation)
 );
 
-CREATE TABLE proposals (
+CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,
-    source     TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'pending'
-               CHECK (status IN ('pending', 'applied', 'rejected')),
-    title      TEXT NOT NULL DEFAULT '',
-    payload    TEXT NOT NULL,
+    block_id   TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    content    TEXT NOT NULL,
+    parent_id  TEXT,
+    position   INTEGER NOT NULL,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    author     TEXT NOT NULL,
+    source     TEXT,
+    origin     TEXT,
+    rationale  TEXT,
+    reviewed   INTEGER NOT NULL,
+    group_id   TEXT,
     created_at TEXT NOT NULL,
-    decided_at TEXT
+    UNIQUE (block_id, seq)
 );
 
-CREATE INDEX idx_proposals_status ON proposals(status);
+CREATE INDEX idx_revisions_unreviewed ON block_revisions(block_id) WHERE reviewed = 0;
+
+CREATE TABLE revision_groups (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 
 CREATE VIRTUAL TABLE blocks_fts USING fts5(
     content,

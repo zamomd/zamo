@@ -2,15 +2,11 @@
 	import { base } from "../stores/base.svelte";
 
 	// The one AI command field: expansion when nothing is targeted, a
-	// restructure of the targeted block otherwise. A queued proposal hands
-	// focus to the review queue via onqueued.
-	let { onqueued }: { onqueued: () => void } = $props();
-
+	// restructure of the targeted block otherwise. The write applies directly
+	// and lands unreviewed; the view stays on the Base tab (see base.askAI).
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
-		if (await base.askAI()) {
-			onqueued();
-		}
+		await base.askAI();
 	}
 </script>
 

@@ -1,22 +1,23 @@
-import type { Proposal } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { Edge, UnreviewedBlock } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 
-// The pending-proposal queue shared by the whole window: the nav badge and the
-// review screen read the same list, so there is exactly one polling source.
-//
-// The window has no push channel from the MCP server, so it re-reads the
-// pending queue itself on a timer (and on focus) — see #15: no daemon, no bus.
+// The unreviewed-change set shared by the whole window: the nav badge, the
+// Changes screen and the tree's ghost rows read the same snapshot, so there
+// is exactly one polling source (no push channel from the MCP server — #15).
 const POLL_MS = 5000;
 
-class QueueStore {
-	pending: Proposal[] = $state([]);
-	count = $derived(this.pending.length);
+class ChangesStore {
+	blocks: UnreviewedBlock[] = $state([]);
+	edges: Edge[] = $state([]);
+	count = $derived(this.blocks.length + this.edges.length);
 
 	async refresh(): Promise<void> {
-		this.pending = (await App.PendingProposals()) ?? [];
+		const c = await App.Unreviewed();
+		this.blocks = c?.Blocks ?? [];
+		this.edges = c?.Edges ?? [];
 	}
 
-	// start reads the queue once and begins polling. An MCP-submitted proposal
+	// start reads the changes once and begins polling. An MCP-submitted write
 	// arrives out of band while the window sits idle; re-read it without a
 	// restart. Poll only while the window is visible (no wakeups when
 	// minimized) and re-read the moment it regains focus or visibility, so a
@@ -39,6 +40,6 @@ class QueueStore {
 	}
 }
 
-// queue is the single window-wide instance; module state outlives the views
+// changes is the single window-wide instance; module state outlives the views
 // that render it.
-export const queue = new QueueStore();
+export const changes = new ChangesStore();

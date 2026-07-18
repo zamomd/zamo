@@ -3,537 +3,368 @@ package sqlite
 import (
 	"database/sql"
 	"errors"
-	"strings"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// savePending stores a fresh pending proposal so ApplyProposal has a row to
-// mark applied and a source to record as provenance.
-func savePending(t *testing.T, repo *Repo, id knowledge.ID, source knowledge.Source) {
+// testRepo opens a scratch repo whose clock and revision ids are
+// deterministic, so assertions can pin exact values instead of just shapes.
+func testRepo(t *testing.T) *Repo {
 	t.Helper()
-	p := knowledge.Proposal{
-		ID:        id,
-		Source:    source,
-		Status:    knowledge.StatusPending,
-		CreatedAt: time.Date(2026, 7, 5, 9, 0, 0, 0, time.UTC),
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := repo.SaveProposal(t.Context(), p); err != nil {
-		t.Fatalf("SaveProposal: %v", err)
-	}
+	t.Cleanup(func() { db.Close() })
+	seq := 0
+	return NewRepo(db, func() time.Time { return time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC) },
+		func() knowledge.ID { seq++; return knowledge.ID(fmt.Sprintf("rev-%03d", seq)) })
 }
 
-// blockRow reads a block's parent and content; ok is false if it is gone.
-func blockRow(t *testing.T, repo *Repo, id string) (parent, content string, ok bool) {
+// aiMeta is the write-batch provenance an AI-authored ApplyOps call carries.
+func aiMeta(title string) knowledge.WriteMeta {
+	return knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: title}
+}
+
+// blockRow reads one blocks row for assertions; ok is false if it is gone.
+func blockRow(t *testing.T, repo *Repo, id string) (parent string, position int, content string, ok bool) {
 	t.Helper()
 	err := repo.db.QueryRowContext(t.Context(),
-		`SELECT COALESCE(parent_id, ''), content FROM blocks WHERE id = ?`, id).Scan(&parent, &content)
+		`SELECT COALESCE(parent_id, ''), position, content FROM blocks WHERE id = ?`, id).Scan(&parent, &position, &content)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", false
+		return "", 0, "", false
 	}
 	if err != nil {
 		t.Fatalf("read block %s: %v", id, err)
 	}
-	return parent, content, true
+	return parent, position, content, true
 }
 
-func TestApplyProposalEditMoveDelete(t *testing.T) {
-	repo := newTestRepo(t)
-	ctx := t.Context()
-
-	// Base: root with children A and B.
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	setup := []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
-		{Kind: knowledge.OpAdd, BlockID: "01A", Parent: "01ROOT", Content: "A old"},
-		{Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ROOT", Content: "B"},
-	}
-	if err := repo.ApplyProposal(ctx, "01SETUP", setup); err != nil {
-		t.Fatalf("setup apply: %v", err)
-	}
-
-	// Edit A's text and move B under A.
-	savePending(t, repo, "01EDIT", knowledge.SourceGUIEdit)
-	if err := repo.ApplyProposal(ctx, "01EDIT", []knowledge.Op{
-		{Kind: knowledge.OpEdit, BlockID: "01A", Content: "A new"},
-		{Kind: knowledge.OpMove, BlockID: "01B", Parent: "01A"},
-	}); err != nil {
-		t.Fatalf("edit/move apply: %v", err)
-	}
-	if _, content, ok := blockRow(t, repo, "01A"); !ok || content != "A new" {
-		t.Errorf("A after edit = %q (ok=%v), want \"A new\"", content, ok)
-	}
-	if parent, _, ok := blockRow(t, repo, "01B"); !ok || parent != "01A" {
-		t.Errorf("B parent after move = %q (ok=%v), want 01A", parent, ok)
-	}
-	// B is A's first child, so it appends at position 0 under its new parent.
-	var pos int
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT position FROM blocks WHERE id = '01B'`).Scan(&pos); err != nil {
-		t.Fatalf("read B position: %v", err)
-	}
-	if pos != 0 {
-		t.Errorf("B position after move = %d, want 0", pos)
-	}
-
-	// Delete B.
-	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
-	if err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
-		{Kind: knowledge.OpDelete, BlockID: "01B"},
-	}); err != nil {
-		t.Fatalf("delete apply: %v", err)
-	}
-	if _, _, ok := blockRow(t, repo, "01B"); ok {
-		t.Errorf("B still present after delete")
-	}
+// revRow is one block_revisions row, flattened for assertions.
+type revRow struct {
+	seq      int
+	content  string
+	parent   string
+	position int
+	deleted  bool
+	author   string
+	reviewed bool
+	group    string
 }
 
-func TestApplyProposalDeleteWithChildFails(t *testing.T) {
-	// Deleting a block whose child still references it violates the foreign key
-	// (no ON DELETE CASCADE): the apply must fail and roll back, leaving the tree
-	// and the proposal untouched, so the domain is forced to delete descendants
-	// in the same op list.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
-		{Kind: knowledge.OpAdd, BlockID: "01KID", Parent: "01ROOT", Content: "Kid"},
-	}); err != nil {
-		t.Fatalf("setup apply: %v", err)
-	}
-
-	savePending(t, repo, "01DEL", knowledge.SourceGUIEdit)
-	if err := repo.ApplyProposal(ctx, "01DEL", []knowledge.Op{
-		{Kind: knowledge.OpDelete, BlockID: "01ROOT"},
-	}); err == nil {
-		t.Fatal("deleting a block with a surviving child must fail, got nil")
-	}
-
-	// Rolled back: the parent is still there and the proposal is still pending.
-	if _, _, ok := blockRow(t, repo, "01ROOT"); !ok {
-		t.Error("root deleted despite the foreign-key violation")
-	}
-	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
+// revisionsOf reads every revision of a block, oldest (seq 1) first.
+func revisionsOf(t *testing.T, repo *Repo, blockID string) []revRow {
+	t.Helper()
+	rows, err := repo.db.QueryContext(t.Context(),
+		`SELECT seq, content, COALESCE(parent_id, ''), position, deleted, author, reviewed, COALESCE(group_id, '')
+		 FROM block_revisions WHERE block_id = ? ORDER BY seq`, blockID)
 	if err != nil {
-		t.Fatalf("list pending: %v", err)
+		t.Fatalf("query revisions of %s: %v", blockID, err)
 	}
-	if len(pending) != 1 || pending[0].ID != "01DEL" {
-		t.Errorf("delete proposal not left pending after FK failure: %+v", pending)
+	defer rows.Close()
+	var out []revRow
+	for rows.Next() {
+		var r revRow
+		if err := rows.Scan(&r.seq, &r.content, &r.parent, &r.position,
+			&r.deleted, &r.author, &r.reviewed, &r.group); err != nil {
+			t.Fatalf("scan revision of %s: %v", blockID, err)
+		}
+		out = append(out, r)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate revisions of %s: %v", blockID, err)
+	}
+	return out
 }
 
-func TestApplyProposalCreatesLink(t *testing.T) {
-	// A resolved link between two existing blocks lands in the edges table. The
-	// domain (assemble) emits OpLink, so storage must apply it — the schema has an
-	// edges table for exactly this.
-	repo := newTestRepo(t)
+// countRows returns the number of rows in table, for atomicity assertions.
+func countRows(t *testing.T, repo *Repo, table string) int {
+	t.Helper()
+	var n int
+	if err := repo.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
+}
+
+func TestApplyOpsAddWritesRevisionAndProjection(t *testing.T) {
+	repo := testRepo(t)
 	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
-		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "example"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
+
+	// Already-resolved ids, parent-first ordered, as prepareOps emits.
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b-root", Content: "root"},
+		{Kind: knowledge.OpAdd, BlockID: "b-child", Parent: "b-root", Content: "child"},
+	}
+	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("Add root+child"), ops); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
 	}
 
-	savePending(t, repo, "01LINK", knowledge.SourceMCP)
-	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO", Relation: knowledge.RelationExample},
-	}); err != nil {
-		t.Fatalf("link apply: %v", err)
+	if parent, pos, content, ok := blockRow(t, repo, "b-root"); !ok || parent != "" || pos != 0 || content != "root" {
+		t.Errorf("b-root = parent=%q pos=%d content=%q ok=%v, want ''/0/root/true", parent, pos, content, ok)
 	}
-	var relation string
+	parent, pos, content, ok := blockRow(t, repo, "b-child")
+	if !ok || parent != "b-root" || pos != 0 || content != "child" {
+		t.Errorf("b-child = parent=%q pos=%d content=%q ok=%v, want b-root/0/child/true", parent, pos, content, ok)
+	}
+
+	for _, id := range []string{"b-root", "b-child"} {
+		revs := revisionsOf(t, repo, id)
+		if len(revs) != 1 {
+			t.Fatalf("revisions of %s = %+v, want exactly one", id, revs)
+		}
+		if revs[0].seq != 1 || revs[0].reviewed || revs[0].group != "grp-1" {
+			t.Errorf("revision of %s = %+v, want seq=1 reviewed=false group=grp-1", id, revs[0])
+		}
+	}
+
+	var title string
 	if err := repo.db.QueryRowContext(ctx,
-		`SELECT relation FROM edges WHERE from_id = '01FROM' AND to_id = '01TO'`).Scan(&relation); err != nil {
-		t.Fatalf("read edge: %v", err)
+		`SELECT title FROM revision_groups WHERE id = 'grp-1'`).Scan(&title); err != nil {
+		t.Fatalf("read revision_groups: %v", err)
 	}
-	if relation != string(knowledge.RelationExample) {
-		t.Errorf("edge relation = %q, want example", relation)
-	}
-}
-
-func TestApplyProposalLinkDefaultsRelation(t *testing.T) {
-	// A link op that leaves Relation unset defaults to "related" — the schema's
-	// CHECK forbids an empty relation, so the domain's default must be materialized.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "a"},
-		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "b"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	savePending(t, repo, "01LINK", knowledge.SourceMCP)
-	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO"},
-	}); err != nil {
-		t.Fatalf("link apply: %v", err)
-	}
-	var relation string
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT relation FROM edges WHERE from_id = '01FROM' AND to_id = '01TO'`).Scan(&relation); err != nil {
-		t.Fatalf("read edge: %v", err)
-	}
-	if relation != string(knowledge.RelationRelated) {
-		t.Errorf("default relation = %q, want related", relation)
+	if title != "Add root+child" {
+		t.Errorf("revision_groups title = %q, want %q", title, "Add root+child")
 	}
 }
 
-func TestApplyProposalLinkStaleEndpoint(t *testing.T) {
-	// A link whose endpoint block vanished is stale, like any op onto a gone
-	// target: fail with ErrStale (not a raw foreign-key error) and roll back.
-	repo := newTestRepo(t)
+func TestApplyOpsEditAppendsRevision(t *testing.T) {
+	repo := testRepo(t)
 	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
+
+	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
 	}); err != nil {
-		t.Fatalf("setup: %v", err)
+		t.Fatalf("ApplyOps add: %v", err)
 	}
-	savePending(t, repo, "01LINK", knowledge.SourceMCP)
-	err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "01FROM", To: "01GONE", Relation: knowledge.RelationRelated},
-	})
-	if !errors.Is(err, knowledge.ErrStale) {
-		t.Fatalf("link to a vanished endpoint: got %v, want ErrStale", err)
+	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
+	}); err != nil {
+		t.Fatalf("ApplyOps edit: %v", err)
+	}
+
+	if _, _, content, ok := blockRow(t, repo, "b1"); !ok || content != "v2" {
+		t.Errorf("b1 content = %q (ok=%v), want v2", content, ok)
+	}
+
+	revs := revisionsOf(t, repo, "b1")
+	if len(revs) != 2 {
+		t.Fatalf("revisions of b1 = %+v, want two", revs)
+	}
+	if revs[0].seq != 1 || revs[1].seq != 2 {
+		t.Errorf("revision seqs = %d, %d, want 1, 2", revs[0].seq, revs[1].seq)
+	}
+	// seq 2 carries the parent/position that were already there — a revision
+	// is a full snapshot, not a diff.
+	if revs[1].parent != revs[0].parent || revs[1].position != revs[0].position {
+		t.Errorf("seq 2 parent/position = %q/%d, want unchanged from seq 1 (%q/%d)",
+			revs[1].parent, revs[1].position, revs[0].parent, revs[0].position)
+	}
+	if revs[1].content != "v2" {
+		t.Errorf("seq 2 content = %q, want v2", revs[1].content)
 	}
 }
 
-func TestApplyProposalLinkAlreadyManuallyCreatedSucceeds(t *testing.T) {
-	// The owner can hand-create a link (AddEdge) while an AI proposal carrying
-	// the same link is still pending; approving that proposal must not fail on
-	// the primary key the two write paths share.
-	repo := newTestRepo(t)
+func TestApplyOpsMoveKeepsContent(t *testing.T) {
+	repo := testRepo(t)
 	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
-		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "example"},
+
+	// root -> mid -> leaf, plus an unrelated topic "other" to move onto.
+	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root", Content: "Mid"},
+		{Kind: knowledge.OpAdd, BlockID: "leaf", Parent: "mid", Content: "Leaf"},
+		{Kind: knowledge.OpAdd, BlockID: "other", Content: "Other"},
 	}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	if err := repo.AddEdge(ctx, "01FROM", "01TO", knowledge.RelationExample); err != nil {
-		t.Fatalf("manual AddEdge: %v", err)
-	}
-
-	savePending(t, repo, "01LINK", knowledge.SourceMCP)
-	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO", Relation: knowledge.RelationExample},
+	// Legitimate move: "other" becomes root's second child. Content survives
+	// unchanged; position is appended after root's existing child (mid, pos 0).
+	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "other", Parent: "root"},
 	}); err != nil {
-		t.Fatalf("link apply after manual AddEdge: %v", err)
+		t.Fatalf("legit move: %v", err)
+	}
+	if parent, pos, content, ok := blockRow(t, repo, "other"); !ok || parent != "root" || pos != 1 || content != "Other" {
+		t.Errorf("other after move = parent=%q pos=%d content=%q ok=%v, want root/1/Other/true", parent, pos, content, ok)
+	}
+	revs := revisionsOf(t, repo, "other")
+	if len(revs) != 2 || revs[1].content != "Other" || revs[1].parent != "root" || revs[1].position != 1 {
+		t.Errorf("other revisions = %+v, want a second entry content=Other parent=root position=1", revs)
 	}
 
-	got, err := repo.GetEdges(ctx, "01FROM")
-	if err != nil {
-		t.Fatalf("GetEdges: %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("edges after manual link + proposal apply = %+v, want exactly one", got)
-	}
-}
-
-func TestApplyProposalMoveIntoOwnSubtreeFails(t *testing.T) {
-	// Moving a block under its own existing descendant would collapse the tree
-	// into a detached ring of parent pointers. assemble cannot see the existing
-	// tree, so storage rejects it with ErrCycle and rolls back.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
-		{Kind: knowledge.OpAdd, BlockID: "01CHILD", Parent: "01ROOT", Content: "Child"},
-		{Kind: knowledge.OpAdd, BlockID: "01GC", Parent: "01CHILD", Content: "Grandchild"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
-	err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
-		{Kind: knowledge.OpMove, BlockID: "01ROOT", Parent: "01GC"},
+	// Cycle: moving root under its own grandchild must fail and write nothing.
+	err := repo.ApplyOps(ctx, "grp-3", aiMeta("cycle"), []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "root", Parent: "leaf"},
 	})
 	if !errors.Is(err, knowledge.ErrCycle) {
 		t.Fatalf("move into own subtree: got %v, want ErrCycle", err)
 	}
-	// Rolled back: the root stays at the top and the proposal stays pending.
-	if parent, _, _ := blockRow(t, repo, "01ROOT"); parent != "" {
+	if parent, _, _, _ := blockRow(t, repo, "root"); parent != "" {
 		t.Errorf("root reparented despite the cycle: parent=%q", parent)
 	}
-	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
-	if err != nil {
-		t.Fatalf("list pending: %v", err)
+	if revs := revisionsOf(t, repo, "root"); len(revs) != 1 {
+		t.Errorf("root gained a revision despite the rejected cycle move: %+v", revs)
 	}
-	if len(pending) != 1 || pending[0].ID != "01MOVE" {
-		t.Errorf("proposal not left pending after cycle: %+v", pending)
-	}
-}
-
-func TestApplyProposalSelfMoveFails(t *testing.T) {
-	// A block moved under itself is a one-node ring — also ErrCycle.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01BLK", Content: "block"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
-	err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
-		{Kind: knowledge.OpMove, BlockID: "01BLK", Parent: "01BLK"},
-	})
-	if !errors.Is(err, knowledge.ErrCycle) {
-		t.Fatalf("self-move: got %v, want ErrCycle", err)
-	}
-}
-
-func TestApplyProposalMoveOntoSiblingSucceeds(t *testing.T) {
-	// A legitimate reparent onto a block outside the moved subtree is not a cycle.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Root"},
-		{Kind: knowledge.OpAdd, BlockID: "01A", Parent: "01ROOT", Content: "A"},
-		{Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ROOT", Content: "B"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	savePending(t, repo, "01MOVE", knowledge.SourceGUIEdit)
-	if err := repo.ApplyProposal(ctx, "01MOVE", []knowledge.Op{
-		{Kind: knowledge.OpMove, BlockID: "01A", Parent: "01B"},
-	}); err != nil {
-		t.Fatalf("legit move rejected: %v", err)
-	}
-	if parent, _, _ := blockRow(t, repo, "01A"); parent != "01B" {
-		t.Errorf("A parent after move = %q, want 01B", parent)
-	}
-}
-
-func TestApplyProposalStaleTarget(t *testing.T) {
-	// edit/move/delete each target a block that no longer exists (a concurrent
-	// apply removed it). The proposal is stale and must fail with ErrStale, not
-	// silently no-op, and must not mark itself applied.
-	stale := []struct {
-		name string
-		op   knowledge.Op
-	}{
-		{"edit", knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01GONE", Content: "x"}},
-		{"move", knowledge.Op{Kind: knowledge.OpMove, BlockID: "01GONE", Parent: "01ROOT"}},
-		{"delete", knowledge.Op{Kind: knowledge.OpDelete, BlockID: "01GONE"}},
-	}
-	for _, tc := range stale {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := newTestRepo(t)
-			ctx := t.Context()
-			savePending(t, repo, "01P", knowledge.SourceGUIEdit)
-
-			err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{tc.op})
-			if !errors.Is(err, knowledge.ErrStale) {
-				t.Fatalf("apply on vanished block: got %v, want ErrStale", err)
-			}
-			// The failed apply must roll back: the proposal stays pending.
-			pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
-			if err != nil {
-				t.Fatalf("list pending: %v", err)
-			}
-			if len(pending) != 1 {
-				t.Errorf("proposal not left pending after stale apply: %d pending", len(pending))
-			}
-		})
-	}
-}
-
-func TestApplyProposalAtomicRollback(t *testing.T) {
-	// A proposal whose first op succeeds but whose second op fails must leave no
-	// trace: the whole transaction rolls back, so the added block is absent, FTS
-	// never sees it, and the proposal stays pending for the human to retry.
-	repo := newTestRepo(t)
-	ctx := t.Context()
-	savePending(t, repo, "01P", knowledge.SourceGUIExpand)
-
-	err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01NEW", Content: "half-applied"},
-		{Kind: knowledge.OpEdit, BlockID: "01GONE", Content: "never lands"},
-	})
-	if !errors.Is(err, knowledge.ErrStale) {
-		t.Fatalf("apply with a stale op: got %v, want ErrStale", err)
-	}
-
-	if _, _, ok := blockRow(t, repo, "01NEW"); ok {
-		t.Error("the first op's block survived a rolled-back apply")
-	}
-	var n int
+	var groups int
 	if err := repo.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM blocks_fts WHERE blocks_fts MATCH 'applied'`).Scan(&n); err != nil {
-		t.Fatalf("fts search: %v", err)
+		`SELECT count(*) FROM revision_groups WHERE id = 'grp-3'`).Scan(&groups); err != nil {
+		t.Fatalf("count grp-3: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("FTS indexed a block from a rolled-back apply: %d hits", n)
-	}
-	pending, err := repo.ListProposals(ctx, knowledge.StatusPending)
-	if err != nil {
-		t.Fatalf("list pending: %v", err)
-	}
-	if len(pending) != 1 {
-		t.Errorf("proposal not left pending after failed apply: %d pending", len(pending))
+	if groups != 0 {
+		t.Errorf("grp-3 revision_groups row survived the rolled-back cycle move")
 	}
 }
 
-func TestApplyProposalStaleParent(t *testing.T) {
-	// add/move that name a parent which vanished between the proposal and its apply
-	// must fail with ErrStale — the same "base moved" signal a vanished target
-	// gives — not a raw foreign-key error the GUI cannot branch on.
-	assertPending := func(t *testing.T, repo *Repo) {
-		t.Helper()
-		pending, err := repo.ListProposals(t.Context(), knowledge.StatusPending)
+func TestApplyOpsDeleteTombstonesSubtree(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root text"},
+		{Kind: knowledge.OpAdd, BlockID: "a", Parent: "root", Content: "A text"},
+		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "a", Content: "B text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("delete"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "root"},
+	}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	for _, id := range []string{"root", "a", "b"} {
+		if _, _, _, ok := blockRow(t, repo, id); ok {
+			t.Errorf("%s still present in blocks after delete", id)
+		}
+		revs := revisionsOf(t, repo, id)
+		if len(revs) == 0 {
+			t.Fatalf("%s has no revisions after delete", id)
+		}
+		head := revs[len(revs)-1]
+		if !head.deleted || head.group != "grp-del" {
+			t.Errorf("%s head revision = %+v, want deleted=true group=grp-del", id, head)
+		}
+	}
+	// Content is preserved in the tombstone, not blanked.
+	rootRevs := revisionsOf(t, repo, "root")
+	if got := rootRevs[len(rootRevs)-1].content; got != "Root text" {
+		t.Errorf("root tombstone content = %q, want %q", got, "Root text")
+	}
+
+	for _, q := range []string{"Root", "text"} {
+		hits, err := repo.Search(ctx, q)
 		if err != nil {
-			t.Fatalf("list pending: %v", err)
+			t.Fatalf("Search(%q): %v", q, err)
 		}
-		if len(pending) != 1 || pending[0].ID != "01P" {
-			t.Errorf("proposal not left pending after stale apply: %+v", pending)
+		if len(hits) != 0 {
+			t.Errorf("Search(%q) after delete = %v, want empty", q, hits)
 		}
 	}
-
-	t.Run("add", func(t *testing.T) {
-		repo := newTestRepo(t)
-		ctx := t.Context()
-		savePending(t, repo, "01P", knowledge.SourceGUIExpand)
-
-		err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
-			{Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01GONE", Content: "orphan"},
-		})
-		if !errors.Is(err, knowledge.ErrStale) {
-			t.Fatalf("add under a vanished parent: got %v, want ErrStale", err)
-		}
-		if _, _, ok := blockRow(t, repo, "01NEW"); ok {
-			t.Error("block added despite a vanished parent")
-		}
-		assertPending(t, repo)
-	})
-
-	t.Run("move", func(t *testing.T) {
-		repo := newTestRepo(t)
-		ctx := t.Context()
-		// A real block to move, so the failure is about the parent, not the target.
-		savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-		if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
-			{Kind: knowledge.OpAdd, BlockID: "01BLK", Content: "block"},
-		}); err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-
-		savePending(t, repo, "01P", knowledge.SourceGUIEdit)
-		err := repo.ApplyProposal(ctx, "01P", []knowledge.Op{
-			{Kind: knowledge.OpMove, BlockID: "01BLK", Parent: "01GONE"},
-		})
-		if !errors.Is(err, knowledge.ErrStale) {
-			t.Fatalf("move under a vanished parent: got %v, want ErrStale", err)
-		}
-		if parent, _, _ := blockRow(t, repo, "01BLK"); parent != "" {
-			t.Errorf("block reparented despite a vanished parent: parent=%q", parent)
-		}
-		assertPending(t, repo)
-	})
 }
 
-func TestApplyProposalAddsBlocks(t *testing.T) {
-	repo := newTestRepo(t)
+func TestApplyOpsOwnerRevisionsBornReviewed(t *testing.T) {
+	repo := testRepo(t)
 	ctx := t.Context()
-	savePending(t, repo, "01PROP", knowledge.SourceGUIExpand)
 
-	// Resolved ops: BlockID holds the final ULID, Parent the final parent id,
-	// ordered parents-before-children (the domain does this in #7).
-	ops := []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "# Contexts in Go", Origin: "anthropic"},
-		{Kind: knowledge.OpAdd, BlockID: "01CHILD", Parent: "01ROOT", Content: "Why context.Context"},
-		{Kind: knowledge.OpAdd, BlockID: "01SIB", Parent: "01ROOT", Content: "Cancellation"},
-	}
-	if err := repo.ApplyProposal(ctx, "01PROP", ops); err != nil {
-		t.Fatalf("ApplyProposal: %v", err)
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "owner edit"}
+	if err := repo.ApplyOps(ctx, "grp-1", meta, []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "owner-written"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
 	}
 
-	// Both blocks exist with the right hierarchy and positions.
-	type row struct {
-		parent  string
-		pos     int
-		content string
-		meta    string
+	revs := revisionsOf(t, repo, "b1")
+	if len(revs) != 1 || !revs[0].reviewed {
+		t.Errorf("owner revision = %+v, want reviewed=true", revs)
 	}
-	rows := map[string]row{}
-	q, err := repo.db.QueryContext(ctx,
-		`SELECT id, COALESCE(parent_id, ''), position, content, metadata FROM blocks`)
-	if err != nil {
-		t.Fatalf("query blocks: %v", err)
+}
+
+func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	err := repo.ApplyOps(ctx, "grp-1", aiMeta("edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "x"},
+	})
+	if !errors.Is(err, knowledge.ErrNotFound) {
+		t.Fatalf("edit of unknown block: got %v, want ErrNotFound", err)
 	}
-	defer q.Close()
-	for q.Next() {
-		var id string
-		var r row
-		if err := q.Scan(&id, &r.parent, &r.pos, &r.content, &r.meta); err != nil {
-			t.Fatalf("scan block: %v", err)
-		}
-		rows[id] = r
-	}
-	if err := q.Err(); err != nil {
-		t.Fatalf("iterate blocks: %v", err)
-	}
-	if len(rows) != 3 {
-		t.Fatalf("blocks table has %d rows, want 3", len(rows))
-	}
-	if rows["01ROOT"].parent != "" || rows["01ROOT"].content != "# Contexts in Go" {
-		t.Errorf("root block wrong: %+v", rows["01ROOT"])
-	}
-	if rows["01CHILD"].parent != "01ROOT" {
-		t.Errorf("child parent = %q, want 01ROOT", rows["01CHILD"].parent)
-	}
-	// Positions: the root is first among roots (0); the two children append in op
-	// order (0, then 1) — this is the COALESCE(MAX(position)+1, 0) logic that
-	// ORDER BY position later depends on.
-	if got := rows["01ROOT"].pos; got != 0 {
-		t.Errorf("root position = %d, want 0", got)
-	}
-	if got := rows["01CHILD"].pos; got != 0 {
-		t.Errorf("first child position = %d, want 0", got)
-	}
-	if got := rows["01SIB"].pos; got != 1 {
-		t.Errorf("second child position = %d, want 1", got)
-	}
-	// Provenance: AI authorship, the proposal source, and the op's origin are all
-	// recorded in metadata; a block with no origin carries no origin key.
-	if m := rows["01ROOT"].meta; !strings.Contains(m, `"ai"`) ||
-		!strings.Contains(m, "gui_expand") || !strings.Contains(m, "anthropic") {
-		t.Errorf("root metadata missing provenance: %s", m)
-	}
-	if m := rows["01CHILD"].meta; strings.Contains(m, "origin") {
-		t.Errorf("child block has no origin, but metadata records one: %s", m)
+}
+
+func TestApplyOpsLinkUpsertsEdge(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "from", Content: "theory"},
+		{Kind: knowledge.OpAdd, BlockID: "to", Content: "example"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 
-	// The proposal is now applied, with decided_at stamped.
-	var status, decided string
+	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+
+	var reviewed, deleted bool
+	var author string
 	if err := repo.db.QueryRowContext(ctx,
-		`SELECT status, COALESCE(decided_at, '') FROM proposals WHERE id = '01PROP'`).
-		Scan(&status, &decided); err != nil {
-		t.Fatalf("read proposal: %v", err)
+		`SELECT reviewed, deleted, author FROM edges WHERE from_id = 'from' AND to_id = 'to'`).
+		Scan(&reviewed, &deleted, &author); err != nil {
+		t.Fatalf("read edge: %v", err)
 	}
-	if status != string(knowledge.StatusApplied) {
-		t.Errorf("status = %q, want applied", status)
-	}
-	if decided == "" {
-		t.Errorf("decided_at not stamped")
+	if reviewed || deleted || author != "ai" {
+		t.Errorf("edge = reviewed=%v deleted=%v author=%q, want false/false/ai", reviewed, deleted, author)
 	}
 
-	// FTS is in sync: the new block is searchable immediately.
-	var n int
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM blocks_fts WHERE blocks_fts MATCH 'context'`).Scan(&n); err != nil {
-		t.Fatalf("fts search: %v", err)
+	// Soft-delete the edge (as a review rejection would), then re-link:
+	// the upsert must resurrect it.
+	if _, err := repo.db.ExecContext(ctx,
+		`UPDATE edges SET deleted = 1 WHERE from_id = 'from' AND to_id = 'to'`); err != nil {
+		t.Fatalf("soft-delete edge: %v", err)
 	}
-	if n == 0 {
-		t.Errorf("full-text search does not find the new blocks")
+	if err := repo.ApplyOps(ctx, "grp-3", aiMeta("re-link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("re-link: %v", err)
+	}
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT deleted FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&deleted); err != nil {
+		t.Fatalf("read edge after re-link: %v", err)
+	}
+	if deleted {
+		t.Errorf("edge still deleted=true after re-linking, want resurrected")
+	}
+}
+
+func TestApplyOpsAtomic(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	err := repo.ApplyOps(ctx, "grp-1", aiMeta("mixed"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "new", Content: "half-applied"},
+		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "never lands"},
+	})
+	if !errors.Is(err, knowledge.ErrNotFound) {
+		t.Fatalf("batch with a stale op: got %v, want ErrNotFound", err)
+	}
+
+	if n := countRows(t, repo, "blocks"); n != 0 {
+		t.Errorf("blocks has %d rows after a rolled-back apply, want 0", n)
+	}
+	if n := countRows(t, repo, "block_revisions"); n != 0 {
+		t.Errorf("block_revisions has %d rows after a rolled-back apply, want 0", n)
+	}
+	if n := countRows(t, repo, "revision_groups"); n != 0 {
+		t.Errorf("revision_groups has %d rows after a rolled-back apply, want 0", n)
 	}
 }
