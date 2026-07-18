@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // IDGenerator produces a new unique ID. The implementation lives outside
@@ -29,13 +28,13 @@ type Service struct {
 	repo   Repository
 	newID  IDGenerator
 	writer FileWriter
-	now    func() time.Time
 }
 
-// NewService wires the domain to its boundaries: the LLM provider,
-// storage, and the injected ID, file-writer, and time sources.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, now func() time.Time) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, writer: writer, now: now}
+// NewService wires the domain to its boundaries: the LLM provider, storage,
+// and the injected ID and file-writer sources. Nothing in the domain stamps
+// time — storage does — so no time source is injected here.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter) *Service {
+	return &Service{llm: llm, repo: repo, newID: newID, writer: writer}
 }
 
 // ApplyOps validates and applies a write batch directly. Every touched
@@ -68,7 +67,7 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied,
 }
 
 // EditWithAI turns a user's text command into structure edits and applies
-// them directly, awaiting review. Replaces ProposeEdit.
+// them directly, awaiting review.
 func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
 	blocks, err := s.repo.GetSubtree(ctx, scope)
 	if err != nil {

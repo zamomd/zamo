@@ -28,10 +28,10 @@ const (
 	OpLink   OpKind = "link"
 )
 
-// Op is a single operation of a write batch. One format for every source:
-// topic expansion emits only add; AI edits emit add/edit/move/delete;
-// MCP emits add/link. New blocks reference each other via TempID;
-// real IDs are assigned on apply.
+// Op is a single operation of a write batch. One format for every source —
+// topic expansion, AI edits, MCP tools, the owner's manual edits — each
+// emitting whichever of the five kinds it needs. New blocks reference each
+// other via TempID; real IDs are assigned on apply.
 type Op struct {
 	Kind    OpKind `json:"op"`
 	TempID  string `json:"temp_id,omitzero"`  // temporary ID of a block being added

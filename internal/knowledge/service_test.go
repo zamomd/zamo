@@ -5,11 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
-	"time"
 )
-
-// clockAt returns a now-source pinned to a fixed instant.
-func clockAt(ts time.Time) func() time.Time { return func() time.Time { return ts } }
 
 // fakeFileWriter is a FileWriter double: it records the files it was handed
 // instead of touching disk, so export tests assert what the domain produced
@@ -218,7 +214,7 @@ func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
 
 func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	ops := []Op{
 		addOp("child", "root", "Child"),
@@ -252,7 +248,7 @@ func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 
 func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	_, err := svc.ApplyOps(t.Context(),
 		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "   "},
@@ -268,7 +264,7 @@ func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 func TestApplyOpsPropagatesRepoError(t *testing.T) {
 	boom := errors.New("disk full")
 	repo := &fakeRepo{applyErr: boom}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	meta := WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{addOp("t1", "", "A")})
@@ -280,7 +276,7 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	// Malformed input from an untrusted source (MCP) must never reach storage.
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: "explode"}})
@@ -294,7 +290,7 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -315,7 +311,7 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	scope := []Block{{ID: "01A", Content: "old text"}}
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	got, err := svc.EditWithAI(t.Context(), "01A", "revise this block")
 	if err != nil {
@@ -343,7 +339,7 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 func TestEditWithAISurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{editErr: ErrLLMUnavailable}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	if _, err := svc.EditWithAI(t.Context(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -357,7 +353,7 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 	boom := errors.New("db down")
 	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
 	repo := &fakeRepo{subtreeErr: boom}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
 	if !errors.Is(err, boom) {
@@ -372,7 +368,7 @@ func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 	// A command the model turns into no operations must not be applied.
 	llm := &fakeLLM{editOps: nil}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	if _, err := svc.EditWithAI(t.Context(), "01A", "do nothing"); !errors.Is(err, ErrEmptyOps) {
 		t.Errorf("error = %v, want ErrEmptyOps", err)
@@ -385,7 +381,7 @@ func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 func TestExpandTopicAppliesDirectly(t *testing.T) {
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	got, err := svc.ExpandTopic(t.Context(), "Go contexts", "cancellation")
 	if err != nil {
@@ -407,7 +403,7 @@ func TestExpandTopicAppliesDirectly(t *testing.T) {
 func TestExpandTopicSurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
 	if !errors.Is(err, ErrLLMUnavailable) {
@@ -423,7 +419,7 @@ func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	// empty batch; the empty-ops invariant surfaces instead.
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, nil)
+	svc := NewService(llm, repo, seqIDs(), nil)
 
 	if _, err := svc.ExpandTopic(t.Context(), "Go contexts", ""); !errors.Is(err, ErrEmptyOps) {
 		t.Errorf("error = %v, want ErrEmptyOps", err)
@@ -437,7 +433,7 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 	// Every review method is a direct pass-through to Repository; assert each
 	// reaches its storage counterpart with the right arguments.
 	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
-	svc := NewService(nil, repo, seqIDs(), nil, nil)
+	svc := NewService(nil, repo, seqIDs(), nil)
 
 	if got, err := svc.Unreviewed(t.Context()); err != nil || len(got.Blocks) != 1 {
 		t.Errorf("Unreviewed = %+v, %v, want the repo's changes", got, err)
@@ -493,7 +489,7 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 		},
 	}
 	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer, nil)
+	svc := NewService(nil, repo, seqIDs(), writer)
 
 	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
 		t.Fatalf("ExportMarkdown: %v", err)
@@ -519,7 +515,7 @@ func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
 		topics:   []Block{blk("t1", "", 0, "# Alpha")},
 		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Alpha")}},
 	}
-	svc := NewService(nil, repo, seqIDs(), &fakeFileWriter{writeErr: boom}, nil)
+	svc := NewService(nil, repo, seqIDs(), &fakeFileWriter{writeErr: boom})
 
 	err := svc.ExportMarkdown(context.Background(), "/export/here")
 	if !errors.Is(err, boom) {
@@ -530,7 +526,7 @@ func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
 func TestServiceExportMarkdownEmptyBase(t *testing.T) {
 	repo := &fakeRepo{topics: nil}
 	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer, nil)
+	svc := NewService(nil, repo, seqIDs(), writer)
 
 	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
 		t.Fatalf("empty base must export cleanly, got %v", err)
@@ -547,7 +543,7 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 		subtreeErr: boom,
 	}
 	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer, nil)
+	svc := NewService(nil, repo, seqIDs(), writer)
 
 	err := svc.ExportMarkdown(context.Background(), "/export/here")
 	if !errors.Is(err, boom) {
