@@ -557,6 +557,58 @@ func TestRejectPageMixedAddAndDelete(t *testing.T) {
 	}
 }
 
+// TestAcceptDeletedSubtreeCascades pins that accepting a deleted subtree's
+// root also resolves each descendant's own tombstone: without the cascade,
+// accepting P alone leaves C's ghost with no reachable parent (P's ghost
+// just disappeared) — invisible to the frontend's buildTree (which merges
+// ghosts in by parent) yet still counted as pending, and unrejectable
+// (RejectBlock(C) would refuse: "restore parent first").
+func TestAcceptDeletedSubtreeCascades(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
+		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := repo.MarkBlockReviewed(ctx, "p"); err != nil {
+		t.Fatalf("mark p reviewed: %v", err)
+	}
+	if err := repo.MarkBlockReviewed(ctx, "c"); err != nil {
+		t.Fatalf("mark c reviewed: %v", err)
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "p"},
+	}); err != nil {
+		t.Fatalf("ai delete: %v", err)
+	}
+	assertInUnreviewed(t, repo, "p")
+	assertInUnreviewed(t, repo, "c")
+
+	if err := repo.MarkBlockReviewed(ctx, "p"); err != nil {
+		t.Fatalf("MarkBlockReviewed(p): %v", err)
+	}
+
+	changes, err := repo.ListUnreviewed(ctx)
+	if err != nil {
+		t.Fatalf("ListUnreviewed: %v", err)
+	}
+	if len(changes.Blocks) != 0 {
+		t.Errorf("ListUnreviewed.Blocks after accepting the deleted subtree's root = %+v, want none", changes.Blocks)
+	}
+
+	for _, id := range []string{"p", "c"} {
+		for _, rev := range revisionsOf(t, repo, id) {
+			if !rev.reviewed {
+				t.Errorf("%s revision %+v still unreviewed after MarkBlockReviewed(p)", id, rev)
+			}
+		}
+	}
+}
+
 // TestMarkGroupReviewedMarksEdges pins that accepting a whole ApplyOps
 // batch does not leave a link op it contained pending: applyLink stamps
 // the edge with the batch's group_id, and MarkGroupReviewed must flip its

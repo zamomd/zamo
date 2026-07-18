@@ -357,13 +357,97 @@ func projectFixpoint(ctx context.Context, tx *sql.Tx, ids []string) error {
 	return nil
 }
 
-// MarkBlockReviewed implements knowledge.Repository.
+// MarkBlockReviewed implements knowledge.Repository. When blockID's head
+// revision is a tombstone, every unreviewed-tombstone-headed descendant is
+// reviewed in the same transaction: accepting only the root of a deleted
+// subtree would otherwise strand each child's ghost with no reachable
+// parent (the root's ghost just disappeared) — invisible to the frontend's
+// buildTree (which merges ghosts in by parent) yet still counted as
+// pending, and unrejectable (RejectBlock's restore-parent guard would have
+// nothing live to find). A live head is unaffected: only the block's own
+// revisions are marked, as before.
 func (r *Repo) MarkBlockReviewed(ctx context.Context, blockID knowledge.ID) error {
-	if _, err := r.db.ExecContext(ctx,
-		`UPDATE block_revisions SET reviewed = 1 WHERE block_id = ?`, string(blockID)); err != nil {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
+	}
+	defer tx.Rollback()
+
+	ids := []string{string(blockID)}
+	head, ok, err := headRevision(ctx, tx, string(blockID))
+	if err != nil {
+		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
+	}
+	if ok && head.Deleted {
+		descendants, err := tombstoneDescendants(ctx, tx, string(blockID))
+		if err != nil {
+			return fmt.Errorf("mark block reviewed %s: %w", blockID, err)
+		}
+		ids = append(ids, descendants...)
+	}
+
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE block_revisions SET reviewed = 1 WHERE block_id = ?`, id); err != nil {
+			return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
 	}
 	return nil
+}
+
+// tombstoneDescendants returns every unreviewed-tombstone-headed block whose
+// head-revision parent_id chain reaches root — a deleted subtree's ghosts,
+// found without a live blocks row to walk (their blocks rows are gone; see
+// unreviewedGhostIDs).
+func tombstoneDescendants(ctx context.Context, tx *sql.Tx, root string) ([]string, error) {
+	ghosts, err := unreviewedGhostIDs(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, id := range ghosts {
+		if id == root {
+			continue
+		}
+		reaches, err := tombstoneChainReaches(ctx, tx, id, root)
+		if err != nil {
+			return nil, err
+		}
+		if reaches {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// tombstoneChainReaches walks id's head-revision parent_id chain — a
+// tombstone's ParentID is preserved from its last live snapshot (see
+// applyDelete) — and reports whether it reaches root. A visited set guards
+// against a cyclic chain.
+func tombstoneChainReaches(ctx context.Context, tx *sql.Tx, id, root string) (bool, error) {
+	current := id
+	visited := make(map[string]bool)
+	for current != "" {
+		if visited[current] {
+			return false, nil
+		}
+		visited[current] = true
+		if current == root {
+			return true, nil
+		}
+		head, ok, err := headRevision(ctx, tx, current)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+		current = string(head.ParentID)
+	}
+	return false, nil
 }
 
 // MarkGroupReviewed implements knowledge.Repository: accepts every
