@@ -88,6 +88,8 @@ type Repo struct {
 	newID func() knowledge.ID
 }
 
+var _ knowledge.Repository = (*Repo)(nil)
+
 // NewRepo wraps an opened database (see Open) in the Repository
 // implementation. now stamps revisions (nil = time.Now); newID mints
 // revision ids and must never collide (production injects a ULID
