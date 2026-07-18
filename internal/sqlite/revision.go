@@ -233,37 +233,64 @@ func (r *Repo) RejectBlock(ctx context.Context, blockID knowledge.ID) error {
 	return nil
 }
 
-// rejectBlockTx runs RejectBlock's body inside an already-open transaction:
-// shared by RejectBlock itself and RejectPage, which rejects every page
-// block in one transaction.
-func rejectBlockTx(ctx context.Context, tx *sql.Tx, blockID string) error {
+// trimUnreviewedRevisions deletes blockID's revisions past its last
+// reviewed one — RejectBlock's core, and the order-independent half of
+// RejectPage's per-block reject (see RejectPage's doc). Reports whether
+// anything was actually removed: a fully reviewed block trims nothing, and
+// the caller must treat that as a no-op rather than calling projectHead
+// (which would needlessly touch the projection row) or retrying it.
+func trimUnreviewedRevisions(ctx context.Context, tx *sql.Tx, blockID string) (bool, error) {
 	var lastReviewed int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(seq), 0) FROM block_revisions WHERE block_id = ? AND reviewed = 1`,
 		blockID).Scan(&lastReviewed); err != nil {
-		return translate(err)
+		return false, translate(err)
 	}
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM block_revisions WHERE block_id = ? AND seq > ?`, blockID, lastReviewed)
 	if err != nil {
-		return translate(err)
+		return false, translate(err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return translate(err)
+		return false, translate(err)
 	}
-	if n == 0 {
+	return n > 0, nil
+}
+
+// rejectBlockTx runs RejectBlock's full body (trim, then project only if
+// the trim actually removed something) inside an already-open transaction.
+// Used by RejectBlock itself. RejectPage cannot reuse it as-is: rejecting
+// several blocks of one page needs the trim and project steps decoupled
+// (see RejectPage's doc), so it calls trimUnreviewedRevisions and
+// projectFixpoint directly instead.
+func rejectBlockTx(ctx context.Context, tx *sql.Tx, blockID string) error {
+	trimmed, err := trimUnreviewedRevisions(ctx, tx, blockID)
+	if err != nil {
+		return err
+	}
+	if !trimmed {
 		return nil
 	}
 	return projectHead(ctx, tx, blockID)
 }
 
-// RejectPage implements knowledge.Repository: rejects every unreviewed block
-// under topicID in one transaction — live blocks with a pending edit and
-// ghosts (tombstoned blocks whose pending delete hasn't been reviewed).
-// Blocks are processed deepest-first so rejecting an AI-added subtree (whose
-// leaves would otherwise be orphaned by rejecting their parent first) never
-// trips projectHead's orphan guard.
+// RejectPage implements knowledge.Repository: rejects every unreviewed
+// block under topicID in one transaction — live blocks with a pending edit
+// and ghosts (tombstoned blocks whose pending delete hasn't been
+// reviewed).
+//
+// Trimming (dropping each block's own revisions past its last reviewed
+// one) is independent per block and safe to run for the whole page in any
+// order. Rebuilding the projection (projectHead) is not: an AI-added
+// subtree needs its children's projection removed before their parent's —
+// projectHead's orphan-children guard trips otherwise — while resurrecting
+// an AI-deleted subtree needs the opposite order, since a child cannot
+// come back to life until its parent already has (projectHead's
+// restore-parent guard). A page can contain both shapes at once (one
+// pending add, one pending delete, under the same topic), so no single
+// global order satisfies every block; instead of computing one,
+// projectFixpoint discovers a working order by retrying.
 func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -275,13 +302,57 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 	if err != nil {
 		return fmt.Errorf("reject page %s: %w", topicID, err)
 	}
+
+	var toProject []string
 	for _, id := range ids {
-		if err := rejectBlockTx(ctx, tx, id); err != nil {
-			return fmt.Errorf("reject page %s: block %s: %w", topicID, id, err)
+		trimmed, err := trimUnreviewedRevisions(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("reject page %s: block %s: %w", topicID, id, translate(err))
+		}
+		if trimmed {
+			toProject = append(toProject, id)
 		}
 	}
+	if err := projectFixpoint(ctx, tx, toProject); err != nil {
+		return fmt.Errorf("reject page %s: %w", topicID, err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("reject page %s: %w", topicID, translate(err))
+	}
+	return nil
+}
+
+// projectFixpoint calls projectHead for every id, retrying across passes:
+// a block that fails with ErrInvalidRollback (its dependency — a child or
+// a parent, depending on the shape being rejected — hasn't been resolved
+// yet) stays pending for the next pass. The loop stops as soon as a full
+// pass makes no progress at all, and returns that pass's error, which
+// rolls the whole transaction back — the same "refused rollback leaves
+// history intact" guarantee DeleteRevision gives for a single block.
+// Terminates: every pass that makes progress removes at least one id from
+// the pending set, so there are at most len(ids) passes.
+func projectFixpoint(ctx context.Context, tx *sql.Tx, ids []string) error {
+	pending := ids
+	for len(pending) > 0 {
+		var next []string
+		var lastErr error
+		progressed := false
+		for _, id := range pending {
+			switch err := projectHead(ctx, tx, id); {
+			case err == nil:
+				progressed = true
+			case errors.Is(err, knowledge.ErrInvalidRollback):
+				next = append(next, id)
+				lastErr = err
+			default:
+				return fmt.Errorf("block %s: %w", id, translate(err))
+			}
+		}
+		if !progressed {
+			return lastErr
+		}
+		pending = next
 	}
 	return nil
 }
@@ -295,11 +366,27 @@ func (r *Repo) MarkBlockReviewed(ctx context.Context, blockID knowledge.ID) erro
 	return nil
 }
 
-// MarkGroupReviewed implements knowledge.Repository: accepts every revision
-// of one ApplyOps batch at once.
+// MarkGroupReviewed implements knowledge.Repository: accepts every
+// revision AND every edge of one ApplyOps batch at once — a batch that
+// included a link op (applyLink stamps the edge with the same group_id)
+// must not leave that link pending just because the accept happened at
+// the group, not the block, granularity.
 func (r *Repo) MarkGroupReviewed(ctx context.Context, groupID knowledge.ID) error {
-	if _, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
+		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE edges SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
+		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
 	}
 	return nil
@@ -451,19 +538,11 @@ func unreviewedBlockIDs(ctx context.Context, db *sql.DB) ([]string, error) {
 // tombstoned ancestor (whose blocks row is gone). A visited set guards
 // against a cyclic chain.
 func topicOf(ctx context.Context, q rowQueryer, blockID string) (knowledge.ID, error) {
-	root, _, err := walkAncestors(ctx, q, blockID)
-	return root, err
-}
-
-// walkAncestors is topicOf's walk, also reporting the number of hops taken
-// to reach the root — the depth pageBlockIDs sorts by so RejectPage
-// processes children before their parents.
-func walkAncestors(ctx context.Context, q rowQueryer, blockID string) (root knowledge.ID, depth int, err error) {
 	current := blockID
 	visited := make(map[string]bool)
 	for {
 		if visited[current] {
-			return knowledge.ID(current), depth, nil
+			return knowledge.ID(current), nil
 		}
 		visited[current] = true
 
@@ -473,20 +552,18 @@ func walkAncestors(ctx context.Context, q rowQueryer, blockID string) (root know
 		case errors.Is(err, sql.ErrNoRows):
 			head, ok, herr := headRevision(ctx, q, current)
 			if herr != nil {
-				return "", 0, herr
+				return "", herr
 			}
 			if !ok || head.ParentID == "" {
-				return knowledge.ID(current), depth, nil
+				return knowledge.ID(current), nil
 			}
 			current = string(head.ParentID)
-			depth++
 		case err != nil:
-			return "", 0, err
+			return "", err
 		case !parent.Valid || parent.String == "":
-			return knowledge.ID(current), depth, nil
+			return knowledge.ID(current), nil
 		default:
 			current = parent.String
-			depth++
 		}
 	}
 }
@@ -494,9 +571,9 @@ func walkAncestors(ctx context.Context, q rowQueryer, blockID string) (root know
 // pageBlockIDs collects every block of the page rooted at topicID: the live
 // subtree (recursive CTE over blocks) plus ghosts — tombstoned blocks whose
 // unreviewed head revision resolves (via topicOf) to this topic. The result
-// is ordered deepest-first so RejectPage can reject a whole AI-added subtree
-// in one pass without projectHead's orphan guard tripping on a child that
-// hasn't been rejected yet.
+// is unordered: RejectPage cannot rely on a single computed order (see its
+// doc) and discovers a working one by retrying instead; MarkPageReviewed's
+// per-block UPDATE is order-independent regardless.
 func pageBlockIDs(ctx context.Context, tx *sql.Tx, topicID string) ([]string, error) {
 	ids, err := liveSubtreeIDs(ctx, tx, topicID)
 	if err != nil {
@@ -515,16 +592,6 @@ func pageBlockIDs(ctx context.Context, tx *sql.Tx, topicID string) ([]string, er
 			ids = append(ids, id)
 		}
 	}
-
-	depths := make(map[string]int, len(ids))
-	for _, id := range ids {
-		_, d, err := walkAncestors(ctx, tx, id)
-		if err != nil {
-			return nil, fmt.Errorf("page blocks of %s: depth of %s: %w", topicID, id, err)
-		}
-		depths[id] = d
-	}
-	sort.SliceStable(ids, func(i, j int) bool { return depths[ids[i]] > depths[ids[j]] })
 	return ids, nil
 }
 

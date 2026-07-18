@@ -398,6 +398,9 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	if live.TopicID != "root" {
 		t.Errorf("live TopicID = %q, want root", live.TopicID)
 	}
+	if live.GroupTitle != "ai edit" {
+		t.Errorf("live GroupTitle = %q, want %q", live.GroupTitle, "ai edit")
+	}
 
 	gone, ok := byID["gone"]
 	if !ok {
@@ -405,6 +408,9 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	}
 	if !gone.Head.Deleted || gone.Head.Content != "gone v1" {
 		t.Errorf("gone head = %+v, want Deleted=true Content=gone v1", gone.Head)
+	}
+	if gone.GroupTitle != "ai delete" {
+		t.Errorf("gone GroupTitle = %q, want %q", gone.GroupTitle, "ai delete")
 	}
 	if gone.TopicID != "root" {
 		t.Errorf("gone TopicID = %q, want root", gone.TopicID)
@@ -455,5 +461,140 @@ func TestBlocksCarryUnreviewedFlag(t *testing.T) {
 	}
 	if b.Unreviewed {
 		t.Errorf("b.Unreviewed = true after MarkBlockReviewed, want false")
+	}
+}
+
+// TestRejectPageResurrectsNestedSubtree pins the fixpoint order projectHead
+// needs for a multi-level AI delete: a naive single deepest-first pass
+// processes the grandchild before its parent is live again and trips the
+// restore-parent guard. RejectPage must retry until every block in the
+// tombstoned subtree is back.
+func TestRejectPageResurrectsNestedSubtree(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
+		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
+		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "c", Content: "G text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "p"},
+	}); err != nil {
+		t.Fatalf("ai delete: %v", err)
+	}
+	for _, id := range []string{"p", "c", "g"} {
+		if _, _, _, ok := blockRow(t, repo, id); ok {
+			t.Fatalf("%s still present after tombstoning", id)
+		}
+	}
+
+	if err := repo.RejectPage(ctx, "p"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+
+	want := map[string]string{"p": "P text", "c": "C text", "g": "G text"}
+	for id, content := range want {
+		if _, _, got, ok := blockRow(t, repo, id); !ok || got != content {
+			t.Errorf("%s after RejectPage = content=%q ok=%v, want %q/true", id, got, ok, content)
+		}
+	}
+	hits, err := repo.Search(ctx, "text")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Errorf("Search(text) after RejectPage = %v, want 3 hits (FTS resynced for the whole subtree)", hits)
+	}
+}
+
+// TestRejectPageMixedAddAndDelete covers the case a single global order
+// cannot satisfy: one page with both an unreviewed AI add (needs its
+// children rejected before its root — bottom-up) and an unreviewed AI
+// delete of a reviewed subtree (needs its root resurrected before its
+// children — top-down). One RejectPage call must resolve both.
+func TestRejectPageMixedAddAndDelete(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "topic", Content: "topic"},
+		{Kind: knowledge.OpAdd, BlockID: "old", Parent: "topic", Content: "old text"},
+		{Kind: knowledge.OpAdd, BlockID: "oldchild", Parent: "old", Content: "oldchild text"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if err := repo.ApplyOps(ctx, "grp-add", aiMeta("ai add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "new", Parent: "topic", Content: "new text"},
+		{Kind: knowledge.OpAdd, BlockID: "newchild", Parent: "new", Content: "newchild text"},
+	}); err != nil {
+		t.Fatalf("ai add: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "old"},
+	}); err != nil {
+		t.Fatalf("ai delete: %v", err)
+	}
+
+	if err := repo.RejectPage(ctx, "topic"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+
+	for _, id := range []string{"new", "newchild"} {
+		if _, _, _, ok := blockRow(t, repo, id); ok {
+			t.Errorf("%s still present after RejectPage, want removed (unreviewed AI add rejected)", id)
+		}
+	}
+	restored := map[string]string{"old": "old text", "oldchild": "oldchild text"}
+	for id, content := range restored {
+		if _, _, got, ok := blockRow(t, repo, id); !ok || got != content {
+			t.Errorf("%s after RejectPage = content=%q ok=%v, want %q/true", id, got, ok, content)
+		}
+	}
+}
+
+// TestMarkGroupReviewedMarksEdges pins that accepting a whole ApplyOps
+// batch does not leave a link op it contained pending: applyLink stamps
+// the edge with the batch's group_id, and MarkGroupReviewed must flip its
+// reviewed flag along with the batch's revisions.
+func TestMarkGroupReviewedMarksEdges(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-setup", ownerMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "from", Content: "theory"},
+		{Kind: knowledge.OpAdd, BlockID: "to", Content: "example"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-link", aiMeta("ai link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("ai link: %v", err)
+	}
+
+	var reviewed bool
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT reviewed FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&reviewed); err != nil {
+		t.Fatalf("read edge: %v", err)
+	}
+	if reviewed {
+		t.Fatalf("edge born reviewed, want unreviewed before MarkGroupReviewed")
+	}
+
+	if err := repo.MarkGroupReviewed(ctx, "grp-link"); err != nil {
+		t.Fatalf("MarkGroupReviewed: %v", err)
+	}
+
+	if err := repo.db.QueryRowContext(ctx,
+		`SELECT reviewed FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&reviewed); err != nil {
+		t.Fatalf("read edge after MarkGroupReviewed: %v", err)
+	}
+	if !reviewed {
+		t.Errorf("edge reviewed = false after MarkGroupReviewed, want true")
 	}
 }
