@@ -108,7 +108,7 @@ func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string,
 		return nil, nil, "", nil, err
 	}
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now), newID, fsexport.Writer{}, time.Now)
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{}, time.Now)
 	return svc, holder, settingsPath, func() { db.Close() }, nil
 }
 

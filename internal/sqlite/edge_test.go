@@ -2,18 +2,42 @@ package sqlite
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
+
+// fixedClock is the decision time the injected clock returns across these
+// tests, so timestamps are deterministic.
+var fixedClock = time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+
+// newTestRepo opens a fresh migrated database on disk and wraps it in a Repo
+// whose clock is pinned to fixedClock and whose revision ids are
+// deterministic and collision-free within one test.
+func newTestRepo(t *testing.T) *Repo {
+	t.Helper()
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	seq := 0
+	return NewRepo(db, func() time.Time { return fixedClock }, func() knowledge.ID {
+		seq++
+		return knowledge.ID(fmt.Sprintf("rev-%03d", seq))
+	})
+}
 
 // linkBase builds a small forest to link across: R1(A, B) and R2(C), so edges
 // can span branches and topics like real links do.
 func linkBase(t *testing.T, repo *Repo) {
 	t.Helper()
-	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
-	if err := repo.ApplyProposal(t.Context(), "01SETUP", []knowledge.Op{
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceGUIExpand, Title: "setup"}
+	if err := repo.ApplyOps(t.Context(), "01SETUP", meta, []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "01R1", Content: "Root 1"},
 		{Kind: knowledge.OpAdd, BlockID: "01AAA", Parent: "01R1", Content: "A"},
 		{Kind: knowledge.OpAdd, BlockID: "01BBB", Parent: "01R1", Content: "B"},
@@ -99,18 +123,17 @@ func TestAddEdgeIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestAddEdgeVanishedEndpointIsStale(t *testing.T) {
-	// Either endpoint gone is the same "base moved" signal applyLink gives,
-	// not a raw foreign-key error.
+func TestAddEdgeVanishedEndpointIsMissing(t *testing.T) {
+	// Either endpoint gone is a plain not-found, not a raw foreign-key error.
 	repo := newTestRepo(t)
 	ctx := t.Context()
 	linkBase(t, repo)
 
-	if err := repo.AddEdge(ctx, "01AAA", "01GONE", knowledge.RelationRelated); !errors.Is(err, knowledge.ErrStale) {
-		t.Errorf("AddEdge to vanished target = %v, want ErrStale", err)
+	if err := repo.AddEdge(ctx, "01AAA", "01GONE", knowledge.RelationRelated); !errors.Is(err, knowledge.ErrNotFound) {
+		t.Errorf("AddEdge to vanished target = %v, want ErrNotFound", err)
 	}
-	if err := repo.AddEdge(ctx, "01GONE", "01AAA", knowledge.RelationRelated); !errors.Is(err, knowledge.ErrStale) {
-		t.Errorf("AddEdge from vanished source = %v, want ErrStale", err)
+	if err := repo.AddEdge(ctx, "01GONE", "01AAA", knowledge.RelationRelated); !errors.Is(err, knowledge.ErrNotFound) {
+		t.Errorf("AddEdge from vanished source = %v, want ErrNotFound", err)
 	}
 }
 
