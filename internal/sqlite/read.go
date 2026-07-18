@@ -13,8 +13,10 @@ import (
 )
 
 // blockColumns is the block projection every read shares, in the order
-// scanBlock expects.
-const blockColumns = `id, parent_id, position, content, metadata, created_at, updated_at`
+// scanBlock expects. The trailing EXISTS subquery derives Unreviewed: never
+// stored, always computed from whether the block has any pending revision.
+const blockColumns = `id, parent_id, position, content, metadata, created_at, updated_at,
+	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = blocks.id AND r.reviewed = 0)`
 
 // GetTopics implements knowledge.Repository: the root topics plus their first
 // level of subtopics, the slice the map and tree screens render. Grandchildren
@@ -151,7 +153,8 @@ func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.Block, err
 	}
 
 	const q = `
-SELECT b.id, b.parent_id, b.position, b.content, b.metadata, b.created_at, b.updated_at
+SELECT b.id, b.parent_id, b.position, b.content, b.metadata, b.created_at, b.updated_at,
+	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = b.id AND r.reviewed = 0)
 FROM blocks_fts
 JOIN blocks b ON b.rowid = blocks_fts.rowid
 WHERE blocks_fts MATCH ?
@@ -212,7 +215,7 @@ func scanBlock(rows *sql.Rows) (knowledge.Block, error) {
 		meta             string
 		created, updated string
 	)
-	if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &meta, &created, &updated); err != nil {
+	if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &meta, &created, &updated, &b.Unreviewed); err != nil {
 		return knowledge.Block{}, err
 	}
 	b.ParentID = knowledge.ID(parent.String)

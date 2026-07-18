@@ -106,7 +106,7 @@ func TestParseEditOpsMoveToRootKeepsEmptyParent(t *testing.T) {
 
 func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
 	// A generated temp id must not collide with one the model supplied on
-	// another op, or two adds fight for one id and the whole proposal becomes
+	// another op, or two adds fight for one id and the whole batch becomes
 	// unappliable.
 	ops, err := ParseEditOps([]byte(`[
 		{"op":"add","temp_id":"t1","parent":"01A","content":"supplied"},

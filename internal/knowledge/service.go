@@ -6,7 +6,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"time"
 )
 
 // IDGenerator produces a new unique ID. The implementation lives outside
@@ -31,98 +30,118 @@ type Service struct {
 	repo   Repository
 	newID  IDGenerator
 	writer FileWriter
-	now    func() time.Time
 }
 
-// NewService wires the domain to its boundaries: the LLM provider,
-// storage, and the injected ID, file-writer, and time sources.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, now func() time.Time) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, writer: writer, now: now}
+// NewService wires the domain to its boundaries: the LLM provider, storage,
+// and the injected ID and file-writer sources. Nothing in the domain stamps
+// time — storage does — so no time source is injected here.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter) *Service {
+	return &Service{llm: llm, repo: repo, newID: newID, writer: writer}
 }
 
-// ExpandTopic expands a topic into a block tree and puts the result into
-// the review queue.
-func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Proposal, error) {
+// ApplyOps validates and applies a write batch directly. Every touched
+// block gains a revision; AI revisions await review, owner revisions are
+// born reviewed. The single write path for MCP, the GUI AI flows, and the
+// owner's manual edits.
+func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
+	if strings.TrimSpace(meta.Title) == "" {
+		return Applied{}, fmt.Errorf("empty title: %w", ErrInvalidOps)
+	}
+	resolved, ids, err := prepareOps(ops, s.newID)
+	if err != nil {
+		return Applied{}, err
+	}
+	groupID := s.newID()
+	if err := s.repo.ApplyOps(ctx, groupID, meta, resolved); err != nil {
+		return Applied{}, err
+	}
+	return Applied{GroupID: groupID, IDs: ids}, nil
+}
+
+// ExpandTopic expands a topic into a block tree and writes it directly,
+// awaiting review.
+func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied, error) {
 	ops, err := s.llm.GenerateTree(ctx, topic, hint)
 	if err != nil {
-		return Proposal{}, err
+		return Applied{}, err
 	}
-	return s.SubmitProposal(ctx, SourceGUIExpand, topic, ops)
+	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIExpand, Title: topic}, ops)
 }
 
-// ProposeEdit turns a user's text command ("split this block into more
-// detail") into a structure-edit proposal — through the same review queue.
-// The scope subtree is read from storage and handed to the model as context;
-// the resulting operations are queued as a pending gui_edit proposal.
-func (s *Service) ProposeEdit(ctx context.Context, scope ID, instruction string) (Proposal, error) {
+// EditWithAI turns a user's text command into structure edits and applies
+// them directly, awaiting review.
+func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
 	blocks, err := s.repo.GetSubtree(ctx, scope)
 	if err != nil {
-		return Proposal{}, err
+		return Applied{}, err
 	}
 	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
 	if err != nil {
-		return Proposal{}, err
+		return Applied{}, err
 	}
-	return s.SubmitProposal(ctx, SourceGUIEdit, instruction, ops)
+	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}, ops)
 }
 
-// SubmitProposal puts ready-made operations into the review queue.
-// The entry point for sources that bring their own operations.
-func (s *Service) SubmitProposal(ctx context.Context, source Source, title string, ops []Op) (Proposal, error) {
-	p, err := NewProposal(s.newID(), source, title, ops, s.now())
-	if err != nil {
-		return Proposal{}, err
-	}
-	if err := s.repo.SaveProposal(ctx, p); err != nil {
-		return Proposal{}, err
-	}
-	return p, nil
+// EditBlockContent applies the owner's manual edit through the same write
+// path; an owner revision is born reviewed.
+func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
+	_, err := s.ApplyOps(ctx,
+		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "manual edit"},
+		[]Op{{Kind: OpEdit, BlockID: id, Content: content}})
+	return err
 }
 
-// PendingProposals returns the review queue: proposals awaiting
-// the user's decision.
-func (s *Service) PendingProposals(ctx context.Context) ([]Proposal, error) {
-	return s.repo.ListProposals(ctx, StatusPending)
+// Unreviewed returns everything awaiting review: the Changes screen.
+func (s *Service) Unreviewed(ctx context.Context) (UnreviewedChanges, error) {
+	return s.repo.ListUnreviewed(ctx)
 }
 
-// ApplyProposal applies a proposal: the domain validates and orders the
-// operations filtered by the user's selection (selected holds indexes
-// into Proposal.Ops; operations depending on removed ones are dropped
-// in cascade), then storage applies them in a single transaction.
-func (s *Service) ApplyProposal(ctx context.Context, id ID, selected []int) error {
-	// Only a pending proposal can be applied; a decided or unknown id is not in
-	// this queue. Storage re-checks under the write lock, so this read need not be
-	// transactional.
-	p, err := s.pendingProposal(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	ops, err := assemble(p, selected, s.newID)
-	if err != nil {
-		return err
-	}
-	return s.repo.ApplyProposal(ctx, id, ops)
+// AcceptBlock marks a block's pending revisions as reviewed.
+func (s *Service) AcceptBlock(ctx context.Context, id ID) error {
+	return s.repo.MarkBlockReviewed(ctx, id)
 }
 
-// pendingProposal finds a proposal in the pending queue. A decided or unknown
-// id is not there: ErrNotPending.
-func (s *Service) pendingProposal(ctx context.Context, id ID) (Proposal, error) {
-	pending, err := s.repo.ListProposals(ctx, StatusPending)
-	if err != nil {
-		return Proposal{}, err
-	}
-	for _, cand := range pending {
-		if cand.ID == id {
-			return cand, nil
-		}
-	}
-	return Proposal{}, fmt.Errorf("proposal %s: %w", id, ErrNotPending)
+// AcceptGroup marks every revision of one ApplyOps batch as reviewed.
+func (s *Service) AcceptGroup(ctx context.Context, id ID) error {
+	return s.repo.MarkGroupReviewed(ctx, id)
 }
 
-// RejectProposal declines a pending proposal; nothing reaches the base.
-func (s *Service) RejectProposal(ctx context.Context, id ID) error {
-	return s.repo.RejectProposal(ctx, id)
+// AcceptPage marks every pending revision under a topic as reviewed.
+func (s *Service) AcceptPage(ctx context.Context, id ID) error {
+	return s.repo.MarkPageReviewed(ctx, id)
+}
+
+// RejectBlock rolls a block back to its last reviewed state, deleting its
+// contiguous unreviewed head revisions.
+func (s *Service) RejectBlock(ctx context.Context, id ID) error {
+	return s.repo.RejectBlock(ctx, id)
+}
+
+// RejectPage rolls every pending block under a topic back to its last
+// reviewed state.
+func (s *Service) RejectPage(ctx context.Context, id ID) error {
+	return s.repo.RejectPage(ctx, id)
+}
+
+// BlockHistory returns a block's full revision history.
+func (s *Service) BlockHistory(ctx context.Context, id ID) ([]Revision, error) {
+	return s.repo.ListRevisions(ctx, id)
+}
+
+// DeleteRevision removes one revision from a block's history — the
+// rollback primitive review and history editing build on.
+func (s *Service) DeleteRevision(ctx context.Context, blockID, revID ID) error {
+	return s.repo.DeleteRevision(ctx, blockID, revID)
+}
+
+// AcceptEdge marks a pending edge as reviewed.
+func (s *Service) AcceptEdge(ctx context.Context, from, to ID, rel Relation) error {
+	return s.repo.MarkEdgeReviewed(ctx, from, to, rel)
+}
+
+// RejectEdge removes a pending edge.
+func (s *Service) RejectEdge(ctx context.Context, from, to ID, rel Relation) error {
+	return s.repo.RejectEdge(ctx, from, to, rel)
 }
 
 // Search runs a full-text search over block content.
@@ -171,9 +190,10 @@ func (s *Service) LinkedBlocks(ctx context.Context, id ID) ([]LinkedBlock, error
 	return out, nil
 }
 
-// CreateLink records a typed link directly, without the review queue: review
-// guards the base against AI, not against its owner (like EditBlockContent).
-// An empty relation defaults to related, mirroring the link op.
+// CreateLink records a typed link directly, without going through review:
+// review guards the base against AI, not against its owner (like
+// EditBlockContent). An empty relation defaults to related, mirroring the
+// link op.
 func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) error {
 	if from == to {
 		return fmt.Errorf("link %s to itself: %w", from, ErrInvalidLink)
@@ -184,19 +204,13 @@ func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) err
 	if rel != RelationExample && rel != RelationRelated {
 		return fmt.Errorf("link %s->%s relation %q: %w", from, to, rel, ErrInvalidLink)
 	}
-	return s.repo.AddEdge(ctx, from, to, rel)
+	return s.repo.AddEdge(ctx, from, to, rel, WriteMeta{Author: AuthorOwner, Source: SourceGUIManual})
 }
 
 // RemoveLink deletes a typed link directly — the owner's counterpart of
 // CreateLink. Removing an absent link is a no-op.
 func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) error {
 	return s.repo.RemoveEdge(ctx, from, to, rel)
-}
-
-// EditBlockContent applies a manual text edit directly, without the
-// review queue: review guards the base against AI, not against its owner.
-func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
-	return s.repo.EditBlockContent(ctx, id, content)
 }
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting

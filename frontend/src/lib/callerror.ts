@@ -32,3 +32,27 @@ export function callError(err: unknown): CallError {
 	}
 	return { code: "internal", message: String(err) };
 }
+
+// readable maps each wire code (assigned in internal/wailsbind MarshalError) to
+// a short, actionable sentence for the user. The Go message is a developer
+// string — wrapped, id-bearing, sometimes a raw driver error — so it must never
+// be shown directly; anything unmapped, including "internal", gets a generic
+// line rather than leaking that text.
+const readable: Record<string, string> = {
+	not_found: "That block no longer exists — reload and try again.",
+	cycle: "That move would put a block inside its own subtree.",
+	invalid_ops: "That change is malformed and can't be applied.",
+	empty_ops: "There's nothing to apply.",
+	invalid_rollback: "That version can't be rolled back to.",
+	invalid_link: "That link isn't valid.",
+	busy: "The database is busy. Try again in a moment.",
+	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
+	llm_bad_response: "The AI returned something unusable. Try again.",
+	declarative: "Settings are locked by your config file (declarative mode).",
+};
+
+// messageFor turns a binding error into the sentence to show the user: a mapped,
+// actionable message by code, never the raw developer/driver text.
+export function messageFor(err: unknown): string {
+	return readable[callError(err).code] ?? "Something went wrong. Please try again.";
+}

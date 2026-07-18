@@ -1,11 +1,12 @@
-// Package knowledge is the domain layer: blocks, links, proposals
+// Package knowledge is the domain layer: blocks, links, revisions
 // and the rules around them. Package rule: imports nothing but
 // the standard library.
 package knowledge
 
 import "time"
 
-// ID identifies a block or a proposal (ULID: sorts by creation time).
+// ID identifies a block, a revision, or a write-batch group (ULID: sorts
+// by creation time).
 // ID generation lives outside the domain and is injected into Service.
 type ID string
 
@@ -35,6 +36,10 @@ type Block struct {
 	Meta      Metadata
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Unreviewed reports that the block has revisions awaiting review.
+	// Derived by storage on read; never written by callers.
+	Unreviewed bool
 }
 
 // IsTopic reports whether the block is a topic root.
@@ -45,6 +50,11 @@ type Edge struct {
 	From     ID
 	To       ID
 	Relation Relation
+
+	// Reviewed reports that the edge has been accepted (or was created by
+	// the owner, born reviewed). Derived by storage on read; never
+	// written by callers.
+	Reviewed bool
 }
 
 // LinkedBlock is a neighbour reachable over a typed link, hydrated for

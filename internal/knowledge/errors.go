@@ -4,31 +4,25 @@ import "errors"
 
 // The error vocabulary of the domain.
 var (
-	// ErrNotFound reports that a referenced block or proposal
-	// does not exist.
+	// ErrNotFound reports that a referenced block does not exist.
 	ErrNotFound = errors.New("not found")
-
-	// ErrStale reports that a proposal references blocks that changed or
-	// disappeared after the review screen was rendered. The GUI reacts by
-	// re-reading the proposal and re-rendering the review.
-	ErrStale = errors.New("proposal is stale")
 
 	// ErrCycle reports a move operation that would place a block inside
 	// its own subtree, collapsing the tree into a ring.
 	ErrCycle = errors.New("move would create a cycle")
 
-	// ErrNotPending reports an attempt to apply or reject a proposal
-	// that has already been decided.
-	ErrNotPending = errors.New("proposal already decided")
+	// ErrInvalidOps reports a batch whose shape is broken: an unknown op
+	// kind, an op missing a required field, or duplicate temp ids.
+	// Malformed input from an untrusted source, refused before any write.
+	ErrInvalidOps = errors.New("operations are malformed")
 
-	// ErrInvalidProposal reports a proposal whose shape is broken: an empty
-	// title, an unknown op kind, or an op missing a required field. Malformed
-	// input from an untrusted source, refused before it reaches the queue.
-	ErrInvalidProposal = errors.New("proposal is malformed")
+	// ErrEmptyOps reports a write batch with no operations.
+	ErrEmptyOps = errors.New("no operations")
 
-	// ErrEmptyProposal reports an attempt to create a proposal that carries
-	// no operations: a proposal that changes nothing is not a proposal.
-	ErrEmptyProposal = errors.New("proposal has no operations")
+	// ErrInvalidRollback reports a revision deletion that would leave the
+	// tree inconsistent: a block whose parent no longer exists, or a
+	// removal that would orphan live children.
+	ErrInvalidRollback = errors.New("rollback would leave an inconsistent tree")
 
 	// ErrInvalidLink reports a link the domain refuses to create: a block
 	// linked to itself, or an unknown relation.

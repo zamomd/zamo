@@ -1,7 +1,7 @@
 <div align="center">
   <img src=".github/assets/logo.svg" alt="Comind" width="160">
   <h1>Comind</h1>
-  <p><b>Private. Local-first. AI proposes, you review.</b></p>
+  <p><b>Private. Local-first. AI writes, you review.</b></p>
 
   <p>
     <a href="https://github.com/cominddev/comind/actions/workflows/ci.yml"><img src="https://github.com/cominddev/comind/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,5 +15,5 @@
 > [!NOTE]
 > Early work in progress — this README is a placeholder and will change.
 
-A block-based knowledge base that stays on your machine. The AI suggests
-changes; nothing lands until you review and accept them.
+A block-based knowledge base that stays on your machine. The AI writes
+directly; every change is flagged, reversible, and awaits your review.

@@ -3,10 +3,12 @@ import {
 	type Block,
 	type LinkedBlock,
 	Relation,
+	type Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
-import { callError } from "../lib/callerror";
+import { callError, messageFor } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
+import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
 // you-type is not a backend call per keystroke. Mirrors the search store.
@@ -14,8 +16,8 @@ const linkQueryDebounceMs = 200;
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
 // flows from one command field. Expansion (no target) and restructuring (a
-// targeted block) both queue a proposal for review — never a direct write —
-// then the base is re-read.
+// targeted block) both write directly — every touched block lands flagged
+// unreviewed, review is retroactive — then the base is re-read.
 //
 // It lives at module level so the view can unmount on a tab switch and come
 // back to the same place: the fold state, the targeted block, a half-typed
@@ -34,6 +36,12 @@ class BaseStore {
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
 	collapsed = new SvelteSet<string>();
+
+	// ghosts holds the ids of blocks with an unreviewed pending deletion:
+	// gone from the live blocks table but merged back into the forest (see
+	// reload) so the tree can render them struck through in place, pending
+	// Accept (drop for good) or Reject (restore).
+	ghosts = new SvelteSet<string>();
 
 	// Inline block editing: the owner's own edits apply straight to the base,
 	// bypassing the review queue (review guards against AI, not the owner).
@@ -59,6 +67,13 @@ class BaseStore {
 	linkResults = $state<Block[]>([]);
 	linkRelation = $state<Relation>(Relation.RelationRelated);
 
+	// The history panel: at most one block's revisions are loaded at a time,
+	// newest first as BlockHistory returns them. Deleting revisions IS the
+	// rollback mechanism (see internal/sqlite/revision.go), so this doubles as
+	// the undo UI, not just a read-only log.
+	historyID = $state<string | null>(null);
+	revisions = $state<Revision[]>([]);
+
 	// A reveal whose block is not yet in the forest, flushed at the end of reload.
 	private pendingReveal: string | null = null;
 
@@ -68,6 +83,12 @@ class BaseStore {
 	// to land. Mirrors the search store's guard.
 	private linkQuerySeq = 0;
 
+	// historySeq stamps every BlockHistory fetch (open, switch, close, and
+	// deleteRevision's own refresh) so a slow response for a panel the user
+	// has since switched away from — or closed — cannot land and overwrite
+	// another block's revisions. Same pattern as linkQuerySeq.
+	private historySeq = 0;
+
 	// The scope label is read out of the live forest rather than copied on
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
@@ -76,18 +97,58 @@ class BaseStore {
 	// activate re-reads the data on every mount; the UI state above persists.
 	activate(): void {
 		this.reload().catch((err: unknown) => {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		});
 	}
 
-	// reload reads every topic root and its full subtree, rebuilding the forest.
+	// reload reads every topic root and its full subtree, rebuilding the
+	// forest, and merges in any pending deletion as a ghost row so it renders
+	// in place rather than vanishing before it is reviewed.
 	async reload(): Promise<void> {
 		const topics = (await App.TopicMap()) ?? [];
 		const roots = topics.filter((b) => b.ParentID === "");
+
+		// Ghosts: a pending delete drops the block from GetSubtree, so it is
+		// reconstructed from its unreviewed head revision and grouped by the
+		// topic it belongs to, ready to splice into that topic's block list
+		// before buildTree.
+		await changes.refresh();
+		this.ghosts.clear();
+		const ghostsByTopic = new Map<string, Block[]>();
+		for (const u of changes.blocks) {
+			if (!u.Head.Deleted) {
+				continue;
+			}
+			this.ghosts.add(u.Head.BlockID);
+			const ghost: Block = {
+				ID: u.Head.BlockID,
+				ParentID: u.Head.ParentID,
+				Position: u.Head.Position,
+				Content: u.Head.Content,
+				Meta: {},
+				CreatedAt: "",
+				UpdatedAt: "",
+				Unreviewed: true,
+			};
+			const list = ghostsByTopic.get(u.TopicID) ?? [];
+			list.push(ghost);
+			ghostsByTopic.set(u.TopicID, list);
+		}
+
 		const trees: TreeNodeData[] = [];
 		for (const r of roots) {
 			const blocks = (await App.GetSubtree(r.ID)) ?? [];
-			const tree = buildTree(blocks);
+			const extra = ghostsByTopic.get(r.ID) ?? [];
+			ghostsByTopic.delete(r.ID);
+			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+			if (tree) {
+				trees.push(tree);
+			}
+		}
+		// Whatever is left is a ghost topic root itself: its whole page was
+		// deleted, so it has no live subtree to attach to and forms its own tree.
+		for (const list of ghostsByTopic.values()) {
+			const tree = buildTree(list);
 			if (tree) {
 				trees.push(tree);
 			}
@@ -102,6 +163,13 @@ class BaseStore {
 				continue;
 			}
 			await this.refreshLinks(id);
+		}
+		// A history panel whose block vanished entirely (its last revision was
+		// finalized away by Accept, not by deleteRevision's own not_found path)
+		// closes rather than keep showing a dead block's stale history.
+		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
+			this.historyID = null;
+			this.revisions = [];
 		}
 		// Apply a reveal that raced the initial load. reveal re-parks it if the
 		// block is still absent, so a missing target self-heals on a later reload.
@@ -155,33 +223,34 @@ class BaseStore {
 
 	// askAI routes the one command field to the matching AI flow: a new-topic
 	// expansion when nothing is targeted, a structure edit on the targeted
-	// block/page otherwise. Both return a proposal that lands in the review
-	// queue, never a direct write. Reports whether one was queued, so the
-	// caller can hand focus to the queue.
-	async askAI(): Promise<boolean> {
+	// block/page otherwise. Both write directly — every touched block lands
+	// flagged unreviewed rather than queued as a proposal — so the base is
+	// simply re-read afterwards; the view never switches tabs.
+	async askAI(): Promise<void> {
 		const text = this.command.trim();
-		// Locked mid inline-edit like every other tree action: queueing moves
-		// focus off this view, so submitting here would silently drop an open
-		// edit.
+		// Locked mid inline-edit like every other tree action: reload moves the
+		// forest under an open editor, so submitting here would silently drop
+		// an open edit.
 		if (text === "" || this.busy || this.editingID !== null) {
-			return false;
+			return;
 		}
 		this.busy = true;
 		this.error = "";
 		try {
 			const scope = this.scopeID;
 			this.status = scope === null ? `expanding "${text}"…` : "asking the AI to restructure…";
-			const proposal = scope === null ? await App.ExpandTopic(text, "") : await App.ProposeEdit(scope, text);
-			const ops = (proposal.Ops ?? []).length;
-			this.status =
-				scope === null ? `queued "${text}" for review (${ops} ops)` : `queued the restructure for review (${ops} ops)`;
+			if (scope === null) {
+				await App.ExpandTopic(text, "");
+			} else {
+				await App.EditWithAI(scope, text);
+			}
 			this.command = "";
 			this.clearScope();
-			return true;
+			await this.reload();
+			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
-			return false;
 		} finally {
 			this.busy = false;
 		}
@@ -215,7 +284,88 @@ class BaseStore {
 			this.status = "saved edit";
 			this.cancelEdit();
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// accept marks a block's pending revisions reviewed: a live block keeps its
+	// new content, a ghost's tombstone becomes final and it drops out of the
+	// tree for good.
+	async accept(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.AcceptBlock(id);
+			await this.reload();
+			this.status = "accepted";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// reject rolls a block back to its last reviewed state: a live block's AI
+	// edit is undone (an AI-added block disappears entirely), a ghost's
+	// pending deletion is undone and the block is restored.
+	async reject(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RejectBlock(id);
+			await this.reload();
+			this.status = "rejected";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// acceptPage marks every pending revision under a topic reviewed in one step.
+	async acceptPage(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.AcceptPage(id);
+			await this.reload();
+			this.status = "accepted page";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// rejectPage rolls every pending block under a topic back to its last
+	// reviewed state in one step.
+	async rejectPage(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RejectPage(id);
+			await this.reload();
+			this.status = "rejected page";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -245,7 +395,7 @@ class BaseStore {
 		try {
 			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -312,7 +462,7 @@ class BaseStore {
 			if (mine !== this.linkQuerySeq) {
 				return;
 			}
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -334,7 +484,7 @@ class BaseStore {
 			}
 			this.status = "linked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -361,7 +511,84 @@ class BaseStore {
 			}
 			this.status = "unlinked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// toggleHistory opens or closes a block's revision-history panel, loading
+	// the revisions on open. Allowed on ghosts too: a pending deletion's
+	// history is exactly how its removal is inspected or undone before review.
+	// Bumping historySeq on every call — open, switch, or close — invalidates
+	// whatever fetch a previous call started, so a slow response for a panel
+	// the user has since switched away from can never land and overwrite the
+	// now-current block's revisions.
+	async toggleHistory(id: string): Promise<void> {
+		this.historySeq++;
+		if (this.historyID === id) {
+			this.historyID = null;
+			this.revisions = [];
+			return;
+		}
+		this.historyID = id;
+		this.error = "";
+		const mine = this.historySeq;
+		try {
+			const revs = (await App.BlockHistory(id)) ?? [];
+			if (mine !== this.historySeq) {
+				return;
+			}
+			this.revisions = revs;
+		} catch (err: unknown) {
+			if (mine !== this.historySeq) {
+				return;
+			}
+			this.error = messageFor(err);
+			this.revisions = [];
+		}
+	}
+
+	// deleteRevision removes one revision from a block's history — the
+	// rollback mechanism. Deleting the head reverts the block to the previous
+	// revision; deleting the last remaining revision removes the block
+	// entirely, in which case the follow-up BlockHistory errors not_found —
+	// that closes the panel rather than surfacing as an error. An invalid
+	// rollback (a live parent or children in the way) is refused by the
+	// backend with a message surfaced verbatim in base.error. The refresh is
+	// stamped with historySeq too, like toggleHistory: history-toggle buttons
+	// are disabled while busy so a panel switch cannot race this in practice,
+	// but the guard keeps the two call sites' invariant in one place rather
+	// than relying on that UI lock.
+	async deleteRevision(blockID: string, revID: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		const mine = ++this.historySeq;
+		try {
+			await App.DeleteRevision(blockID, revID);
+			try {
+				const revs = (await App.BlockHistory(blockID)) ?? [];
+				if (mine === this.historySeq) {
+					this.revisions = revs;
+				}
+			} catch (err: unknown) {
+				if (callError(err).code !== "not_found") {
+					throw err;
+				}
+				if (mine === this.historySeq) {
+					this.historyID = null;
+					this.revisions = [];
+				}
+			}
+			await this.reload();
+			await changes.refresh();
+			this.status = "deleted revision";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;

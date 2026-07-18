@@ -4,14 +4,12 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"time"
 )
 
 // newLinkService wires a Service around the fake repo; links touch neither
 // the LLM nor the writer.
 func newLinkService(repo *fakeRepo) *Service {
-	return NewService(&fakeLLM{}, repo, func() ID { return "01NEW" }, &fakeFileWriter{},
-		clockAt(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)))
+	return NewService(&fakeLLM{}, repo, func() ID { return "01NEW" }, &fakeFileWriter{})
 }
 
 func TestLinkedBlocksHydratesBothDirections(t *testing.T) {

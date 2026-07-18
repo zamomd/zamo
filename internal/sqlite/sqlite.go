@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	sqlite3 "modernc.org/sqlite"
@@ -82,198 +83,107 @@ func translate(err error) error {
 
 // Repo implements knowledge.Repository.
 type Repo struct {
-	db  *sql.DB
-	now func() time.Time
+	db    *sql.DB
+	now   func() time.Time
+	newID func() knowledge.ID
 }
 
 var _ knowledge.Repository = (*Repo)(nil)
 
 // NewRepo wraps an opened database (see Open) in the Repository
-// implementation. now supplies decision timestamps (decided_at); inject a
-// fixed clock in tests. A nil now defaults to time.Now. Method semantics are
-// documented on the interface.
-func NewRepo(db *sql.DB, now func() time.Time) *Repo {
+// implementation. now stamps revisions (nil = time.Now); newID mints
+// revision ids and must never collide (production injects a ULID
+// generator — the same one handed to knowledge.Service).
+func NewRepo(db *sql.DB, now func() time.Time, newID func() knowledge.ID) *Repo {
 	if now == nil {
 		now = time.Now
 	}
-	return &Repo{db: db, now: now}
+	return &Repo{db: db, now: now, newID: newID}
 }
 
-// EditBlockContent implements knowledge.Repository.
-func (r *Repo) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		content, formatTime(r.now()), string(id))
-	if err != nil {
-		return fmt.Errorf("edit block %s: %w", id, translate(err))
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("edit block %s: %w", id, translate(err))
-	}
-	if n == 0 {
-		// The block vanished between render and save: report it, don't feign success.
-		return fmt.Errorf("edit block %s: %w", id, knowledge.ErrNotFound)
-	}
-	return nil
-}
-
-// timeLayout is the on-disk format for proposal timestamps: fixed-width,
-// zero-padded RFC3339 nanoseconds in UTC. Fixed width keeps lexicographic order
-// equal to chronological order — which ORDER BY created_at (a TEXT column)
-// relies on — since time.RFC3339Nano trims trailing zeros and would break it.
+// timeLayout is the on-disk format for revision and block timestamps:
+// fixed-width, zero-padded RFC3339 nanoseconds in UTC. Fixed width keeps
+// lexicographic order equal to chronological order — which ORDER BY on a
+// TEXT timestamp column relies on — since time.RFC3339Nano trims trailing
+// zeros and would break it.
 const timeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
 
 func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
-// SaveProposal implements knowledge.Repository.
-func (r *Repo) SaveProposal(ctx context.Context, p knowledge.Proposal) error {
-	payload, err := json.Marshal(p.Ops)
-	if err != nil {
-		return fmt.Errorf("marshal proposal %s ops: %w", p.ID, err)
-	}
-	// decided_at stays NULL while pending; a nil interface binds as SQL NULL.
-	var decidedAt any
-	if !p.DecidedAt.IsZero() {
-		decidedAt = formatTime(p.DecidedAt)
-	}
-	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO proposals (id, source, status, title, payload, created_at, decided_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(p.ID), string(p.Source), string(p.Status), p.Title,
-		string(payload), formatTime(p.CreatedAt), decidedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("save proposal %s: %w", p.ID, translate(err))
-	}
-	return nil
+// batch bundles the values every op writer needs beyond its own op: the
+// group and provenance shared by the whole ApplyOps call, the review state
+// that provenance implies, and the timestamp string stamped on every row
+// the batch writes.
+type batch struct {
+	groupID  knowledge.ID
+	meta     knowledge.WriteMeta
+	reviewed bool
+	now      string
 }
 
-// ListProposals implements knowledge.Repository.
-func (r *Repo) ListProposals(ctx context.Context, status knowledge.Status) ([]knowledge.Proposal, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, source, status, title, payload, created_at, decided_at
-		 FROM proposals WHERE status = ? ORDER BY created_at, id`,
-		string(status),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
-	}
-	defer rows.Close()
-
-	var out []knowledge.Proposal
-	for rows.Next() {
-		p, err := scanProposal(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list %s proposals: %w", status, translate(err))
-	}
-	return out, nil
-}
-
-// scanProposal reads one proposals row into a domain Proposal, reversing the
-// SaveProposal encoding (JSON payload, TEXT timestamps, nullable decided_at).
-func scanProposal(rows *sql.Rows) (knowledge.Proposal, error) {
-	var (
-		p                                      knowledge.Proposal
-		id, source, status, payload, createdAt string
-		decidedAt                              sql.NullString
-	)
-	if err := rows.Scan(&id, &source, &status, &p.Title, &payload, &createdAt, &decidedAt); err != nil {
-		return knowledge.Proposal{}, fmt.Errorf("scan proposal: %w", err)
-	}
-	p.ID = knowledge.ID(id)
-	p.Source = knowledge.Source(source)
-	p.Status = knowledge.Status(status)
-	if err := json.Unmarshal([]byte(payload), &p.Ops); err != nil {
-		return knowledge.Proposal{}, fmt.Errorf("unmarshal proposal %s ops: %w", id, err)
-	}
-	created, err := parseTime(createdAt)
-	if err != nil {
-		return knowledge.Proposal{}, fmt.Errorf("parse created_at of proposal %s: %w", id, err)
-	}
-	p.CreatedAt = created
-	if decidedAt.Valid {
-		t, err := parseTime(decidedAt.String)
-		if err != nil {
-			return knowledge.Proposal{}, fmt.Errorf("parse decided_at of proposal %s: %w", id, err)
-		}
-		p.DecidedAt = t
-	}
-	return p, nil
-}
-
-// ApplyProposal implements knowledge.Repository. It applies the domain's ready,
-// ordered op list in one immediate transaction and marks the proposal applied.
-// Ops carry final identifiers (BlockID is the target block — the new block for
-// add; Parent/From/To are resolved ids), so storage only writes. The apply is
-// atomic: any error rolls the whole transaction back, so search and the tree
-// never observe a half-applied proposal.
-func (r *Repo) ApplyProposal(ctx context.Context, id knowledge.ID, ops []knowledge.Op) error {
+// ApplyOps implements knowledge.Repository. It applies the domain's ready,
+// ordered op list in one immediate transaction: one revision row per touched
+// block plus the blocks projection, and one revision_groups row tying them
+// together. Ops carry final identifiers (BlockID is the target block — the
+// new block for add; Parent/From/To are resolved ids), so storage only
+// writes. The apply is atomic: any error rolls the whole transaction back,
+// so search and the tree never observe a half-applied batch.
+func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op) error {
 	// _txlock=immediate (DSN) makes this a BEGIN IMMEDIATE: the write lock is
 	// taken up front, so a read-then-write apply cannot deadlock on a lock
 	// upgrade under WAL.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
+		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	defer tx.Rollback()
 
-	// The proposal must still be pending; its source is the blocks' provenance.
-	var source string
-	err = tx.QueryRowContext(ctx,
-		`SELECT source FROM proposals WHERE id = ? AND status = ?`,
-		string(id), string(knowledge.StatusPending)).Scan(&source)
-	if errors.Is(err, sql.ErrNoRows) {
-		return decideReason(ctx, tx, id)
+	b := batch{
+		groupID: groupID,
+		meta:    meta,
+		now:     formatTime(r.now()),
+		// Owner writes are trusted and need no review; AI writes wait in the
+		// Changes queue until the human accepts them (Task 4).
+		reviewed: meta.Author == knowledge.AuthorOwner,
 	}
-	if err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO revision_groups (id, title, source, created_at) VALUES (?, ?, ?, ?)`,
+		string(groupID), meta.Title, string(meta.Source), b.now); err != nil {
+		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 
-	now := formatTime(r.now())
 	for _, op := range ops {
-		if err := applyOp(ctx, tx, op, knowledge.Source(source), now); err != nil {
+		if err := r.applyOp(ctx, tx, op, b); err != nil {
 			return err
 		}
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE proposals SET status = ?, decided_at = ? WHERE id = ?`,
-		string(knowledge.StatusApplied), now, string(id)); err != nil {
-		return fmt.Errorf("apply proposal %s: %w", id, translate(err))
 	}
 	return tx.Commit()
 }
 
 // applyOp applies one resolved operation inside the apply transaction.
-func applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.Source, now string) error {
+func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	switch op.Kind {
 	case knowledge.OpAdd:
-		return applyAdd(ctx, tx, op, source, now)
+		return r.applyAdd(ctx, tx, op, b)
 	case knowledge.OpEdit:
-		return applyEdit(ctx, tx, op, now)
+		return r.applyEdit(ctx, tx, op, b)
 	case knowledge.OpMove:
-		return applyMove(ctx, tx, op, now)
+		return r.applyMove(ctx, tx, op, b)
 	case knowledge.OpDelete:
-		return applyDelete(ctx, tx, op)
+		return r.applyDelete(ctx, tx, op, b)
 	case knowledge.OpLink:
-		return applyLink(ctx, tx, op, now)
+		return r.applyLink(ctx, tx, op, b)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
 }
 
-// requireParent returns ErrStale when a non-root op names a parent that vanished
-// between the proposal and its apply — the same "the base moved" signal a missing
-// target gives. Root ops (empty Parent) have nothing to check. Domain ordering
-// applies parents before children, so an intra-proposal parent already exists.
+// requireParent returns ErrNotFound when a non-root op names a parent that
+// does not exist. Root ops (empty Parent) have nothing to check. Domain
+// ordering applies parents before children, so an intra-batch parent already
+// exists by the time its children run.
 func requireParent(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op knowledge.Op) error {
 	if op.Parent == "" {
 		return nil
@@ -284,14 +194,15 @@ func requireParent(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op kn
 		return fmt.Errorf("apply %s %s: %w", kind, op.BlockID, translate(err))
 	}
 	if !exists {
-		return fmt.Errorf("apply %s %s: parent %s: %w", kind, op.BlockID, op.Parent, knowledge.ErrStale)
+		return fmt.Errorf("apply %s %s: parent %s: %w", kind, op.BlockID, op.Parent, knowledge.ErrNotFound)
 	}
 	return nil
 }
 
-// applyAdd inserts a new block appended under its parent, tagged with AI
-// authorship and the proposal's source as provenance.
-func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge.Source, now string) error {
+// applyAdd inserts a new block appended under its parent, tagged with the
+// batch's authorship and source as provenance, and writes its creation
+// revision (seq 1).
+func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
 		return err
 	}
@@ -306,42 +217,94 @@ func applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, source knowledge
 		parent).Scan(&pos); err != nil {
 		return fmt.Errorf("apply add %s: next position: %w", op.BlockID, translate(err))
 	}
-	meta := knowledge.Metadata{"author": "ai", "source": string(source)}
+	stamp := knowledge.Metadata{"author": string(b.meta.Author), "source": string(b.meta.Source)}
 	if op.Origin != "" {
-		meta["origin"] = op.Origin
+		stamp["origin"] = op.Origin
 	}
-	payload, err := json.Marshal(meta)
+	payload, err := json.Marshal(stamp)
 	if err != nil {
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(op.BlockID), parent, pos, op.Content, string(payload), now, now); err != nil {
+		string(op.BlockID), parent, pos, op.Content, string(payload), b.now, b.now); err != nil {
+		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
+	}
+	rev := knowledge.Revision{
+		ID:        r.newID(),
+		BlockID:   op.BlockID,
+		Seq:       1,
+		Content:   op.Content,
+		ParentID:  knowledge.ID(op.Parent),
+		Position:  pos,
+		Author:    b.meta.Author,
+		Source:    b.meta.Source,
+		Origin:    op.Origin,
+		Rationale: op.Rationale,
+		Reviewed:  b.reviewed,
+		GroupID:   b.groupID,
+	}
+	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
 	return nil
 }
 
-// applyEdit replaces a block's content, refreshing updated_at.
-func applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
-	res, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		op.Content, now, string(op.BlockID))
-	if err != nil {
+// applyEdit replaces a block's content, refreshing updated_at, and appends a
+// revision that carries the block's unchanged parent/position alongside the
+// new content — a revision is a full snapshot, not a diff.
+func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
+	var parent sql.NullString
+	var pos int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT parent_id, position FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&parent, &pos); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
-	return affectedOne(res, op.Kind, op.BlockID)
+	seq, err := nextSeq(ctx, tx, string(op.BlockID))
+	if err != nil {
+		return fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
+	}
+	rev := knowledge.Revision{
+		ID:        r.newID(),
+		BlockID:   op.BlockID,
+		Seq:       seq,
+		Content:   op.Content,
+		ParentID:  knowledge.ID(parent.String),
+		Position:  pos,
+		Author:    b.meta.Author,
+		Source:    b.meta.Source,
+		Origin:    op.Origin,
+		Rationale: op.Rationale,
+		Reviewed:  b.reviewed,
+		GroupID:   b.groupID,
+	}
+	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
+		op.Content, b.now, string(op.BlockID)); err != nil {
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+	}
+	return nil
 }
 
-// applyMove reparents a block, appending it after its new siblings. It refuses
-// a move into the block's own subtree (see rejectMoveCycle) before writing.
-func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+// applyMove reparents a block, appending it after its new siblings, and
+// writes a revision that carries the block's unchanged content alongside the
+// new parent/position. It refuses a move into the block's own subtree (see
+// rejectMoveCycle) before writing.
+func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
 		return err
 	}
 	if err := rejectMoveCycle(ctx, tx, op); err != nil {
 		return err
+	}
+	var content string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&content); err != nil {
+		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	var parent any
 	if op.Parent != "" {
@@ -353,13 +316,33 @@ func applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 		parent).Scan(&pos); err != nil {
 		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, translate(err))
 	}
-	res, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, now, string(op.BlockID))
+	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
+		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))
+	}
+	rev := knowledge.Revision{
+		ID:        r.newID(),
+		BlockID:   op.BlockID,
+		Seq:       seq,
+		Content:   content,
+		ParentID:  knowledge.ID(op.Parent),
+		Position:  pos,
+		Author:    b.meta.Author,
+		Source:    b.meta.Source,
+		Origin:    op.Origin,
+		Rationale: op.Rationale,
+		Reviewed:  b.reviewed,
+		GroupID:   b.groupID,
+	}
+	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
-	return affectedOne(res, op.Kind, op.BlockID)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, b.now, string(op.BlockID)); err != nil {
+		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
+	}
+	return nil
 }
 
 // rejectMoveCycle returns ErrCycle when reparenting op.BlockID under op.Parent
@@ -389,9 +372,8 @@ func rejectMoveCycle(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
 	return nil
 }
 
-// requireBlock returns ErrStale when a referenced block is absent — the same
-// "base moved" signal a vanished parent gives, so callers branch on ErrStale
-// instead of a raw foreign-key error. An empty id (no reference) is fine.
+// requireBlock returns ErrNotFound when a referenced block is absent. An
+// empty id (no reference) is fine.
 func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id string) error {
 	if id == "" {
 		return nil
@@ -402,18 +384,21 @@ func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id str
 		return fmt.Errorf("apply %s: block %s: %w", kind, id, translate(err))
 	}
 	if !exists {
-		return fmt.Errorf("apply %s: block %s: %w", kind, id, knowledge.ErrStale)
+		return fmt.Errorf("apply %s: block %s: %w", kind, id, knowledge.ErrNotFound)
 	}
 	return nil
 }
 
-// applyLink records a non-hierarchical edge between two existing blocks. Either
-// endpoint gone maps to ErrStale (the base moved), not a raw foreign-key error;
-// the relation defaults to "related" when the op leaves it unset, matching the
-// domain's default and the schema's CHECK. The insert is idempotent like
-// AddEdge's: the owner may hand-create the same link while the proposal is
-// still pending, and that must not fail the apply.
-func applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) error {
+// applyLink upserts a non-hierarchical edge between two existing blocks.
+// Either endpoint gone maps to ErrNotFound; the relation defaults to
+// "related" when the op leaves it unset, matching the domain's default and
+// the schema's CHECK. The upsert resurrects a soft-deleted edge (deleted=0)
+// and refreshes its review state and group — re-linking is how the domain
+// restores a link an owner had rejected — while an edge the owner
+// hand-created (AddEdge, reviewed=1) stays reviewed only if this write is
+// also an owner write; an AI re-link of an owner edge intentionally regresses
+// it to unreviewed, since the link itself changed provenance.
+func (r *Repo) applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	if err := requireBlock(ctx, tx, op.Kind, op.From); err != nil {
 		return err
 	}
@@ -424,80 +409,88 @@ func applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, now string) err
 	if relation == "" {
 		relation = knowledge.RelationRelated
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO edges (from_id, to_id, relation, created_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT (from_id, to_id, relation) DO NOTHING`,
-		op.From, op.To, string(relation), now); err != nil {
+	var origin any
+	if op.Origin != "" {
+		origin = op.Origin
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO edges (from_id, to_id, relation, author, origin, reviewed, deleted, group_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+		ON CONFLICT (from_id, to_id, relation)
+		DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
+		op.From, op.To, string(relation), string(b.meta.Author), origin, b.reviewed, string(b.groupID), b.now); err != nil {
 		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
 	}
 	return nil
 }
 
-// applyDelete removes a block. The schema has no ON DELETE CASCADE, so a block
-// with surviving children or edges trips a foreign-key error and rolls the
-// apply back; the domain must delete descendants and links in the same ops.
-func applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
-	res, err := tx.ExecContext(ctx,
-		`DELETE FROM blocks WHERE id = ?`, string(op.BlockID))
+// applyDelete tombstones a block and its whole subtree, children-first: each
+// touched block gets a tombstone revision (its current snapshot, Deleted
+// true) before its blocks row is removed. Edges are left untouched — reads
+// hide edges with a dead endpoint (Task 4), so restoring the block restores
+// its links without storage having to remember them here.
+func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
+	subtree, err := subtreePreorder(ctx, tx, op.BlockID)
 	if err != nil {
-		return fmt.Errorf("apply delete %s: %w", op.BlockID, translate(err))
+		return fmt.Errorf("apply delete %s: %w", op.BlockID, err)
 	}
-	return affectedOne(res, op.Kind, op.BlockID)
-}
+	if len(subtree) == 0 {
+		return fmt.Errorf("apply delete %s: %w", op.BlockID, knowledge.ErrNotFound)
+	}
+	slices.Reverse(subtree) // children before their parents
 
-// affectedOne maps a no-op edit/move/delete to ErrStale: the target block
-// vanished between the proposal and its apply, so the proposal is out of date.
-func affectedOne(res sql.Result, kind knowledge.OpKind, id knowledge.ID) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("apply %s %s: %w", kind, id, translate(err))
-	}
-	if n == 0 {
-		return fmt.Errorf("apply %s %s: %w", kind, id, knowledge.ErrStale)
+	for _, blk := range subtree {
+		seq, err := nextSeq(ctx, tx, string(blk.ID))
+		if err != nil {
+			return fmt.Errorf("apply delete %s: next seq: %w", blk.ID, translate(err))
+		}
+		rev := knowledge.Revision{
+			ID:        r.newID(),
+			BlockID:   blk.ID,
+			Seq:       seq,
+			Content:   blk.Content,
+			ParentID:  blk.ParentID,
+			Position:  blk.Position,
+			Deleted:   true,
+			Author:    b.meta.Author,
+			Source:    b.meta.Source,
+			Origin:    op.Origin,
+			Rationale: op.Rationale,
+			Reviewed:  b.reviewed,
+			GroupID:   b.groupID,
+		}
+		if err := insertRevision(ctx, tx, rev, b.now); err != nil {
+			return fmt.Errorf("apply delete %s: %w", blk.ID, translate(err))
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM blocks WHERE id = ?`, string(blk.ID)); err != nil {
+			return fmt.Errorf("apply delete %s: %w", blk.ID, translate(err))
+		}
 	}
 	return nil
 }
 
-// RejectProposal implements knowledge.Repository.
-func (r *Repo) RejectProposal(ctx context.Context, id knowledge.ID) error {
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE proposals SET status = ?, decided_at = ?
-		 WHERE id = ? AND status = ?`,
-		string(knowledge.StatusRejected), formatTime(r.now()),
-		string(id), string(knowledge.StatusPending),
-	)
-	if err != nil {
-		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("reject proposal %s: %w", id, translate(err))
-	}
-	if n == 0 {
-		return decideReason(ctx, r.db, id)
-	}
-	return nil
-}
+// subtreePreorder collects root and every descendant inside tx, ordered
+// parents-before-children — the tx-scoped twin of GetSubtree, needed because
+// a read through r.db might land on a different pooled connection and miss
+// this transaction's uncommitted writes.
+func subtreePreorder(ctx context.Context, tx *sql.Tx, root knowledge.ID) ([]knowledge.Block, error) {
+	const q = `
+WITH RECURSIVE subtree(id) AS (
+    SELECT id FROM blocks WHERE id = ?
+    UNION
+    SELECT b.id FROM blocks b JOIN subtree s ON b.parent_id = s.id
+)
+SELECT ` + blockColumns + ` FROM blocks WHERE id IN (SELECT id FROM subtree)`
 
-// rowQueryer is the read surface shared by *sql.DB and *sql.Tx, so decideReason
-// works standalone (reject) or inside the apply transaction.
-type rowQueryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+	rows, err := tx.QueryContext(ctx, q, string(root))
+	if err != nil {
+		return nil, translate(err)
+	}
+	defer rows.Close()
 
-// decideReason explains why deciding a proposal (reject/apply) matched no
-// pending row: it is absent (ErrNotFound) or already decided (ErrNotPending).
-// Run outside the deciding transaction (reject), a concurrent writer could swap
-// the two, but only the message differs — the decide itself is atomic — and
-// proposals are never deleted in the MVP.
-func decideReason(ctx context.Context, q rowQueryer, id knowledge.ID) error {
-	var exists bool
-	if err := q.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM proposals WHERE id = ?)`, string(id)).Scan(&exists); err != nil {
-		return fmt.Errorf("proposal %s: %w", id, translate(err))
+	blocks, err := scanBlocks(rows)
+	if err != nil {
+		return nil, translate(err)
 	}
-	if !exists {
-		return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotFound)
-	}
-	return fmt.Errorf("proposal %s: %w", id, knowledge.ErrNotPending)
+	return preorder(blocks, root), nil
 }

@@ -10,7 +10,6 @@
 	// tree, all wired to the base store. Mounting re-reads the data; the UI
 	// state (fold state, target, command) lives in the store and survives tab
 	// switches.
-	let { onqueued }: { onqueued: () => void } = $props();
 
 	onMount(() => {
 		base.activate();
@@ -20,7 +19,7 @@
 <section>
 	<h1>Comind</h1>
 
-	<CommandBox {onqueued} />
+	<CommandBox />
 	<SearchBox />
 	<StatusLine status={base.status} error={base.error} />
 

@@ -31,19 +31,14 @@ func (a *App) TopicMap(ctx context.Context) ([]knowledge.Block, error) {
 }
 
 // ExpandTopic passes the call to knowledge.Service.
-func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Proposal, error) {
+func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
 	return a.svc.ExpandTopic(ctx, topic, hint)
 }
 
-// ApplyProposal passes the call to knowledge.Service.
-func (a *App) ApplyProposal(ctx context.Context, id knowledge.ID, selected []int) error {
-	return a.svc.ApplyProposal(ctx, id, selected)
-}
-
-// ProposeEdit passes the call to knowledge.Service. The frontend supplies the
+// EditWithAI passes the call to knowledge.Service. The frontend supplies the
 // scope (a block or subtree root) and the user's text command.
-func (a *App) ProposeEdit(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Proposal, error) {
-	return a.svc.ProposeEdit(ctx, scope, instruction)
+func (a *App) EditWithAI(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Applied, error) {
+	return a.svc.EditWithAI(ctx, scope, instruction)
 }
 
 // GetSubtree passes the call to knowledge.Service.
@@ -86,26 +81,58 @@ func (a *App) ExportMarkdown(ctx context.Context, dir string) error {
 	return a.svc.ExportMarkdown(ctx, dir)
 }
 
-// PendingProposals passes the call to knowledge.Service: the review queue.
-func (a *App) PendingProposals(ctx context.Context) ([]knowledge.Proposal, error) {
-	return a.svc.PendingProposals(ctx)
+// Unreviewed passes the call to knowledge.Service: the AI-authored blocks and
+// edges still awaiting a human decision.
+func (a *App) Unreviewed(ctx context.Context) (knowledge.UnreviewedChanges, error) {
+	return a.svc.Unreviewed(ctx)
 }
 
-// RejectProposal passes the call to knowledge.Service.
-func (a *App) RejectProposal(ctx context.Context, id knowledge.ID) error {
-	return a.svc.RejectProposal(ctx, id)
+// AcceptBlock passes the call to knowledge.Service.
+func (a *App) AcceptBlock(ctx context.Context, id knowledge.ID) error {
+	return a.svc.AcceptBlock(ctx, id)
 }
 
-// ReviewProposal passes the call to knowledge.Service: a pending proposal
-// annotated with stale flags and current content for the review screen.
-func (a *App) ReviewProposal(ctx context.Context, id knowledge.ID) (knowledge.ProposalReview, error) {
-	return a.svc.ReviewProposal(ctx, id)
+// RejectBlock passes the call to knowledge.Service.
+func (a *App) RejectBlock(ctx context.Context, id knowledge.ID) error {
+	return a.svc.RejectBlock(ctx, id)
 }
 
-// EffectiveSelection previews the apply cascade for the review screen; pure,
-// no storage.
-func (a *App) EffectiveSelection(_ context.Context, ops []knowledge.Op, selected []int) []int {
-	return knowledge.EffectiveSelection(ops, selected)
+// AcceptPage passes the call to knowledge.Service: accepts every unreviewed
+// block under topicID in one step.
+func (a *App) AcceptPage(ctx context.Context, topicID knowledge.ID) error {
+	return a.svc.AcceptPage(ctx, topicID)
+}
+
+// RejectPage passes the call to knowledge.Service.
+func (a *App) RejectPage(ctx context.Context, topicID knowledge.ID) error {
+	return a.svc.RejectPage(ctx, topicID)
+}
+
+// AcceptGroup passes the call to knowledge.Service: accepts every block from
+// one AI batch, identified by its group id.
+func (a *App) AcceptGroup(ctx context.Context, groupID knowledge.ID) error {
+	return a.svc.AcceptGroup(ctx, groupID)
+}
+
+// BlockHistory passes the call to knowledge.Service: the block's revisions,
+// newest first.
+func (a *App) BlockHistory(ctx context.Context, id knowledge.ID) ([]knowledge.Revision, error) {
+	return a.svc.BlockHistory(ctx, id)
+}
+
+// DeleteRevision passes the call to knowledge.Service.
+func (a *App) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
+	return a.svc.DeleteRevision(ctx, blockID, revID)
+}
+
+// AcceptEdge passes the call to knowledge.Service.
+func (a *App) AcceptEdge(ctx context.Context, from, to knowledge.ID, rel knowledge.Relation) error {
+	return a.svc.AcceptEdge(ctx, from, to, rel)
+}
+
+// RejectEdge passes the call to knowledge.Service.
+func (a *App) RejectEdge(ctx context.Context, from, to knowledge.ID, rel knowledge.Relation) error {
+	return a.svc.RejectEdge(ctx, from, to, rel)
 }
 
 // Settings passes the call to settings.Manager: the effective provider
