@@ -7,6 +7,7 @@ import {
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
+import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
 // you-type is not a backend call per keystroke. Mirrors the search store.
@@ -14,8 +15,8 @@ const linkQueryDebounceMs = 200;
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
 // flows from one command field. Expansion (no target) and restructuring (a
-// targeted block) both queue a proposal for review — never a direct write —
-// then the base is re-read.
+// targeted block) both write directly — every touched block lands flagged
+// unreviewed, review is retroactive — then the base is re-read.
 //
 // It lives at module level so the view can unmount on a tab switch and come
 // back to the same place: the fold state, the targeted block, a half-typed
@@ -34,6 +35,12 @@ class BaseStore {
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
 	collapsed = new SvelteSet<string>();
+
+	// ghosts holds the ids of blocks with an unreviewed pending deletion:
+	// gone from the live blocks table but merged back into the forest (see
+	// reload) so the tree can render them struck through in place, pending
+	// Accept (drop for good) or Reject (restore).
+	ghosts = new SvelteSet<string>();
 
 	// Inline block editing: the owner's own edits apply straight to the base,
 	// bypassing the review queue (review guards against AI, not the owner).
@@ -80,14 +87,54 @@ class BaseStore {
 		});
 	}
 
-	// reload reads every topic root and its full subtree, rebuilding the forest.
+	// reload reads every topic root and its full subtree, rebuilding the
+	// forest, and merges in any pending deletion as a ghost row so it renders
+	// in place rather than vanishing before it is reviewed.
 	async reload(): Promise<void> {
 		const topics = (await App.TopicMap()) ?? [];
 		const roots = topics.filter((b) => b.ParentID === "");
+
+		// Ghosts: a pending delete drops the block from GetSubtree, so it is
+		// reconstructed from its unreviewed head revision and grouped by the
+		// topic it belongs to, ready to splice into that topic's block list
+		// before buildTree.
+		await changes.refresh();
+		this.ghosts.clear();
+		const ghostsByTopic = new Map<string, Block[]>();
+		for (const u of changes.blocks) {
+			if (!u.Head.Deleted) {
+				continue;
+			}
+			this.ghosts.add(u.Head.BlockID);
+			const ghost: Block = {
+				ID: u.Head.BlockID,
+				ParentID: u.Head.ParentID,
+				Position: u.Head.Position,
+				Content: u.Head.Content,
+				Meta: {},
+				CreatedAt: "",
+				UpdatedAt: "",
+				Unreviewed: true,
+			};
+			const list = ghostsByTopic.get(u.TopicID) ?? [];
+			list.push(ghost);
+			ghostsByTopic.set(u.TopicID, list);
+		}
+
 		const trees: TreeNodeData[] = [];
 		for (const r of roots) {
 			const blocks = (await App.GetSubtree(r.ID)) ?? [];
-			const tree = buildTree(blocks);
+			const extra = ghostsByTopic.get(r.ID) ?? [];
+			ghostsByTopic.delete(r.ID);
+			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+			if (tree) {
+				trees.push(tree);
+			}
+		}
+		// Whatever is left is a ghost topic root itself: its whole page was
+		// deleted, so it has no live subtree to attach to and forms its own tree.
+		for (const list of ghostsByTopic.values()) {
+			const tree = buildTree(list);
 			if (tree) {
 				trees.push(tree);
 			}
@@ -155,33 +202,34 @@ class BaseStore {
 
 	// askAI routes the one command field to the matching AI flow: a new-topic
 	// expansion when nothing is targeted, a structure edit on the targeted
-	// block/page otherwise. Both return a proposal that lands in the review
-	// queue, never a direct write. Reports whether one was queued, so the
-	// caller can hand focus to the queue.
-	async askAI(): Promise<boolean> {
+	// block/page otherwise. Both write directly — every touched block lands
+	// flagged unreviewed rather than queued as a proposal — so the base is
+	// simply re-read afterwards; the view never switches tabs.
+	async askAI(): Promise<void> {
 		const text = this.command.trim();
-		// Locked mid inline-edit like every other tree action: queueing moves
-		// focus off this view, so submitting here would silently drop an open
-		// edit.
+		// Locked mid inline-edit like every other tree action: reload moves the
+		// forest under an open editor, so submitting here would silently drop
+		// an open edit.
 		if (text === "" || this.busy || this.editingID !== null) {
-			return false;
+			return;
 		}
 		this.busy = true;
 		this.error = "";
 		try {
 			const scope = this.scopeID;
 			this.status = scope === null ? `expanding "${text}"…` : "asking the AI to restructure…";
-			const proposal = scope === null ? await App.ExpandTopic(text, "") : await App.ProposeEdit(scope, text);
-			const ops = (proposal.Ops ?? []).length;
-			this.status =
-				scope === null ? `queued "${text}" for review (${ops} ops)` : `queued the restructure for review (${ops} ops)`;
+			if (scope === null) {
+				await App.ExpandTopic(text, "");
+			} else {
+				await App.EditWithAI(scope, text);
+			}
 			this.command = "";
 			this.clearScope();
-			return true;
+			await this.reload();
+			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
 			this.error = callError(err).message;
 			this.status = "";
-			return false;
 		} finally {
 			this.busy = false;
 		}
@@ -214,6 +262,87 @@ class BaseStore {
 			await this.reload();
 			this.status = "saved edit";
 			this.cancelEdit();
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// accept marks a block's pending revisions reviewed: a live block keeps its
+	// new content, a ghost's tombstone becomes final and it drops out of the
+	// tree for good.
+	async accept(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.AcceptBlock(id);
+			await this.reload();
+			this.status = "accepted";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// reject rolls a block back to its last reviewed state: a live block's AI
+	// edit is undone (an AI-added block disappears entirely), a ghost's
+	// pending deletion is undone and the block is restored.
+	async reject(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RejectBlock(id);
+			await this.reload();
+			this.status = "rejected";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// acceptPage marks every pending revision under a topic reviewed in one step.
+	async acceptPage(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.AcceptPage(id);
+			await this.reload();
+			this.status = "accepted page";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// rejectPage rolls every pending block under a topic back to its last
+	// reviewed state in one step.
+	async rejectPage(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RejectPage(id);
+			await this.reload();
+			this.status = "rejected page";
 		} catch (err: unknown) {
 			this.error = callError(err).message;
 			this.status = "";

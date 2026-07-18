@@ -3,7 +3,7 @@
 	import BlockLinks from "./BlockLinks.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import TreeNode from "./TreeNode.svelte";
-	import type { TreeNodeData } from "./tree";
+	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	// One row of the base tree, recursing into its children. All state and
 	// actions come from the base store; the node is the only input.
@@ -13,6 +13,14 @@
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
 	const linksOpen = $derived(base.openLinks.has(node.block.ID));
+	// unreviewed marks a block carrying its own pending revision; ghost is the
+	// subset that is also a pending deletion (merged into the forest by
+	// base.svelte.ts's reload — see base.ghosts). A topic root additionally
+	// gets a page-wide Accept all / Reject all when anything under it is dirty.
+	const unreviewed = $derived(node.block.Unreviewed);
+	const ghost = $derived(base.ghosts.has(node.block.ID));
+	const topicRoot = $derived(node.block.ParentID === "");
+	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
 
 	// Scroll this row into view and flash it when a search jump targets it. The
 	// effect keys on highlightNonce so a repeat jump to the same block re-fires;
@@ -34,7 +42,7 @@
 </script>
 
 <li>
-	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash>
+	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash class:unreviewed class:ghost>
 		<!-- Toggles are locked while an edit is open: collapsing an ancestor would
 		     unmount the editor while editingID lingers, silently dead-ending every
 		     other block (startEdit no-ops when a block is already being edited). -->
@@ -53,7 +61,11 @@
 			<span class="toggle leaf" aria-hidden="true">·</span>
 		{/if}
 
-		{#if editing}
+		{#if ghost}
+			<!-- A pending deletion: struck through, no edit/target/links affordances —
+			     there is nothing left to edit or link until it is restored. -->
+			<span class="content ghost-content"><code><s>{node.block.Content}</s></code></span>
+		{:else if editing}
 			<InlineEditor
 				bind:value={base.editText}
 				busy={base.busy}
@@ -92,6 +104,48 @@
 				onclick={() => base.toggleLinks(node.block.ID)}
 			>
 				∞
+			</button>
+		{/if}
+
+		{#if unreviewed}
+			<button
+				type="button"
+				class="accept"
+				title="accept this change"
+				disabled={base.busy}
+				onclick={() => base.accept(node.block.ID)}
+			>
+				✓
+			</button>
+			<button
+				type="button"
+				class="reject"
+				title={ghost ? "restore this block" : "reject: revert to the last reviewed version"}
+				disabled={base.busy}
+				onclick={() => base.reject(node.block.ID)}
+			>
+				✗
+			</button>
+		{/if}
+
+		{#if pageDirty}
+			<button
+				type="button"
+				class="accept-page"
+				title="accept every unreviewed change on this page"
+				disabled={base.busy}
+				onclick={() => base.acceptPage(node.block.ID)}
+			>
+				Accept all
+			</button>
+			<button
+				type="button"
+				class="reject-page"
+				title="reject every unreviewed change on this page"
+				disabled={base.busy}
+				onclick={() => base.rejectPage(node.block.ID)}
+			>
+				Reject all
 			</button>
 		{/if}
 	</div>
@@ -209,5 +263,48 @@
 	}
 	.links-toggle:hover:not(:disabled) {
 		opacity: 1;
+	}
+	/* Unreviewed rows get a standing orange rail — unlike .target/.links-toggle
+	   this is not a hover affordance, it is a status that must read at a glance
+	   across the whole tree. A ghost (pending delete) additionally dims, since
+	   it is on its way out pending Reject. */
+	.row.unreviewed {
+		padding-left: 0.3rem;
+		border-left: 2px solid rgba(255, 165, 0, 0.8);
+	}
+	.row.ghost {
+		opacity: 0.55;
+	}
+	.ghost-content {
+		flex: 1;
+		padding: 0.1rem 0.3rem;
+	}
+	.ghost-content code {
+		white-space: pre-wrap;
+	}
+	/* accept/reject are a per-row status action, not a hover affordance like
+	   .target: always visible while a block is unreviewed, so the decision is
+	   never hidden behind a hover the reader has to discover. */
+	.accept,
+	.reject,
+	.accept-page,
+	.reject-page {
+		flex: none;
+		border: none;
+		background: none;
+		padding: 0 0.3rem;
+		cursor: pointer;
+		color: inherit;
+		opacity: 0.75;
+	}
+	.accept:hover:not(:disabled),
+	.reject:hover:not(:disabled),
+	.accept-page:hover:not(:disabled),
+	.reject-page:hover:not(:disabled) {
+		opacity: 1;
+	}
+	.accept-page,
+	.reject-page {
+		font-size: 0.8rem;
 	}
 </style>

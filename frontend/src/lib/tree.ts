@@ -42,6 +42,14 @@ export function findBlock(nodes: TreeNodeData[], id: string): Block | null {
 	return null;
 }
 
+// hasUnreviewed reports whether a node or any of its descendants carries an
+// unreviewed revision (including a ghost, which is merged into the forest
+// with Unreviewed set — see base.svelte.ts's reload). Drives the topic root's
+// "Accept all / Reject all" affordance.
+export function hasUnreviewed(node: TreeNodeData): boolean {
+	return node.block.Unreviewed || node.children.some(hasUnreviewed);
+}
+
 // findPath returns the block's ancestor ids, root-first and excluding the block
 // itself, so a jump can un-collapse exactly the rows above the target. The empty
 // slice (a root) is distinct from null (id absent from the forest), which the
