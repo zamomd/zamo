@@ -24,11 +24,10 @@ var codes = []struct {
 	code string
 }{
 	{knowledge.ErrNotFound, "not_found"},
-	{knowledge.ErrStale, "stale"},
 	{knowledge.ErrCycle, "cycle"},
-	{knowledge.ErrNotPending, "not_pending"},
-	{knowledge.ErrInvalidProposal, "invalid_proposal"},
-	{knowledge.ErrEmptyProposal, "empty_proposal"},
+	{knowledge.ErrInvalidOps, "invalid_ops"},
+	{knowledge.ErrEmptyOps, "empty_ops"},
+	{knowledge.ErrInvalidRollback, "invalid_rollback"},
 	{knowledge.ErrInvalidLink, "invalid_link"},
 	{knowledge.ErrBusy, "busy"},
 	{knowledge.ErrLLMUnavailable, "llm_unavailable"},

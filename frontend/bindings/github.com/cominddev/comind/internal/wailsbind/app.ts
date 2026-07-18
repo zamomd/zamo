@@ -19,10 +19,41 @@ import * as knowledge$0 from "../knowledge/models.js";
 import * as settings$0 from "../settings/models.js";
 
 /**
- * ApplyProposal passes the call to knowledge.Service.
+ * AcceptBlock passes the call to knowledge.Service.
  */
-export function ApplyProposal(id: knowledge$0.ID, selected: number[] | null): $CancellablePromise<void> {
-    return $Call.ByID(3093822193, id, selected);
+export function AcceptBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(1970725898, id);
+}
+
+/**
+ * AcceptEdge passes the call to knowledge.Service.
+ */
+export function AcceptEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
+    return $Call.ByID(2114022276, $from, to, rel);
+}
+
+/**
+ * AcceptGroup passes the call to knowledge.Service: accepts every block from
+ * one AI batch, identified by its group id.
+ */
+export function AcceptGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(2954804596, groupID);
+}
+
+/**
+ * AcceptPage passes the call to knowledge.Service: accepts every unreviewed
+ * block under topicID in one step.
+ */
+export function AcceptPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(1412499454, topicID);
+}
+
+/**
+ * BlockHistory passes the call to knowledge.Service: the block's revisions,
+ * newest first.
+ */
+export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Revision[] | null> {
+    return $Call.ByID(1982850262, id);
 }
 
 /**
@@ -42,6 +73,13 @@ export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: 
 }
 
 /**
+ * DeleteRevision passes the call to knowledge.Service.
+ */
+export function DeleteRevision(blockID: knowledge$0.ID, revID: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(3242430375, blockID, revID);
+}
+
+/**
  * EditBlockContent passes the call to knowledge.Service. A manual edit by the
  * owner applies directly, without the review queue.
  */
@@ -50,17 +88,17 @@ export function EditBlockContent(id: knowledge$0.ID, content: string): $Cancella
 }
 
 /**
- * EffectiveSelection previews the apply cascade for the review screen; pure,
- * no storage.
+ * EditWithAI passes the call to knowledge.Service. The frontend supplies the
+ * scope (a block or subtree root) and the user's text command.
  */
-export function EffectiveSelection(ops: knowledge$0.Op[] | null, selected: number[] | null): $CancellablePromise<number[] | null> {
-    return $Call.ByID(4086196224, ops, selected);
+export function EditWithAI(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Applied> {
+    return $Call.ByID(686107899, scope, instruction);
 }
 
 /**
  * ExpandTopic passes the call to knowledge.Service.
  */
-export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Proposal> {
+export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Applied> {
     return $Call.ByID(738254684, topic, hint);
 }
 
@@ -88,25 +126,24 @@ export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
- * PendingProposals passes the call to knowledge.Service: the review queue.
+ * RejectBlock passes the call to knowledge.Service.
  */
-export function PendingProposals(): $CancellablePromise<knowledge$0.Proposal[] | null> {
-    return $Call.ByID(3915205231);
+export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(2790479111, id);
 }
 
 /**
- * ProposeEdit passes the call to knowledge.Service. The frontend supplies the
- * scope (a block or subtree root) and the user's text command.
+ * RejectEdge passes the call to knowledge.Service.
  */
-export function ProposeEdit(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Proposal> {
-    return $Call.ByID(3160651725, scope, instruction);
+export function RejectEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
+    return $Call.ByID(1953244827, $from, to, rel);
 }
 
 /**
- * RejectProposal passes the call to knowledge.Service.
+ * RejectPage passes the call to knowledge.Service.
  */
-export function RejectProposal(id: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(4105028376, id);
+export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(370056809, topicID);
 }
 
 /**
@@ -114,14 +151,6 @@ export function RejectProposal(id: knowledge$0.ID): $CancellablePromise<void> {
  */
 export function RemoveLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
     return $Call.ByID(583003149, $from, to, relation);
-}
-
-/**
- * ReviewProposal passes the call to knowledge.Service: a pending proposal
- * annotated with stale flags and current content for the review screen.
- */
-export function ReviewProposal(id: knowledge$0.ID): $CancellablePromise<knowledge$0.ProposalReview> {
-    return $Call.ByID(3740461967, id);
 }
 
 /**
@@ -154,4 +183,12 @@ export function Settings(): $CancellablePromise<settings$0.View> {
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(2904437206);
+}
+
+/**
+ * Unreviewed passes the call to knowledge.Service: the AI-authored blocks and
+ * edges still awaiting a human decision.
+ */
+export function Unreviewed(): $CancellablePromise<knowledge$0.UnreviewedChanges> {
+    return $Call.ByID(1571825863);
 }

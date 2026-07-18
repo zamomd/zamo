@@ -270,7 +270,8 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 	repo := &fakeRepo{applyErr: boom}
 	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
-	_, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}, []Op{addOp("t1", "", "A")})
+	meta := WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}
+	_, err := svc.ApplyOps(t.Context(), meta, []Op{addOp("t1", "", "A")})
 	if !errors.Is(err, boom) {
 		t.Errorf("error = %v, want the storage error", err)
 	}
@@ -281,7 +282,8 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
-	_, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}, []Op{{Kind: "explode"}})
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}
+	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: "explode"}})
 	if !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
@@ -392,7 +394,9 @@ func TestExpandTopicAppliesDirectly(t *testing.T) {
 	if llm.gotTopic != "Go contexts" || llm.gotHint != "cancellation" {
 		t.Errorf("LLM asked for (%q, %q), want (Go contexts, cancellation)", llm.gotTopic, llm.gotHint)
 	}
-	if repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand || repo.applyMeta.Title != "Go contexts" {
+	badMeta := repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand ||
+		repo.applyMeta.Title != "Go contexts"
+	if badMeta {
 		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
 	}
 	if got.GroupID == "" {
@@ -457,8 +461,10 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 	if hist, err := svc.BlockHistory(t.Context(), "B1"); err != nil || len(hist) != 1 {
 		t.Errorf("BlockHistory = %+v, %v, want the repo's revisions", hist, err)
 	}
-	if err := svc.DeleteRevision(t.Context(), "B1", "R1"); err != nil || repo.deletedBlockID != "B1" || repo.deletedRevID != "R1" {
-		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)", err, repo.deletedBlockID, repo.deletedRevID)
+	err := svc.DeleteRevision(t.Context(), "B1", "R1")
+	if err != nil || repo.deletedBlockID != "B1" || repo.deletedRevID != "R1" {
+		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)",
+			err, repo.deletedBlockID, repo.deletedRevID)
 	}
 	if err := svc.AcceptEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
 		repo.markedEdgeReviewed != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
