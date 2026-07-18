@@ -39,14 +39,12 @@ export function callError(err: unknown): CallError {
 // be shown directly; anything unmapped, including "internal", gets a generic
 // line rather than leaking that text.
 const readable: Record<string, string> = {
-	not_found: "That block or proposal no longer exists — reload and try again.",
-	stale: "The base changed since this was loaded. Reload and try again.",
+	not_found: "That block no longer exists — reload and try again.",
 	cycle: "That move would put a block inside its own subtree.",
-	not_pending: "This proposal was already decided.",
-	invalid_proposal: "That proposal is malformed and can't be applied.",
-	empty_proposal: "There's nothing to propose.",
+	invalid_ops: "That change is malformed and can't be applied.",
+	empty_ops: "There's nothing to apply.",
+	invalid_rollback: "That version can't be rolled back to.",
 	invalid_link: "That link isn't valid.",
-	referenced: "That block is still linked from elsewhere — remove the links first.",
 	busy: "The database is busy. Try again in a moment.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",
