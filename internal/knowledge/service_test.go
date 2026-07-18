@@ -3,7 +3,6 @@ package knowledge
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -30,18 +29,10 @@ func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []Exp
 	return nil
 }
 
-// fakeRepo is a Repository double: it serves a fixed pending queue and records
-// what ApplyProposal was handed, so tests can assert the assembled op list.
+// fakeRepo is a Repository double: it records what each write method was
+// handed and serves canned reads, so tests can assert the domain drives
+// storage correctly without a database.
 type fakeRepo struct {
-	pending    []Proposal
-	listErr    error
-	applyErr   error
-	appliedID  ID
-	appliedOps []Op
-	applyCalls int
-	saveErr    error
-	saved      *Proposal // the last proposal handed to SaveProposal
-
 	topics     []Block // what GetTopics returns
 	topicsErr  error
 	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
@@ -51,13 +42,60 @@ type fakeRepo struct {
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
 
+	// ApplyOps records the group, meta and (already prepared) ops it was
+	// handed.
+	applyGroupID ID
+	applyMeta    WriteMeta
+	applyOps     []Op
+	applyErr     error
+	applyCalls   int
+
+	revisions    map[ID][]Revision // what ListRevisions serves, by block id
+	revisionsErr error
+
+	deletedBlockID, deletedRevID ID
+	deleteRevisionErr            error
+
+	rejectedBlock  ID
+	rejectBlockErr error
+	rejectedPage   ID
+	rejectPageErr  error
+
+	markedBlockReviewed  ID
+	markBlockReviewedErr error
+	markedGroupReviewed  ID
+	markGroupReviewedErr error
+	markedPageReviewed   ID
+	markPageReviewedErr  error
+
+	unreviewed    UnreviewedChanges
+	unreviewedErr error
+
 	edges     []Edge // what GetEdges returns
 	edgesErr  error
 	gotEdges  ID     // the id GetEdges was asked for
 	added     []Edge // edges handed to AddEdge
+	addedMeta WriteMeta
 	addErr    error
 	removed   []Edge // edges handed to RemoveEdge
 	removeErr error
+
+	markedEdgeReviewed  Edge
+	markEdgeReviewedErr error
+	rejectedEdge        Edge
+	rejectEdgeErr       error
+
+	searchErr error
+}
+
+func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
+
+func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
+	f.gotSubtree = root
+	if f.subtreeErr != nil {
+		return nil, f.subtreeErr
+	}
+	return f.subtrees[root], nil
 }
 
 func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {
@@ -73,16 +111,61 @@ func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) 
 	return out, nil
 }
 
+func (f *fakeRepo) ApplyOps(_ context.Context, groupID ID, meta WriteMeta, ops []Op) error {
+	f.applyCalls++
+	f.applyGroupID, f.applyMeta, f.applyOps = groupID, meta, ops
+	return f.applyErr
+}
+
+func (f *fakeRepo) ListRevisions(_ context.Context, blockID ID) ([]Revision, error) {
+	return f.revisions[blockID], f.revisionsErr
+}
+
+func (f *fakeRepo) DeleteRevision(_ context.Context, blockID, revID ID) error {
+	f.deletedBlockID, f.deletedRevID = blockID, revID
+	return f.deleteRevisionErr
+}
+
+func (f *fakeRepo) RejectBlock(_ context.Context, blockID ID) error {
+	f.rejectedBlock = blockID
+	return f.rejectBlockErr
+}
+
+func (f *fakeRepo) RejectPage(_ context.Context, topicID ID) error {
+	f.rejectedPage = topicID
+	return f.rejectPageErr
+}
+
+func (f *fakeRepo) MarkBlockReviewed(_ context.Context, blockID ID) error {
+	f.markedBlockReviewed = blockID
+	return f.markBlockReviewedErr
+}
+
+func (f *fakeRepo) MarkGroupReviewed(_ context.Context, groupID ID) error {
+	f.markedGroupReviewed = groupID
+	return f.markGroupReviewedErr
+}
+
+func (f *fakeRepo) MarkPageReviewed(_ context.Context, topicID ID) error {
+	f.markedPageReviewed = topicID
+	return f.markPageReviewedErr
+}
+
+func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
+	return f.unreviewed, f.unreviewedErr
+}
+
 func (f *fakeRepo) GetEdges(_ context.Context, id ID) ([]Edge, error) {
 	f.gotEdges = id
 	return f.edges, f.edgesErr
 }
 
-func (f *fakeRepo) AddEdge(_ context.Context, from, to ID, rel Relation) error {
+func (f *fakeRepo) AddEdge(_ context.Context, from, to ID, rel Relation, meta WriteMeta) error {
 	if f.addErr != nil {
 		return f.addErr
 	}
 	f.added = append(f.added, Edge{From: from, To: to, Relation: rel})
+	f.addedMeta = meta
 	return nil
 }
 
@@ -94,30 +177,20 @@ func (f *fakeRepo) RemoveEdge(_ context.Context, from, to ID, rel Relation) erro
 	return nil
 }
 
-func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
-
-func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
-	f.gotSubtree = root
-	if f.subtreeErr != nil {
-		return nil, f.subtreeErr
-	}
-	return f.subtrees[root], nil
+func (f *fakeRepo) MarkEdgeReviewed(_ context.Context, from, to ID, rel Relation) error {
+	f.markedEdgeReviewed = Edge{From: from, To: to, Relation: rel}
+	return f.markEdgeReviewedErr
 }
 
-func (f *fakeRepo) EditBlockContent(context.Context, ID, string) error { return nil }
-func (f *fakeRepo) RejectProposal(context.Context, ID) error           { return nil }
-func (f *fakeRepo) Search(context.Context, string) ([]Block, error)    { return nil, nil }
-
-func (f *fakeRepo) SaveProposal(_ context.Context, p Proposal) error {
-	if f.saveErr != nil {
-		return f.saveErr
-	}
-	f.saved = &p
-	return nil
+func (f *fakeRepo) RejectEdge(_ context.Context, from, to ID, rel Relation) error {
+	f.rejectedEdge = Edge{From: from, To: to, Relation: rel}
+	return f.rejectEdgeErr
 }
 
-// fakeLLM is an LLMClient double: it returns a canned tree (or error) and
-// records the topic/hint it was asked to expand.
+func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
+
+// fakeLLM is an LLMClient double: it returns canned ops (or errors) for
+// tree expansion and edit generation, and records what it was asked.
 type fakeLLM struct {
 	tree              []Op
 	treeErr           error
@@ -143,191 +216,108 @@ func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction str
 
 func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
 
-func (f *fakeRepo) ListProposals(context.Context, Status) ([]Proposal, error) {
-	return f.pending, f.listErr
-}
-
-func (f *fakeRepo) ApplyProposal(_ context.Context, id ID, ops []Op) error {
-	f.applyCalls++
-	f.appliedID, f.appliedOps = id, ops
-	return f.applyErr
-}
-
-func TestServiceSubmitProposalQueuesPending(t *testing.T) {
+func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 	repo := &fakeRepo{}
-	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(nil, repo, seqIDs(), nil, clockAt(at))
-
-	ops := []Op{addOp("t1", "", "A")}
-	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "My topic", ops)
-	if err != nil {
-		t.Fatalf("SubmitProposal: %v", err)
-	}
-	// A fresh pending proposal, stamped with a generated id and the clock.
-	if got.Status != StatusPending {
-		t.Errorf("status = %q, want pending", got.Status)
-	}
-	if got.ID != "U1" {
-		t.Errorf("id = %q, want a generated id U1", got.ID)
-	}
-	if got.Source != SourceMCP || got.Title != "My topic" || len(got.Ops) != 1 {
-		t.Errorf("proposal fields wrong: %+v", got)
-	}
-	if !got.CreatedAt.Equal(at) {
-		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, at)
-	}
-	if got.DecidedAt != (time.Time{}) {
-		t.Errorf("DecidedAt = %v, want zero for a pending proposal", got.DecidedAt)
-	}
-	// It was persisted, exactly as returned (not just the id).
-	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
-		t.Errorf("persisted %+v, want the returned proposal %+v", repo.saved, got)
-	}
-}
-
-func TestServiceSubmitProposalPropagatesSaveError(t *testing.T) {
-	sentinel := errors.New("disk full")
-	repo := &fakeRepo{saveErr: sentinel}
-	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
-
-	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "t", []Op{addOp("t1", "", "A")})
-	if !errors.Is(err, sentinel) {
-		t.Errorf("error = %v, want the storage error", err)
-	}
-	if !reflect.DeepEqual(got, Proposal{}) {
-		t.Errorf("got %+v, want a zero proposal when the save fails", got)
-	}
-}
-
-func TestServiceSubmitProposalRejectsEmptyOps(t *testing.T) {
-	// A proposal that changes nothing is not a proposal; it must be refused and
-	// never reach the queue.
-	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
-
-	got, err := svc.SubmitProposal(context.Background(), SourceMCP, "empty", nil)
-	if !errors.Is(err, ErrEmptyProposal) {
-		t.Errorf("error = %v, want ErrEmptyProposal", err)
-	}
-	if !reflect.DeepEqual(got, Proposal{}) {
-		t.Errorf("got %+v, want a zero proposal on error", got)
-	}
-	if repo.saved != nil {
-		t.Errorf("an empty proposal was queued: %+v", repo.saved)
-	}
-}
-
-func TestServiceExpandTopicQueuesProposal(t *testing.T) {
-	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
-	repo := &fakeRepo{}
-	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(at))
-
-	got, err := svc.ExpandTopic(context.Background(), "Go contexts", "cancellation")
-	if err != nil {
-		t.Fatalf("ExpandTopic: %v", err)
-	}
-	// The topic and hint reach the model.
-	if llm.gotTopic != "Go contexts" || llm.gotHint != "cancellation" {
-		t.Errorf("LLM asked for (%q, %q), want (Go contexts, cancellation)", llm.gotTopic, llm.gotHint)
-	}
-	// The expansion is queued as a pending gui_expand proposal titled by the topic.
-	if got.Status != StatusPending || got.Source != SourceGUIExpand || got.Title != "Go contexts" {
-		t.Errorf("proposal = %+v, want pending gui_expand titled 'Go contexts'", got)
-	}
-	if len(got.Ops) != 1 {
-		t.Errorf("ops = %+v, want the tree from the model", got.Ops)
-	}
-	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
-		t.Errorf("expansion persisted %+v, want the returned proposal %+v", repo.saved, got)
-	}
-}
-
-func TestServiceExpandTopicSurfacesLLMError(t *testing.T) {
-	// When the model is unavailable, the error surfaces as its domain sentinel and
-	// nothing is queued.
-	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
-
-	_, err := svc.ExpandTopic(context.Background(), "Go contexts", "")
-	if !errors.Is(err, ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
-	if repo.saved != nil {
-		t.Errorf("a proposal was queued despite the LLM failure: %+v", repo.saved)
-	}
-}
-
-func TestServiceExpandTopicRejectsEmptyTree(t *testing.T) {
-	// A provider that returns no ops (nil error) must not queue an empty proposal;
-	// the empty-proposal invariant surfaces instead.
-	llm := &fakeLLM{tree: nil}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
-
-	if _, err := svc.ExpandTopic(context.Background(), "Go contexts", ""); !errors.Is(err, ErrEmptyProposal) {
-		t.Errorf("error = %v, want ErrEmptyProposal", err)
-	}
-	if repo.saved != nil {
-		t.Errorf("an empty expansion was queued: %+v", repo.saved)
-	}
-}
-
-func TestServiceApplyProposalAssemblesSelection(t *testing.T) {
-	repo := &fakeRepo{pending: []Proposal{{
-		ID:     "P1",
-		Status: StatusPending,
-		Ops: []Op{
-			addOp("t1", "", "# Root"),
-			addOp("t2", "t1", "Child"),
-			addOp("t3", "t2", "Grandchild"),
-		},
-	}}}
 	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
-	// Accept the root and child but not the grandchild.
-	if err := svc.ApplyProposal(context.Background(), "P1", []int{0, 1}); err != nil {
-		t.Fatalf("ApplyProposal: %v", err)
+	ops := []Op{
+		addOp("child", "root", "Child"),
+		addOp("root", "", "Root"),
 	}
-	if repo.appliedID != "P1" {
-		t.Errorf("applied id = %q, want P1", repo.appliedID)
+	got, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}, ops)
+	if err != nil {
+		t.Fatalf("ApplyOps: %v", err)
 	}
-	if len(repo.appliedOps) != 2 {
-		t.Fatalf("applied %d ops, want 2 (grandchild deselected): %+v", len(repo.appliedOps), repo.appliedOps)
+	if got.GroupID == "" {
+		t.Errorf("GroupID is empty, want a generated group id")
 	}
-	// Storage receives resolved ids, never temp ids.
-	if got := repo.appliedOps[0]; got.TempID != "" || string(got.BlockID) != "U1" || got.Parent != "" {
-		t.Errorf("root op = %+v, want resolved BlockID U1 at the root", got)
+	if len(got.IDs) != 2 || got.IDs["root"] == "" || got.IDs["child"] == "" {
+		t.Errorf("IDs = %+v, want every temp id mapped to a real id", got.IDs)
 	}
-	if got := repo.appliedOps[1]; got.Parent != "U1" {
-		t.Errorf("child parent = %q, want the resolved root id U1", got.Parent)
+	if repo.applyGroupID != got.GroupID {
+		t.Errorf("repo saw group %q, want the returned %q", repo.applyGroupID, got.GroupID)
+	}
+	// Storage receives resolved, parent-first ops: the root add before the
+	// child that references it.
+	if len(repo.applyOps) != 2 || repo.applyOps[0].Content != "Root" {
+		t.Fatalf("repo ops = %+v, want the root add first (parent-first)", repo.applyOps)
+	}
+	if string(repo.applyOps[0].BlockID) != string(got.IDs["root"]) {
+		t.Errorf("root BlockID = %q, want %q", repo.applyOps[0].BlockID, got.IDs["root"])
+	}
+	if repo.applyOps[1].Parent != string(got.IDs["root"]) {
+		t.Errorf("child parent = %q, want the resolved root id", repo.applyOps[1].Parent)
 	}
 }
 
-func TestServiceApplyProposalNotPending(t *testing.T) {
-	repo := &fakeRepo{pending: nil} // the id is not in the review queue
+func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
+	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil, nil)
 
-	err := svc.ApplyProposal(context.Background(), "GONE", []int{0})
-	if !errors.Is(err, ErrNotPending) {
-		t.Errorf("error = %v, want ErrNotPending", err)
+	_, err := svc.ApplyOps(t.Context(),
+		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "   "},
+		[]Op{addOp("t1", "", "A")})
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
 	if repo.applyCalls != 0 {
-		t.Errorf("storage ApplyProposal called %d times, want 0 for a non-pending id", repo.applyCalls)
+		t.Errorf("storage ApplyOps called %d times, want 0 for an empty title", repo.applyCalls)
 	}
 }
 
-func TestServiceProposeEditQueuesProposal(t *testing.T) {
+func TestApplyOpsPropagatesRepoError(t *testing.T) {
+	boom := errors.New("disk full")
+	repo := &fakeRepo{applyErr: boom}
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
+
+	_, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}, []Op{addOp("t1", "", "A")})
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage error", err)
+	}
+}
+
+func TestApplyOpsRejectsMalformedOps(t *testing.T) {
+	// Malformed input from an untrusted source (MCP) must never reach storage.
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
+
+	_, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}, []Op{{Kind: "explode"}})
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a malformed batch reached storage: %d calls", repo.applyCalls)
+	}
+}
+
+func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Source != SourceGUIManual {
+		t.Errorf("meta = %+v, want owner/gui_manual", repo.applyMeta)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want exactly one edit", repo.applyOps)
+	}
+	op := repo.applyOps[0]
+	if op.Kind != OpEdit || op.BlockID != "01A" || op.Content != "new text" {
+		t.Errorf("op = %+v, want an edit of 01A with the new content", op)
+	}
+}
+
+func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	scope := []Block{{ID: "01A", Content: "old text"}}
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
-	at := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(at))
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
 
-	got, err := svc.ProposeEdit(context.Background(), "01A", "revise this block")
+	got, err := svc.EditWithAI(t.Context(), "01A", "revise this block")
 	if err != nil {
-		t.Fatalf("ProposeEdit: %v", err)
+		t.Fatalf("EditWithAI: %v", err)
 	}
 	// The scope is read from storage and handed to the model with the command.
 	if repo.gotSubtree != "01A" {
@@ -336,38 +326,38 @@ func TestServiceProposeEditQueuesProposal(t *testing.T) {
 	if llm.gotInstruction != "revise this block" || len(llm.gotScope) != 1 || llm.gotScope[0].ID != "01A" {
 		t.Errorf("model got scope %+v / instruction %q, want the scope and command", llm.gotScope, llm.gotInstruction)
 	}
-	// The edit is queued as a pending gui_edit proposal carrying the model's ops.
-	if got.Status != StatusPending || got.Source != SourceGUIEdit {
-		t.Errorf("proposal = %+v, want pending gui_edit", got)
+	// Applied directly (not queued): an AI write, awaiting review.
+	if repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIEdit {
+		t.Errorf("meta = %+v, want ai/gui_edit", repo.applyMeta)
 	}
-	if len(got.Ops) != 1 || got.Ops[0].Kind != OpEdit {
-		t.Errorf("ops = %+v, want the edit from the model", got.Ops)
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpEdit {
+		t.Errorf("ops = %+v, want the edit from the model", repo.applyOps)
 	}
-	if repo.saved == nil || !reflect.DeepEqual(*repo.saved, got) {
-		t.Errorf("persisted %+v, want the returned proposal %+v", repo.saved, got)
+	if got.GroupID == "" {
+		t.Errorf("GroupID is empty, want a generated group id")
 	}
 }
 
-func TestServiceProposeEditSurfacesLLMError(t *testing.T) {
+func TestEditWithAISurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{editErr: ErrLLMUnavailable}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
 
-	if _, err := svc.ProposeEdit(context.Background(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
+	if _, err := svc.EditWithAI(t.Context(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
 	}
-	if repo.saved != nil {
-		t.Errorf("a proposal was queued despite the LLM failure: %+v", repo.saved)
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the LLM failure")
 	}
 }
 
-func TestServiceProposeEditPropagatesReadError(t *testing.T) {
+func TestEditWithAIPropagatesReadError(t *testing.T) {
 	boom := errors.New("db down")
 	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
 	repo := &fakeRepo{subtreeErr: boom}
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
 
-	_, err := svc.ProposeEdit(context.Background(), "01A", "do a thing")
+	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
 	if !errors.Is(err, boom) {
 		t.Errorf("error = %v, want the storage read error", err)
 	}
@@ -376,18 +366,107 @@ func TestServiceProposeEditPropagatesReadError(t *testing.T) {
 	}
 }
 
-func TestServiceProposeEditRejectsEmptyEdit(t *testing.T) {
-	// A command the model turns into no operations must not queue an empty
-	// proposal; the empty-proposal invariant surfaces instead.
+func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
+	// A command the model turns into no operations must not be applied.
 	llm := &fakeLLM{editOps: nil}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, clockAt(time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)))
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
 
-	if _, err := svc.ProposeEdit(context.Background(), "01A", "do nothing"); !errors.Is(err, ErrEmptyProposal) {
-		t.Errorf("error = %v, want ErrEmptyProposal", err)
+	if _, err := svc.EditWithAI(t.Context(), "01A", "do nothing"); !errors.Is(err, ErrEmptyOps) {
+		t.Errorf("error = %v, want ErrEmptyOps", err)
 	}
-	if repo.saved != nil {
-		t.Errorf("an empty edit was queued: %+v", repo.saved)
+	if repo.applyCalls != 0 {
+		t.Errorf("an empty edit was applied: %d calls", repo.applyCalls)
+	}
+}
+
+func TestExpandTopicAppliesDirectly(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
+
+	got, err := svc.ExpandTopic(t.Context(), "Go contexts", "cancellation")
+	if err != nil {
+		t.Fatalf("ExpandTopic: %v", err)
+	}
+	if llm.gotTopic != "Go contexts" || llm.gotHint != "cancellation" {
+		t.Errorf("LLM asked for (%q, %q), want (Go contexts, cancellation)", llm.gotTopic, llm.gotHint)
+	}
+	if repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand || repo.applyMeta.Title != "Go contexts" {
+		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
+	}
+	if got.GroupID == "" {
+		t.Errorf("GroupID is empty, want a generated group id")
+	}
+}
+
+func TestExpandTopicSurfacesLLMError(t *testing.T) {
+	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
+
+	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
+	if !errors.Is(err, ErrLLMUnavailable) {
+		t.Errorf("error = %v, want ErrLLMUnavailable", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the LLM failure")
+	}
+}
+
+func TestExpandTopicRejectsEmptyTree(t *testing.T) {
+	// A provider that returns no ops (nil error) must not be applied as an
+	// empty batch; the empty-ops invariant surfaces instead.
+	llm := &fakeLLM{tree: nil}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), nil, nil)
+
+	if _, err := svc.ExpandTopic(t.Context(), "Go contexts", ""); !errors.Is(err, ErrEmptyOps) {
+		t.Errorf("error = %v, want ErrEmptyOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("an empty expansion was applied")
+	}
+}
+
+func TestServiceReviewPassThroughs(t *testing.T) {
+	// Every review method is a direct pass-through to Repository; assert each
+	// reaches its storage counterpart with the right arguments.
+	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
+	svc := NewService(nil, repo, seqIDs(), nil, nil)
+
+	if got, err := svc.Unreviewed(t.Context()); err != nil || len(got.Blocks) != 1 {
+		t.Errorf("Unreviewed = %+v, %v, want the repo's changes", got, err)
+	}
+	if err := svc.AcceptBlock(t.Context(), "B1"); err != nil || repo.markedBlockReviewed != "B1" {
+		t.Errorf("AcceptBlock did not reach MarkBlockReviewed(B1): err=%v got=%q", err, repo.markedBlockReviewed)
+	}
+	if err := svc.AcceptGroup(t.Context(), "G1"); err != nil || repo.markedGroupReviewed != "G1" {
+		t.Errorf("AcceptGroup did not reach MarkGroupReviewed(G1): err=%v got=%q", err, repo.markedGroupReviewed)
+	}
+	if err := svc.AcceptPage(t.Context(), "T1"); err != nil || repo.markedPageReviewed != "T1" {
+		t.Errorf("AcceptPage did not reach MarkPageReviewed(T1): err=%v got=%q", err, repo.markedPageReviewed)
+	}
+	if err := svc.RejectBlock(t.Context(), "B1"); err != nil || repo.rejectedBlock != "B1" {
+		t.Errorf("RejectBlock did not reach RejectBlock(B1): err=%v got=%q", err, repo.rejectedBlock)
+	}
+	if err := svc.RejectPage(t.Context(), "T1"); err != nil || repo.rejectedPage != "T1" {
+		t.Errorf("RejectPage did not reach RejectPage(T1): err=%v got=%q", err, repo.rejectedPage)
+	}
+	repo.revisions = map[ID][]Revision{"B1": {{ID: "R1", BlockID: "B1"}}}
+	if hist, err := svc.BlockHistory(t.Context(), "B1"); err != nil || len(hist) != 1 {
+		t.Errorf("BlockHistory = %+v, %v, want the repo's revisions", hist, err)
+	}
+	if err := svc.DeleteRevision(t.Context(), "B1", "R1"); err != nil || repo.deletedBlockID != "B1" || repo.deletedRevID != "R1" {
+		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)", err, repo.deletedBlockID, repo.deletedRevID)
+	}
+	if err := svc.AcceptEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
+		repo.markedEdgeReviewed != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
+		t.Errorf("AcceptEdge did not reach MarkEdgeReviewed: err=%v got=%+v", err, repo.markedEdgeReviewed)
+	}
+	if err := svc.RejectEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
+		repo.rejectedEdge != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
+		t.Errorf("RejectEdge did not reach RejectEdge: err=%v got=%+v", err, repo.rejectedEdge)
 	}
 }
 
