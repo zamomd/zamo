@@ -130,6 +130,7 @@
 				type="button"
 				class="accept"
 				title="accept this change"
+				aria-label="accept this change"
 				disabled={base.busy}
 				onclick={() => base.accept(node.block.ID)}
 			>
@@ -139,6 +140,7 @@
 				type="button"
 				class="reject"
 				title={ghost ? "restore this block" : "reject: revert to the last reviewed version"}
+				aria-label={ghost ? "restore this block" : "reject: revert to the last reviewed version"}
 				disabled={base.busy}
 				onclick={() => base.reject(node.block.ID)}
 			>

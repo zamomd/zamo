@@ -28,6 +28,49 @@
 		return [...map.entries()];
 	});
 
+	// Batches: one row per distinct ApplyOps group across every unreviewed
+	// block, regardless of which page it lands on — the compact "accept the
+	// whole AI turn at once" affordance AcceptGroup exposes but nothing in
+	// the UI called yet. A block with no GroupID (should not happen for an
+	// unreviewed change, but the field is technically optional) is skipped
+	// defensively rather than grouped under an empty-string batch.
+	const batches = $derived.by(() => {
+		const map = new Map<ID, { title: string; count: number }>();
+		for (const b of changes.blocks) {
+			const groupID = b.Head.GroupID;
+			if (!groupID) continue;
+			const entry = map.get(groupID);
+			if (entry) {
+				entry.count++;
+			} else {
+				map.set(groupID, { title: b.GroupTitle, count: 1 });
+			}
+		}
+		return [...map.entries()];
+	});
+
+	// acceptBatch mirrors base's accept/reject discipline (busy flag, error
+	// reset, status on success) even though the call itself is edge-shaped
+	// like acceptEdge/rejectEdge above: it touches both blocks and edges of
+	// the batch, so both the tree (base.reload) and the flat list
+	// (changes.refresh) need to catch up.
+	async function acceptBatch(groupID: ID): Promise<void> {
+		if (base.busy) return;
+		base.busy = true;
+		base.error = "";
+		try {
+			await App.AcceptGroup(groupID);
+			await base.reload();
+			await changes.refresh();
+			base.status = "accepted batch";
+		} catch (err: unknown) {
+			base.error = callError(err).message;
+			base.status = "";
+		} finally {
+			base.busy = false;
+		}
+	}
+
 	// The topic's own content is not part of UnreviewedChanges (only the
 	// touched blocks are); the tree already has it, including a ghost topic
 	// root's — reload merges those in too (see base.svelte.ts).
@@ -82,6 +125,29 @@
 	{#if changes.count === 0}
 		<p>(nothing awaiting review)</p>
 	{:else}
+		{#if batches.length > 0}
+			<section class="group">
+				<h2>Batches</h2>
+				<ul>
+					{#each batches as [groupID, info] (groupID)}
+						<li class="row">
+							<code class="snippet">{info.title || groupID}</code>
+							<span class="meta">{info.count} block{info.count === 1 ? "" : "s"}</span>
+							<button
+								type="button"
+								class="accept"
+								title="accept every change in this batch, blocks and links alike"
+								disabled={base.busy}
+								onclick={() => acceptBatch(groupID)}
+							>
+								Accept batch
+							</button>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+
 		{#if groups.length > 0}
 			<div class="blocks">
 				{#each groups as [topicID, blocks] (topicID)}
@@ -95,10 +161,11 @@
 										{b.GroupTitle}
 										{#if b.Head.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
 									</span>
-									<button type="button" onclick={() => onjump(b.Head.BlockID)}>show</button>
+									<button type="button" title="jump to this block in the base" onclick={() => onjump(b.Head.BlockID)}>show</button>
 									<button
 										type="button"
 										class="accept"
+										title="accept this change"
 										disabled={base.busy}
 										onclick={() => base.accept(b.Head.BlockID)}
 									>
@@ -107,6 +174,7 @@
 									<button
 										type="button"
 										class="reject"
+										title={b.Head.Deleted ? "restore this block" : "reject: revert to the last reviewed version"}
 										disabled={base.busy}
 										onclick={() => base.reject(b.Head.BlockID)}
 									>
@@ -130,6 +198,7 @@
 							<button
 								type="button"
 								class="accept"
+								title="accept this link"
 								disabled={edgeBusy.has(edgeKey(e))}
 								onclick={() => acceptEdge(e)}
 							>
@@ -138,6 +207,7 @@
 							<button
 								type="button"
 								class="reject"
+								title="reject and remove this link"
 								disabled={edgeBusy.has(edgeKey(e))}
 								onclick={() => rejectEdge(e)}
 							>
