@@ -48,7 +48,7 @@ func ParseEditOps(raw []byte) ([]knowledge.Op, error) {
 	}
 
 	// Reserve every temp id the model supplied so a generated id for a keyless
-	// add cannot collide with one, which would make the whole proposal unappliable.
+	// add cannot collide with one, which would make the whole batch unappliable.
 	taken := make(map[string]bool)
 	for _, e := range edits {
 		if e.TempID != "" {
@@ -67,7 +67,7 @@ func ParseEditOps(raw []byte) ([]knowledge.Op, error) {
 			continue
 		}
 		op := e.toOp(&seq, taken)
-		// A repeated temp id would make the proposal unappliable; drop the duplicate.
+		// A repeated temp id would make the batch unappliable; drop the duplicate.
 		if op.Kind == knowledge.OpAdd {
 			if emitted[op.TempID] {
 				continue
