@@ -1,5 +1,5 @@
 // Package mcp is an entry point: the MCP server (tools map, search,
-// get_subtree, propose_blocks).
+// get_subtree, write_blocks).
 package mcp
 
 import (
@@ -30,31 +30,26 @@ type LinkReader interface {
 	LinkedBlocks(ctx context.Context, id knowledge.ID) ([]knowledge.LinkedBlock, error)
 }
 
-// ProposalSubmitter puts a proposal into the review queue — the only
-// write path available over MCP.
-type ProposalSubmitter interface {
-	SubmitProposal(
-		ctx context.Context,
-		source knowledge.Source,
-		title string,
-		ops []knowledge.Op,
-	) (knowledge.Proposal, error)
+// Writer applies a write batch directly — the only write path over MCP.
+// Changes land immediately, flagged for the owner's retroactive review.
+type Writer interface {
+	ApplyOps(ctx context.Context, meta knowledge.WriteMeta, ops []knowledge.Op) (knowledge.Applied, error)
 }
 
-// Server exposes the base over MCP: read tools plus proposal submission.
+// Server exposes the base over MCP: read tools plus direct writes.
 type Server struct {
-	search   Searcher
-	tree     TreeReader
-	links    LinkReader
-	proposal ProposalSubmitter
-	version  string
+	search  Searcher
+	tree    TreeReader
+	links   LinkReader
+	writer  Writer
+	version string
 }
 
 // NewServer assembles the server from its four narrow capabilities
 // (in production all four are the same knowledge.Service) and the build
 // version to report in the MCP handshake.
-func NewServer(search Searcher, tree TreeReader, links LinkReader, proposal ProposalSubmitter, version string) *Server {
-	return &Server{search: search, tree: tree, links: links, proposal: proposal, version: version}
+func NewServer(search Searcher, tree TreeReader, links LinkReader, writer Writer, version string) *Server {
+	return &Server{search: search, tree: tree, links: links, writer: writer, version: version}
 }
 
 // Run serves MCP over stdio until the client disconnects or ctx is cancelled.
@@ -68,10 +63,12 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) mcpServer() *mcpsdk.Server {
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: serverName, Version: s.version}, nil)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "propose_blocks",
-		Description: "Submit block operations as a proposal into the review queue — the only " +
-			"write path; nothing reaches the base until the human approves it.",
-	}, s.proposeBlocks)
+		Name: "write_blocks",
+		Description: "Apply block operations directly. Changes are live " +
+			"immediately but every touched block is flagged for the human's " +
+			"review and can be rolled back — write carefully and set " +
+			"rationale on every op.",
+	}, s.writeBlocks)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "search",
 		Description: "Full-text search over block content; returns matching blocks.",
@@ -229,30 +226,36 @@ func (in opInput) toOp() knowledge.Op {
 	}
 }
 
-// proposeInput is the argument schema of the propose_blocks tool.
-type proposeInput struct {
-	Title string    `json:"title" jsonschema:"a short title describing the proposal"`
-	Ops   []opInput `json:"ops" jsonschema:"the block operations to propose (add/edit/move/delete/link)"`
+// writeOutput reports what the batch did: the group tying its revisions
+// together and the real id assigned to every temp id.
+type writeOutput struct {
+	GroupID string            `json:"group_id"`
+	IDs     map[string]string `json:"ids,omitzero"`
 }
 
-// proposeOutput is what propose_blocks returns: the queued proposal's identity.
-type proposeOutput struct {
-	ProposalID string `json:"proposal_id"`
-	Status     string `json:"status"`
+type writeInput struct {
+	Title string    `json:"title" jsonschema:"a short description of this change batch, shown to the reviewer"`
+	Ops   []opInput `json:"ops" jsonschema:"the block operations to apply (add/edit/move/delete/link)"`
 }
 
-// proposeBlocks queues the operations as an mcp-sourced proposal. The source is
-// fixed here: an MCP client never chooses its own provenance.
-func (s *Server) proposeBlocks(
-	ctx context.Context, _ *mcpsdk.CallToolRequest, in proposeInput,
-) (*mcpsdk.CallToolResult, proposeOutput, error) {
+// writeBlocks applies the operations as an mcp-sourced, AI-authored batch. The
+// source and author are fixed here: an MCP client never chooses its own
+// provenance.
+func (s *Server) writeBlocks(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in writeInput,
+) (*mcpsdk.CallToolResult, writeOutput, error) {
 	ops := make([]knowledge.Op, len(in.Ops))
 	for i, o := range in.Ops {
 		ops[i] = o.toOp()
 	}
-	p, err := s.proposal.SubmitProposal(ctx, knowledge.SourceMCP, in.Title, ops)
+	applied, err := s.writer.ApplyOps(ctx,
+		knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: in.Title}, ops)
 	if err != nil {
-		return nil, proposeOutput{}, err
+		return nil, writeOutput{}, err
 	}
-	return nil, proposeOutput{ProposalID: string(p.ID), Status: string(p.Status)}, nil
+	ids := make(map[string]string, len(applied.IDs))
+	for temp, id := range applied.IDs {
+		ids[temp] = string(id)
+	}
+	return nil, writeOutput{GroupID: string(applied.GroupID), IDs: ids}, nil
 }

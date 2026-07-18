@@ -12,7 +12,7 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// fakeBase satisfies Searcher, TreeReader, LinkReader and ProposalSubmitter — the four
+// fakeBase satisfies Searcher, TreeReader, LinkReader and Writer — the four
 // narrow capabilities the server needs — and records what it was asked.
 type fakeBase struct {
 	searchQuery  string
@@ -28,12 +28,11 @@ type fakeBase struct {
 	links    []knowledge.LinkedBlock
 	linksErr error
 
-	subSource   knowledge.Source
-	subTitle    string
-	subOps      []knowledge.Op
-	subCalls    int
-	subProposal knowledge.Proposal
-	subErr      error
+	writeMeta    knowledge.WriteMeta
+	writeOps     []knowledge.Op
+	writeCalls   int
+	writeApplied knowledge.Applied
+	writeErr     error
 }
 
 func (f *fakeBase) Search(_ context.Context, q string) ([]knowledge.Block, error) {
@@ -55,12 +54,12 @@ func (f *fakeBase) LinkedBlocks(_ context.Context, id knowledge.ID) ([]knowledge
 	return f.links, f.linksErr
 }
 
-func (f *fakeBase) SubmitProposal(
-	_ context.Context, source knowledge.Source, title string, ops []knowledge.Op,
-) (knowledge.Proposal, error) {
-	f.subSource, f.subTitle, f.subOps = source, title, ops
-	f.subCalls++
-	return f.subProposal, f.subErr
+func (f *fakeBase) ApplyOps(
+	_ context.Context, meta knowledge.WriteMeta, ops []knowledge.Op,
+) (knowledge.Applied, error) {
+	f.writeMeta, f.writeOps = meta, ops
+	f.writeCalls++
+	return f.writeApplied, f.writeErr
 }
 
 const testVersion = "v-test"
@@ -95,16 +94,20 @@ func TestHandshakeReportsInjectedVersion(t *testing.T) {
 	}
 }
 
-func TestProposeBlocksSubmitsAsMCP(t *testing.T) {
-	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
+func TestWriteBlocksAppliesImmediately(t *testing.T) {
+	fake := &fakeBase{writeApplied: knowledge.Applied{
+		GroupID: "01GRP",
+		IDs:     map[string]knowledge.ID{"t1": "01ROOT", "t2": "01CHILD"},
+	}}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name: "propose_blocks",
+		Name: "write_blocks",
 		Arguments: map[string]any{
 			"title": "Contexts in Go",
 			"ops": []map[string]any{
 				{"op": "add", "temp_id": "t1", "content": "# Contexts in Go"},
+				{"op": "add", "temp_id": "t2", "parent": "t1", "content": "## Cancellation"},
 			},
 		},
 	})
@@ -112,39 +115,52 @@ func TestProposeBlocksSubmitsAsMCP(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("propose_blocks reported a tool error: %+v", res.Content)
+		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
 	}
-	// The write path submits with a fixed mcp source — MCP never picks the source.
-	if fake.subSource != knowledge.SourceMCP {
-		t.Errorf("source = %q, want mcp", fake.subSource)
+	// The write applies immediately with a fixed mcp source and AI authorship —
+	// MCP never picks its own provenance.
+	if fake.writeCalls != 1 {
+		t.Fatalf("ApplyOps called %d times, want 1", fake.writeCalls)
 	}
-	if fake.subTitle != "Contexts in Go" {
-		t.Errorf("title = %q, want the given title", fake.subTitle)
+	if fake.writeMeta.Author != knowledge.AuthorAI {
+		t.Errorf("Author = %q, want ai", fake.writeMeta.Author)
 	}
-	if len(fake.subOps) != 1 || fake.subOps[0].Kind != knowledge.OpAdd || fake.subOps[0].TempID != "t1" {
-		t.Errorf("ops not forwarded intact: %+v", fake.subOps)
+	if fake.writeMeta.Source != knowledge.SourceMCP {
+		t.Errorf("Source = %q, want mcp", fake.writeMeta.Source)
 	}
-	// The queued proposal's identity comes back to the client.
-	var out proposeOutput
+	if fake.writeMeta.Title != "Contexts in Go" {
+		t.Errorf("Title = %q, want the given title", fake.writeMeta.Title)
+	}
+	if len(fake.writeOps) != 2 || fake.writeOps[0].Kind != knowledge.OpAdd || fake.writeOps[0].TempID != "t1" {
+		t.Errorf("ops not forwarded intact: %+v", fake.writeOps)
+	}
+	for _, op := range fake.writeOps {
+		if op.Origin != "mcp" {
+			t.Errorf("Origin = %q, want mcp on every op", op.Origin)
+		}
+	}
+	// The group and the temp->real id map come back to the client.
+	var out writeOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode output: %v", err)
 	}
-	if out.ProposalID != "01PROP" || out.Status != string(knowledge.StatusPending) {
-		t.Errorf("output = %+v, want the pending proposal 01PROP", out)
+	want := writeOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
+	if !reflect.DeepEqual(out, want) {
+		t.Errorf("output = %+v, want %+v", out, want)
 	}
 }
 
-func TestProposeStampsOriginServerSide(t *testing.T) {
+func TestWriteStampsOriginServerSide(t *testing.T) {
 	// Provenance is the server's to assign: the tool schema has no origin field
 	// (a client cannot even supply one), and every forwarded op carries the
 	// fixed mcp marker. The client's Rationale — the "why" the reviewer reads —
 	// is preserved.
-	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
+	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name: "propose_blocks",
+		Name: "write_blocks",
 		Arguments: map[string]any{
 			"title": "Contexts in Go",
 			"ops": []map[string]any{{
@@ -159,29 +175,29 @@ func TestProposeStampsOriginServerSide(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if res.IsError {
-		t.Fatalf("propose_blocks reported a tool error: %+v", res.Content)
+		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
 	}
-	if len(fake.subOps) != 1 {
-		t.Fatalf("ops not forwarded: %+v", fake.subOps)
+	if len(fake.writeOps) != 1 {
+		t.Fatalf("ops not forwarded: %+v", fake.writeOps)
 	}
-	if got := fake.subOps[0].Origin; got != "mcp" {
+	if got := fake.writeOps[0].Origin; got != "mcp" {
 		t.Errorf("Origin = %q, want the server's fixed mcp marker (client cannot forge provenance)", got)
 	}
-	if got := fake.subOps[0].Rationale; got != "the topic lacks a root" {
+	if got := fake.writeOps[0].Rationale; got != "the topic lacks a root" {
 		t.Errorf("Rationale = %q, want the client's rationale preserved", got)
 	}
 }
 
-func TestProposeRejectsForgedOrigin(t *testing.T) {
+func TestWriteRejectsForgedOrigin(t *testing.T) {
 	// The schema is closed: an op field the client must not set (origin) is
 	// refused, never silently accepted. Since go-sdk v1.5 an input-schema
 	// violation surfaces as a tool error (IsError in-band, so a model can see
 	// it and correct itself), not as a jsonrpc invalid-params error.
-	fake := &fakeBase{subProposal: knowledge.Proposal{ID: "01PROP", Status: knowledge.StatusPending}}
+	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name: "propose_blocks",
+		Name: "write_blocks",
 		Arguments: map[string]any{
 			"title": "x",
 			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "origin": "gui_edit"}},
@@ -193,8 +209,8 @@ func TestProposeRejectsForgedOrigin(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("a client-supplied origin must be rejected as a tool error")
 	}
-	if fake.subOps != nil {
-		t.Errorf("no proposal must be submitted on a rejected call, got ops %+v", fake.subOps)
+	if fake.writeOps != nil {
+		t.Errorf("no write must be applied on a rejected call, got ops %+v", fake.writeOps)
 	}
 }
 
@@ -256,8 +272,8 @@ func TestTopicMapTool(t *testing.T) {
 }
 
 func TestToolSurface(t *testing.T) {
-	// Exactly five tools, each described; the only write tool is propose_blocks —
-	// MCP can never mutate the base directly.
+	// Exactly five tools, each described; the only write tool is write_blocks —
+	// the sole path that mutates the base over MCP.
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
@@ -271,7 +287,7 @@ func TestToolSurface(t *testing.T) {
 		}
 		got[tool.Name] = true
 	}
-	want := []string{"propose_blocks", "search", "get_subtree", "topic_map", "get_links"}
+	want := []string{"write_blocks", "search", "get_subtree", "topic_map", "get_links"}
 	if len(got) != len(want) {
 		t.Errorf("tools = %v, want exactly %v (no extra write tools)", got, want)
 	}
@@ -284,8 +300,8 @@ func TestToolSurface(t *testing.T) {
 
 func TestReadToolsNeverWrite(t *testing.T) {
 	// The read tools must not be able to reach the write path: exercising every
-	// one leaves the proposal queue untouched. Guards against a read handler
-	// being wired to the wrong capability.
+	// one leaves the base untouched. Guards against a read handler being wired
+	// to the wrong capability.
 	fake := &fakeBase{
 		searchBlocks: []knowledge.Block{{ID: "01A"}},
 		subtree:      []knowledge.Block{{ID: "01ROOT"}},
@@ -308,8 +324,8 @@ func TestReadToolsNeverWrite(t *testing.T) {
 		t.Fatalf("get_links reported a tool error: %+v", res.Content)
 	}
 
-	if fake.subCalls != 0 {
-		t.Errorf("read tools submitted %d proposals, want 0", fake.subCalls)
+	if fake.writeCalls != 0 {
+		t.Errorf("read tools called ApplyOps %d times, want 0", fake.writeCalls)
 	}
 }
 
@@ -326,7 +342,7 @@ func TestToolSurfacesDomainError(t *testing.T) {
 		{"get_subtree", &fakeBase{treeErr: boom}, map[string]any{"root": "01A"}},
 		{"topic_map", &fakeBase{treeErr: boom}, map[string]any{}},
 		{"get_links", &fakeBase{linksErr: boom}, map[string]any{"block_id": "01A"}},
-		{"propose_blocks", &fakeBase{subErr: boom}, map[string]any{
+		{"write_blocks", &fakeBase{writeErr: boom}, map[string]any{
 			"title": "t", "ops": []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
 		}},
 	}
