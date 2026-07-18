@@ -139,9 +139,8 @@ func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 }
 
 // LinkedBlocks returns the block's typed links hydrated with the neighbour
-// blocks — what the GUI links panel and the MCP get_links tool render. An
-// edge whose neighbour vanished mid-read is dropped rather than reported: the
-// next read no longer sees the edge either.
+// blocks. An edge whose neighbour vanished mid-read is dropped rather than
+// reported: the next read no longer sees the edge either.
 func (s *Service) LinkedBlocks(ctx context.Context, id ID) ([]LinkedBlock, error) {
 	edges, err := s.repo.GetEdges(ctx, id)
 	if err != nil {
@@ -186,7 +185,7 @@ func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) err
 }
 
 // RemoveLink deletes a typed link directly — the owner's counterpart of
-// CreateLink. Removing an absent link succeeds: the goal state already holds.
+// CreateLink. Removing an absent link is a no-op.
 func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) error {
 	return s.repo.RemoveEdge(ctx, from, to, rel)
 }

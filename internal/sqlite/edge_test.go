@@ -25,8 +25,8 @@ func linkBase(t *testing.T, repo *Repo) {
 }
 
 func TestGetEdgesReturnsIncidentEdges(t *testing.T) {
-	// A block's links panel needs both directions: an example linked *to* a
-	// theory block must show up on the theory block too.
+	// Both directions must come back: an example linked *to* a theory block
+	// is that block's link too.
 	repo := newTestRepo(t)
 	ctx := t.Context()
 	linkBase(t, repo)
@@ -63,8 +63,7 @@ func TestGetEdgesReturnsIncidentEdges(t *testing.T) {
 }
 
 func TestGetEdgesUnlinkedAndUnknownAreEmpty(t *testing.T) {
-	// No links — and even an unknown id — is an empty answer, not an error:
-	// "nothing to show" is a normal panel state.
+	// No links — and even an unknown id — is an empty answer, not an error.
 	repo := newTestRepo(t)
 	linkBase(t, repo)
 
@@ -80,8 +79,8 @@ func TestGetEdgesUnlinkedAndUnknownAreEmpty(t *testing.T) {
 }
 
 func TestAddEdgeIsIdempotent(t *testing.T) {
-	// Re-adding the same link must not error: the caller's goal state — "this
-	// edge exists" — is already true.
+	// Re-adding the same link must not error — the edge being present already
+	// is the success case.
 	repo := newTestRepo(t)
 	ctx := t.Context()
 	linkBase(t, repo)

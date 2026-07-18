@@ -230,9 +230,8 @@ class BaseStore {
 			if (this.linkingID === id) {
 				this.cancelLink();
 			}
-			// Link writes from another panel only refresh the OTHER endpoint's
-			// cache when its panel is open; a closed panel's cache can go stale.
-			// Drop it here so reopening always re-fetches instead of rendering it.
+			// Link writes refresh only open panels, so this entry can go stale
+			// while closed; drop it so reopening re-fetches.
 			this.linksById.delete(id);
 			return;
 		}
@@ -242,7 +241,6 @@ class BaseStore {
 		}
 	}
 
-	// refreshLinks re-reads one block's links into the cache.
 	async refreshLinks(id: string): Promise<void> {
 		try {
 			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
@@ -260,8 +258,7 @@ class BaseStore {
 		this.linkQuery = "";
 		this.linkResults = [];
 		this.linkRelation = Relation.RelationRelated;
-		// A stale query from a previous picker session must never land in this
-		// one: bump seq and drop any pending debounce timer.
+		// Invalidate any in-flight or pending query from a previous picker.
 		this.linkQuerySeq++;
 		if (this.linkQueryTimer !== null) {
 			clearTimeout(this.linkQueryTimer);
@@ -273,8 +270,7 @@ class BaseStore {
 		this.linkingID = null;
 		this.linkQuery = "";
 		this.linkResults = [];
-		// Closing the picker invalidates whatever query is in flight or pending,
-		// so a response that arrives after close cannot resurrect the results.
+		// A response landing after close must not resurrect the results.
 		this.linkQuerySeq++;
 		if (this.linkQueryTimer !== null) {
 			clearTimeout(this.linkQueryTimer);
@@ -284,8 +280,8 @@ class BaseStore {
 
 	// setLinkQuery live-searches for a link target; the source block is
 	// excluded — a block cannot link to itself. Debounced and sequenced like
-	// the search store: typing does not fire a backend call per keystroke, and
-	// a slow earlier response cannot overwrite a later query's results.
+	// the search store, so a slow earlier response cannot overwrite a later
+	// query's results.
 	setLinkQuery(q: string): void {
 		this.linkQuery = q;
 		this.linkQuerySeq++;
@@ -320,8 +316,8 @@ class BaseStore {
 		}
 	}
 
-	// createLink records the picker's link and refreshes the source panel, plus
-	// the target's panel if it is also open: both endpoints see the new edge.
+	// createLink records the picker's link and refreshes both endpoints' open
+	// panels.
 	async createLink(target: Block): Promise<void> {
 		if (this.linkingID === null || this.busy) {
 			return;
@@ -345,10 +341,10 @@ class BaseStore {
 		}
 	}
 
-	// removeLink deletes one link from a block's panel. The edge identity is
-	// rebuilt from the panel's view: an outgoing entry keeps the panel's block
-	// as the source, an incoming one flips it. Also refreshes the other
-	// endpoint's panel if it is open: both endpoints see the edge disappear.
+	// removeLink deletes one link from a block's panel, refreshing both
+	// endpoints' open panels. The edge identity is rebuilt from the panel's
+	// view: an outgoing entry keeps the panel's block as the source, an
+	// incoming one flips it.
 	async removeLink(id: string, link: LinkedBlock): Promise<void> {
 		if (this.busy) {
 			return;

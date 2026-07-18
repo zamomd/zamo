@@ -205,9 +205,8 @@ func TestApplyProposalLinkStaleEndpoint(t *testing.T) {
 
 func TestApplyProposalLinkAlreadyManuallyCreatedSucceeds(t *testing.T) {
 	// The owner can hand-create a link (AddEdge) while an AI proposal carrying
-	// the same link is still pending. Approving that proposal must not fail:
-	// the edge already present is the goal state, exactly like AddEdge's own
-	// idempotency, so applyLink must tolerate the PK it shares with AddEdge.
+	// the same link is still pending; approving that proposal must not fail on
+	// the primary key the two write paths share.
 	repo := newTestRepo(t)
 	ctx := t.Context()
 	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
