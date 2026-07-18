@@ -138,6 +138,58 @@ func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 	return s.repo.GetSubtree(ctx, root)
 }
 
+// LinkedBlocks returns the block's typed links hydrated with the neighbour
+// blocks. An edge whose neighbour vanished mid-read is dropped rather than
+// reported: the next read no longer sees the edge either.
+func (s *Service) LinkedBlocks(ctx context.Context, id ID) ([]LinkedBlock, error) {
+	edges, err := s.repo.GetEdges(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]ID, len(edges))
+	for i, e := range edges {
+		ids[i] = e.To
+		if e.From != id {
+			ids[i] = e.From
+		}
+	}
+	blocks, err := s.repo.GetBlocks(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LinkedBlock, 0, len(edges))
+	for i, e := range edges {
+		b, ok := blocks[ids[i]]
+		if !ok {
+			continue
+		}
+		out = append(out, LinkedBlock{Relation: e.Relation, Outgoing: e.From == id, Block: b})
+	}
+	return out, nil
+}
+
+// CreateLink records a typed link directly, without the review queue: review
+// guards the base against AI, not against its owner (like EditBlockContent).
+// An empty relation defaults to related, mirroring the link op.
+func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) error {
+	if from == to {
+		return fmt.Errorf("link %s to itself: %w", from, ErrInvalidLink)
+	}
+	if rel == "" {
+		rel = RelationRelated
+	}
+	if rel != RelationExample && rel != RelationRelated {
+		return fmt.Errorf("link %s->%s relation %q: %w", from, to, rel, ErrInvalidLink)
+	}
+	return s.repo.AddEdge(ctx, from, to, rel)
+}
+
+// RemoveLink deletes a typed link directly — the owner's counterpart of
+// CreateLink. Removing an absent link is a no-op.
+func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) error {
+	return s.repo.RemoveEdge(ctx, from, to, rel)
+}
+
 // EditBlockContent applies a manual text edit directly, without the
 // review queue: review guards the base against AI, not against its owner.
 func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {

@@ -11,6 +11,7 @@ export {
 export type {
     Block,
     ID,
+    LinkedBlock,
     Metadata,
     Op,
     OpReview,

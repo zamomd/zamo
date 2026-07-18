@@ -24,6 +24,12 @@ type TreeReader interface {
 	GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error)
 }
 
+// LinkReader serves a block's typed links, hydrated with the neighbour
+// blocks, so a client follows example/related without a second read.
+type LinkReader interface {
+	LinkedBlocks(ctx context.Context, id knowledge.ID) ([]knowledge.LinkedBlock, error)
+}
+
 // ProposalSubmitter puts a proposal into the review queue — the only
 // write path available over MCP.
 type ProposalSubmitter interface {
@@ -39,15 +45,16 @@ type ProposalSubmitter interface {
 type Server struct {
 	search   Searcher
 	tree     TreeReader
+	links    LinkReader
 	proposal ProposalSubmitter
 	version  string
 }
 
-// NewServer assembles the server from its three narrow capabilities
-// (in production all three are the same knowledge.Service) and the build
+// NewServer assembles the server from its four narrow capabilities
+// (in production all four are the same knowledge.Service) and the build
 // version to report in the MCP handshake.
-func NewServer(search Searcher, tree TreeReader, proposal ProposalSubmitter, version string) *Server {
-	return &Server{search: search, tree: tree, proposal: proposal, version: version}
+func NewServer(search Searcher, tree TreeReader, links LinkReader, proposal ProposalSubmitter, version string) *Server {
+	return &Server{search: search, tree: tree, links: links, proposal: proposal, version: version}
 }
 
 // Run serves MCP over stdio until the client disconnects or ctx is cancelled.
@@ -73,6 +80,11 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 		Name:        "get_subtree",
 		Description: "Fetch a block and all of its descendants, in tree order.",
 	}, s.getSubtree)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name: "get_links",
+		Description: "A block's typed links (example/related), each with the neighbour " +
+			"block's id and content — follow them from a block you found.",
+	}, s.getLinks)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "topic_map",
 		Description: "The map of the base: root topics and their first level, for orientation.",
@@ -127,6 +139,47 @@ func (s *Server) getSubtree(
 		return nil, blocksOutput{}, err
 	}
 	return nil, toBlocksOutput(blocks), nil
+}
+
+type linksInput struct {
+	BlockID string `json:"block_id" jsonschema:"the id of the block whose links to fetch"`
+}
+
+// linkView is one link as exposed over MCP: the relation, which side of the
+// edge the queried block is on, and the neighbour's identity and content.
+type linkView struct {
+	Relation  string `json:"relation"`
+	Direction string `json:"direction"` // "out": the queried block is the edge's source
+	ID        string `json:"id"`
+	Content   string `json:"content"`
+}
+
+// linksOutput is the get_links return shape.
+type linksOutput struct {
+	Links []linkView `json:"links"`
+}
+
+func (s *Server) getLinks(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in linksInput,
+) (*mcpsdk.CallToolResult, linksOutput, error) {
+	links, err := s.links.LinkedBlocks(ctx, knowledge.ID(in.BlockID))
+	if err != nil {
+		return nil, linksOutput{}, err
+	}
+	views := make([]linkView, len(links))
+	for i, l := range links {
+		direction := "in"
+		if l.Outgoing {
+			direction = "out"
+		}
+		views[i] = linkView{
+			Relation:  string(l.Relation),
+			Direction: direction,
+			ID:        string(l.Block.ID),
+			Content:   l.Block.Content,
+		}
+	}
+	return nil, linksOutput{Links: views}, nil
 }
 
 // topicMap takes no arguments; the empty struct yields an empty input schema.

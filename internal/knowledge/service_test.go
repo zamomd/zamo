@@ -50,6 +50,14 @@ type fakeRepo struct {
 
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
+
+	edges     []Edge // what GetEdges returns
+	edgesErr  error
+	gotEdges  ID     // the id GetEdges was asked for
+	added     []Edge // edges handed to AddEdge
+	addErr    error
+	removed   []Edge // edges handed to RemoveEdge
+	removeErr error
 }
 
 func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {
@@ -63,6 +71,27 @@ func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) 
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) GetEdges(_ context.Context, id ID) ([]Edge, error) {
+	f.gotEdges = id
+	return f.edges, f.edgesErr
+}
+
+func (f *fakeRepo) AddEdge(_ context.Context, from, to ID, rel Relation) error {
+	if f.addErr != nil {
+		return f.addErr
+	}
+	f.added = append(f.added, Edge{From: from, To: to, Relation: rel})
+	return nil
+}
+
+func (f *fakeRepo) RemoveEdge(_ context.Context, from, to ID, rel Relation) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	f.removed = append(f.removed, Edge{From: from, To: to, Relation: rel})
+	return nil
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }

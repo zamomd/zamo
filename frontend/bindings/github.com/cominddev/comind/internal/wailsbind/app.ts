@@ -34,6 +34,14 @@ export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
 }
 
 /**
+ * CreateLink passes the call to knowledge.Service. The owner links directly,
+ * without the review queue — like EditBlockContent.
+ */
+export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
+    return $Call.ByID(1077906829, $from, to, relation);
+}
+
+/**
  * EditBlockContent passes the call to knowledge.Service. A manual edit by the
  * owner applies directly, without the review queue.
  */
@@ -65,6 +73,14 @@ export function ExportMarkdown(dir: string): $CancellablePromise<void> {
 }
 
 /**
+ * GetLinks passes the call to knowledge.Service: the block's typed links,
+ * hydrated with their neighbour blocks.
+ */
+export function GetLinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.LinkedBlock[] | null> {
+    return $Call.ByID(3922522708, id);
+}
+
+/**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
@@ -91,6 +107,13 @@ export function ProposeEdit(scope: knowledge$0.ID, instruction: string): $Cancel
  */
 export function RejectProposal(id: knowledge$0.ID): $CancellablePromise<void> {
     return $Call.ByID(4105028376, id);
+}
+
+/**
+ * RemoveLink passes the call to knowledge.Service.
+ */
+export function RemoveLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
+    return $Call.ByID(583003149, $from, to, relation);
 }
 
 /**

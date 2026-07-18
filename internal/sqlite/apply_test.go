@@ -203,6 +203,40 @@ func TestApplyProposalLinkStaleEndpoint(t *testing.T) {
 	}
 }
 
+func TestApplyProposalLinkAlreadyManuallyCreatedSucceeds(t *testing.T) {
+	// The owner can hand-create a link (AddEdge) while an AI proposal carrying
+	// the same link is still pending; approving that proposal must not fail on
+	// the primary key the two write paths share.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	savePending(t, repo, "01SETUP", knowledge.SourceGUIExpand)
+	if err := repo.ApplyProposal(ctx, "01SETUP", []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01FROM", Content: "theory"},
+		{Kind: knowledge.OpAdd, BlockID: "01TO", Content: "example"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if err := repo.AddEdge(ctx, "01FROM", "01TO", knowledge.RelationExample); err != nil {
+		t.Fatalf("manual AddEdge: %v", err)
+	}
+
+	savePending(t, repo, "01LINK", knowledge.SourceMCP)
+	if err := repo.ApplyProposal(ctx, "01LINK", []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01FROM", To: "01TO", Relation: knowledge.RelationExample},
+	}); err != nil {
+		t.Fatalf("link apply after manual AddEdge: %v", err)
+	}
+
+	got, err := repo.GetEdges(ctx, "01FROM")
+	if err != nil {
+		t.Fatalf("GetEdges: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("edges after manual link + proposal apply = %+v, want exactly one", got)
+	}
+}
+
 func TestApplyProposalMoveIntoOwnSubtreeFails(t *testing.T) {
 	// Moving a block under its own existing descendant would collapse the tree
 	// into a detached ring of parent pointers. assemble cannot see the existing

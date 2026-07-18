@@ -27,6 +27,20 @@ export interface Block {
 export type ID = string;
 
 /**
+ * LinkedBlock is a neighbour reachable over a typed link, hydrated for
+ * display: the edge's relation and direction plus the neighbour block itself.
+ */
+export interface LinkedBlock {
+    "Relation": Relation;
+
+    /**
+     * true when the queried block is the edge's From
+     */
+    "Outgoing": boolean;
+    "Block": Block;
+}
+
+/**
  * Metadata holds extensible block metadata: authorship (human/AI),
  * provenance, model, etc. Stored in the database as JSON.
  */

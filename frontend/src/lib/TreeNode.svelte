@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from "../stores/base.svelte";
+	import BlockLinks from "./BlockLinks.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import TreeNode from "./TreeNode.svelte";
 	import type { TreeNodeData } from "./tree";
@@ -11,6 +12,7 @@
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
+	const linksOpen = $derived(base.openLinks.has(node.block.ID));
 
 	// Scroll this row into view and flash it when a search jump targets it. The
 	// effect keys on highlightNonce so a repeat jump to the same block re-fires;
@@ -79,8 +81,23 @@
 			>
 				⌖
 			</button>
+			<button
+				type="button"
+				class="links-toggle"
+				class:open={linksOpen}
+				title="show this block's links"
+				aria-expanded={linksOpen}
+				aria-label="toggle this block's links"
+				disabled={base.busy}
+				onclick={() => base.toggleLinks(node.block.ID)}
+			>
+				∞
+			</button>
 		{/if}
 	</div>
+	{#if linksOpen}
+		<BlockLinks block={node.block} />
+	{/if}
 	{#if hasChildren && expanded}
 		<ul>
 			{#each node.children as child (child.block.ID)}
@@ -175,5 +192,22 @@
 	}
 	.content code {
 		white-space: pre-wrap;
+	}
+	.links-toggle {
+		flex: none;
+		border: none;
+		background: none;
+		padding: 0 0.3rem;
+		cursor: pointer;
+		color: inherit;
+		opacity: 0;
+	}
+	.row:hover .links-toggle,
+	.row:focus-within .links-toggle,
+	.links-toggle.open {
+		opacity: 0.6;
+	}
+	.links-toggle:hover:not(:disabled) {
+		opacity: 1;
 	}
 </style>

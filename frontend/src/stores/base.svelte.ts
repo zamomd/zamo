@@ -1,8 +1,16 @@
-import { SvelteSet } from "svelte/reactivity";
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import {
+	type Block,
+	type LinkedBlock,
+	Relation,
+} from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
+
+// How long typing settles before a link-target query is sent, so search-as-
+// you-type is not a backend call per keystroke. Mirrors the search store.
+const linkQueryDebounceMs = 200;
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
 // flows from one command field. Expansion (no target) and restructuring (a
@@ -38,8 +46,27 @@ class BaseStore {
 	highlightID = $state<string | null>(null);
 	highlightNonce = $state(0);
 
+	// Typed links, loaded lazily per open panel. openLinks holds the blocks
+	// whose panels are open; linksById caches what GetLinks returned. Both are
+	// rebuilt on reload: an edit can change a neighbour's text.
+	openLinks = new SvelteSet<string>();
+	linksById = new SvelteMap<string, LinkedBlock[]>();
+
+	// The +link picker: the block a link is created from, the live target
+	// search, and the relation to record.
+	linkingID = $state<string | null>(null);
+	linkQuery = $state("");
+	linkResults = $state<Block[]>([]);
+	linkRelation = $state<Relation>(Relation.RelationRelated);
+
 	// A reveal whose block is not yet in the forest, flushed at the end of reload.
 	private pendingReveal: string | null = null;
+
+	private linkQueryTimer: ReturnType<typeof setTimeout> | null = null;
+	// linkQuerySeq stamps each link-target query so a slow earlier response
+	// cannot overwrite a later query's results; only the newest seq is allowed
+	// to land. Mirrors the search store's guard.
+	private linkQuerySeq = 0;
 
 	// The scope label is read out of the live forest rather than copied on
 	// targeting: a targeted block that is edited or disappears can never leave
@@ -66,6 +93,16 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		// Links reflect the re-read base: drop the cache, close panels whose
+		// block vanished, and re-load the panels still open.
+		this.linksById.clear();
+		for (const id of [...this.openLinks]) {
+			if (findBlock(this.forest, id) === null) {
+				this.openLinks.delete(id);
+				continue;
+			}
+			await this.refreshLinks(id);
+		}
 		// Apply a reveal that raced the initial load. reveal re-parks it if the
 		// block is still absent, so a missing target self-heals on a later reload.
 		if (this.pendingReveal !== null) {
@@ -177,6 +214,152 @@ class BaseStore {
 			await this.reload();
 			this.status = "saved edit";
 			this.cancelEdit();
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// toggleLinks opens or closes a block's links panel, loading the links on
+	// first open. Closing also drops a picker opened from that panel.
+	async toggleLinks(id: string): Promise<void> {
+		if (this.openLinks.has(id)) {
+			this.openLinks.delete(id);
+			if (this.linkingID === id) {
+				this.cancelLink();
+			}
+			// Link writes refresh only open panels, so this entry can go stale
+			// while closed; drop it so reopening re-fetches.
+			this.linksById.delete(id);
+			return;
+		}
+		this.openLinks.add(id);
+		if (!this.linksById.has(id)) {
+			await this.refreshLinks(id);
+		}
+	}
+
+	async refreshLinks(id: string): Promise<void> {
+		try {
+			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+		}
+	}
+
+	startLink(id: string): void {
+		// Locked while busy or mid inline-edit, like the tree's other actions.
+		if (this.busy || this.editingID !== null) {
+			return;
+		}
+		this.linkingID = id;
+		this.linkQuery = "";
+		this.linkResults = [];
+		this.linkRelation = Relation.RelationRelated;
+		// Invalidate any in-flight or pending query from a previous picker.
+		this.linkQuerySeq++;
+		if (this.linkQueryTimer !== null) {
+			clearTimeout(this.linkQueryTimer);
+			this.linkQueryTimer = null;
+		}
+	}
+
+	cancelLink(): void {
+		this.linkingID = null;
+		this.linkQuery = "";
+		this.linkResults = [];
+		// A response landing after close must not resurrect the results.
+		this.linkQuerySeq++;
+		if (this.linkQueryTimer !== null) {
+			clearTimeout(this.linkQueryTimer);
+			this.linkQueryTimer = null;
+		}
+	}
+
+	// setLinkQuery live-searches for a link target; the source block is
+	// excluded — a block cannot link to itself. Debounced and sequenced like
+	// the search store, so a slow earlier response cannot overwrite a later
+	// query's results.
+	setLinkQuery(q: string): void {
+		this.linkQuery = q;
+		this.linkQuerySeq++;
+		this.linkResults = [];
+		if (this.linkQueryTimer !== null) {
+			clearTimeout(this.linkQueryTimer);
+			this.linkQueryTimer = null;
+		}
+		if (q.trim() === "") {
+			return;
+		}
+		this.linkQueryTimer = setTimeout(() => {
+			this.linkQueryTimer = null;
+			void this.runLinkQuery();
+		}, linkQueryDebounceMs);
+	}
+
+	private async runLinkQuery(): Promise<void> {
+		const mine = ++this.linkQuerySeq;
+		const q = this.linkQuery.trim();
+		try {
+			const hits = (await App.Search(q)) ?? [];
+			if (mine !== this.linkQuerySeq) {
+				return;
+			}
+			this.linkResults = hits.filter((b) => b.ID !== this.linkingID);
+		} catch (err: unknown) {
+			if (mine !== this.linkQuerySeq) {
+				return;
+			}
+			this.error = callError(err).message;
+		}
+	}
+
+	// createLink records the picker's link and refreshes both endpoints' open
+	// panels.
+	async createLink(target: Block): Promise<void> {
+		if (this.linkingID === null || this.busy) {
+			return;
+		}
+		const from = this.linkingID;
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.CreateLink(from, target.ID, this.linkRelation);
+			this.cancelLink();
+			await this.refreshLinks(from);
+			if (this.openLinks.has(target.ID)) {
+				await this.refreshLinks(target.ID);
+			}
+			this.status = "linked";
+		} catch (err: unknown) {
+			this.error = callError(err).message;
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// removeLink deletes one link from a block's panel, refreshing both
+	// endpoints' open panels. The edge identity is rebuilt from the panel's
+	// view: an outgoing entry keeps the panel's block as the source, an
+	// incoming one flips it.
+	async removeLink(id: string, link: LinkedBlock): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const from = link.Outgoing ? id : link.Block.ID;
+		const to = link.Outgoing ? link.Block.ID : id;
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.RemoveLink(from, to, link.Relation);
+			await this.refreshLinks(id);
+			if (this.openLinks.has(link.Block.ID)) {
+				await this.refreshLinks(link.Block.ID);
+			}
+			this.status = "unlinked";
 		} catch (err: unknown) {
 			this.error = callError(err).message;
 			this.status = "";

@@ -30,6 +30,10 @@ var (
 	// no operations: a proposal that changes nothing is not a proposal.
 	ErrEmptyProposal = errors.New("proposal has no operations")
 
+	// ErrInvalidLink reports a link the domain refuses to create: a block
+	// linked to itself, or an unknown relation.
+	ErrInvalidLink = errors.New("link is invalid")
+
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")
