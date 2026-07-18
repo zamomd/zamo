@@ -1,7 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import type { ProposalReview } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
-import { callError } from "../lib/callerror";
+import { callError, messageFor } from "../lib/callerror";
 import { queue } from "./queue.svelte";
 
 // ReviewStore is the Review tab's view-model. The pending list itself lives in
@@ -130,7 +130,7 @@ class ReviewStore {
 					await this.loadQueue(nextID, my);
 					break;
 				default:
-					this.error = ce.message;
+					this.error = messageFor(err);
 			}
 		} finally {
 			this.busy = false;
@@ -152,7 +152,7 @@ class ReviewStore {
 			this.notice = "rejected";
 		} catch (err: unknown) {
 			if (my !== this.seq) return;
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		} finally {
 			this.busy = false;
 		}

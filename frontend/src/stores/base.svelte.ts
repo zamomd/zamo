@@ -5,7 +5,7 @@ import {
 	Relation,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
-import { callError } from "../lib/callerror";
+import { messageFor } from "../lib/callerror";
 import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -76,7 +76,7 @@ class BaseStore {
 	// activate re-reads the data on every mount; the UI state above persists.
 	activate(): void {
 		this.reload().catch((err: unknown) => {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		});
 	}
 
@@ -179,7 +179,7 @@ class BaseStore {
 			this.clearScope();
 			return true;
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 			return false;
 		} finally {
@@ -215,7 +215,7 @@ class BaseStore {
 			this.status = "saved edit";
 			this.cancelEdit();
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -245,7 +245,7 @@ class BaseStore {
 		try {
 			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -312,7 +312,7 @@ class BaseStore {
 			if (mine !== this.linkQuerySeq) {
 				return;
 			}
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 		}
 	}
 
@@ -334,7 +334,7 @@ class BaseStore {
 			}
 			this.status = "linked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
@@ -361,7 +361,7 @@ class BaseStore {
 			}
 			this.status = "unlinked";
 		} catch (err: unknown) {
-			this.error = callError(err).message;
+			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
