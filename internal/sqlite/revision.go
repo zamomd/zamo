@@ -578,9 +578,12 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		return out[i].Head.BlockID < out[j].Head.BlockID
 	})
 
+	// An unreviewed edge is a pending change: a pending addition (deleted = 0)
+	// or a pending removal from an AI unlink (deleted = 1). Both need review;
+	// the deleted flag tells them apart via Edge.Removing.
 	const edgeQ = `
-SELECT from_id, to_id, relation, reviewed FROM edges
-WHERE reviewed = 0 AND deleted = 0
+SELECT from_id, to_id, relation, reviewed, deleted FROM edges
+WHERE reviewed = 0
   AND EXISTS(SELECT 1 FROM blocks WHERE id = from_id)
   AND EXISTS(SELECT 1 FROM blocks WHERE id = to_id)
 ORDER BY relation, from_id, to_id`
@@ -592,7 +595,7 @@ ORDER BY relation, from_id, to_id`
 	var edges []knowledge.Edge
 	for edgeRows.Next() {
 		var e knowledge.Edge
-		if err := edgeRows.Scan(&e.From, &e.To, &e.Relation, &e.Reviewed); err != nil {
+		if err := edgeRows.Scan(&e.From, &e.To, &e.Relation, &e.Reviewed, &e.Removing); err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
 		}
 		edges = append(edges, e)
