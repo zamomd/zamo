@@ -113,9 +113,8 @@ class BaseStore {
 		// ignored so a late one never overwrites an idle or already-final status.
 		Events.On(generationProgressEvent, (e) => {
 			if (!this.busy) return;
-			const data = e.data as { phase?: string; detail?: string } | undefined;
-			const label = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…";
-			this.status = data?.detail ? `${label} (${data.detail})` : label;
+			const data = e.data as { phase?: string } | undefined;
+			this.status = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…";
 		});
 	}
 

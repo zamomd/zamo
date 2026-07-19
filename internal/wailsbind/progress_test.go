@@ -27,7 +27,7 @@ func TestWithProgressForwardsReportsAsEvents(t *testing.T) {
 	app.SetEmitter(fe)
 
 	ctx := app.withProgress(context.Background())
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting, Detail: "waiting"})
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting})
 
 	if len(fe.events) != 1 {
 		t.Fatalf("emitter saw %d events, want 1", len(fe.events))
@@ -43,8 +43,8 @@ func TestWithProgressForwardsReportsAsEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload type = %T, want progressPayload", e.data[0])
 	}
-	if p.Phase != string(knowledge.PhaseAwaiting) || p.Detail != "waiting" {
-		t.Errorf("payload = %+v, want awaiting/waiting", p)
+	if p.Phase != string(knowledge.PhaseAwaiting) {
+		t.Errorf("payload phase = %q, want %q", p.Phase, knowledge.PhaseAwaiting)
 	}
 }
 

@@ -22,10 +22,9 @@ type Emitter interface {
 }
 
 // progressPayload is the JSON shape the frontend reads from a
-// GenerationProgressEvent: the coarse phase and optional human-readable detail.
+// GenerationProgressEvent: the coarse phase of the in-flight generation.
 type progressPayload struct {
-	Phase  string `json:"phase"`
-	Detail string `json:"detail,omitzero"`
+	Phase string `json:"phase"`
 }
 
 // App is the object bound into the Wails runtime; the frontend calls
@@ -54,7 +53,7 @@ func (a *App) withProgress(ctx context.Context) context.Context {
 		return ctx
 	}
 	return knowledge.WithProgress(ctx, func(p knowledge.Progress) {
-		a.emit.Emit(GenerationProgressEvent, progressPayload{Phase: string(p.Phase), Detail: p.Detail})
+		a.emit.Emit(GenerationProgressEvent, progressPayload{Phase: string(p.Phase)})
 	})
 }
 

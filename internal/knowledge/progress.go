@@ -4,8 +4,6 @@ import "context"
 
 // GenerationPhase names a coarse stage of an LLM generation, reported live so
 // the GUI can show that work is happening rather than freezing on a spinner.
-// The non-streaming providers of the MVP emit these coarse phases; a streaming
-// provider may report finer detail through the same channel.
 type GenerationPhase string
 
 // The generation phases every provider can report.
@@ -15,11 +13,9 @@ const (
 	PhaseParsing    GenerationPhase = "parsing"    // reply received, parsing into ops
 )
 
-// Progress is a single generation-progress report. Phase is always set; Detail
-// is optional human-readable context (e.g. a block count).
+// Progress is a single generation-progress report.
 type Progress struct {
-	Phase  GenerationPhase
-	Detail string
+	Phase GenerationPhase
 }
 
 // ProgressReporter receives progress reports during a generation. It is called
