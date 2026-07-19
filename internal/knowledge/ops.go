@@ -26,6 +26,7 @@ const (
 	OpMove   OpKind = "move"
 	OpDelete OpKind = "delete"
 	OpLink   OpKind = "link"
+	OpUnlink OpKind = "unlink"
 )
 
 // Op is a single operation of a write batch. One format for every source —
