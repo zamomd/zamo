@@ -113,6 +113,83 @@ func TestApplyOpsUnlinkHidesEdge(t *testing.T) {
 	}
 }
 
+func TestApplyOpsAIUnlinkIsReviewable(t *testing.T) {
+	// An AI unlink is a pending removal, not a silent one: it must surface in
+	// the review queue marked as removing, and rejecting it restores the link.
+	// Otherwise the AI could drop a link outside review — the exact thing the
+	// revision model prevents. (Owner unlink is immediate; this is the AI path.)
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	linkBase(t, repo)
+	if err := repo.ApplyOps(ctx, "01LINK", ownerMeta("link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "01UNLINK", aiMeta("ai unlink"), []knowledge.Op{
+		{Kind: knowledge.OpUnlink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+
+	ch, err := repo.ListUnreviewed(ctx)
+	if err != nil {
+		t.Fatalf("ListUnreviewed: %v", err)
+	}
+	found := false
+	for _, e := range ch.Edges {
+		if e.From == "01AAA" && e.To == "01BBB" && e.Removing {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AI unlink not surfaced as a pending removal: %+v", ch.Edges)
+	}
+
+	// Rejecting the removal restores the link (reviewed, visible again).
+	if err := repo.RejectEdge(ctx, "01AAA", "01BBB", knowledge.RelationRelated); err != nil {
+		t.Fatalf("RejectEdge: %v", err)
+	}
+	got, err := repo.GetEdges(ctx, "01AAA")
+	if err != nil {
+		t.Fatalf("GetEdges: %v", err)
+	}
+	if len(got) != 1 || got[0].From != "01AAA" || got[0].To != "01BBB" {
+		t.Errorf("link not restored after rejecting the removal: %+v", got)
+	}
+}
+
+func TestAcceptingAIUnlinkConfirmsRemoval(t *testing.T) {
+	// Accepting the batch that carried an AI unlink (MarkGroupReviewed) confirms
+	// the removal: the edge stays gone and no longer shows as pending.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	linkBase(t, repo)
+	if err := repo.ApplyOps(ctx, "01LINK", ownerMeta("link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-unlink", aiMeta("ai unlink"), []knowledge.Op{
+		{Kind: knowledge.OpUnlink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if err := repo.MarkGroupReviewed(ctx, "grp-unlink"); err != nil {
+		t.Fatalf("MarkGroupReviewed: %v", err)
+	}
+	// Still gone, and no longer pending.
+	if got, _ := repo.GetEdges(ctx, "01AAA"); len(got) != 0 {
+		t.Errorf("edge came back after the removal was accepted: %+v", got)
+	}
+	ch, _ := repo.ListUnreviewed(ctx)
+	for _, e := range ch.Edges {
+		if e.From == "01AAA" && e.To == "01BBB" {
+			t.Errorf("accepted removal still shows as pending: %+v", e)
+		}
+	}
+}
+
 func TestApplyOpsUnlinkAbsentEdgeIsNoOp(t *testing.T) {
 	// Unlinking an edge that was never created must not fail the batch.
 	repo := newTestRepo(t)
