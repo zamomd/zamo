@@ -175,6 +175,8 @@ func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch
 		return r.applyDelete(ctx, tx, op, b)
 	case knowledge.OpLink:
 		return r.applyLink(ctx, tx, op, b)
+	case knowledge.OpUnlink:
+		return r.applyUnlink(ctx, tx, op, b)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
@@ -420,6 +422,25 @@ func (r *Repo) applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
 		op.From, op.To, string(relation), string(b.meta.Author), origin, b.reviewed, string(b.groupID), b.now); err != nil {
 		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
+	}
+	return nil
+}
+
+// applyUnlink soft-deletes an edge as part of a write batch — the mirror of
+// applyLink. An owner write removes the link at once (born reviewed); an AI
+// write leaves a pending removal (unreviewed, deleted) that GetEdges already
+// hides but review can still reject to restore. Unlinking an absent edge is a
+// no-op: there is nothing to hide, and the batch should not fail on it.
+func (r *Repo) applyUnlink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
+	relation := op.Relation
+	if relation == "" {
+		relation = knowledge.RelationRelated
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE edges SET deleted = 1, reviewed = ?, group_id = ?
+		WHERE from_id = ? AND to_id = ? AND relation = ?`,
+		b.reviewed, string(b.groupID), op.From, op.To, string(relation)); err != nil {
+		return fmt.Errorf("apply unlink %s->%s: %w", op.From, op.To, translate(err))
 	}
 	return nil
 }
