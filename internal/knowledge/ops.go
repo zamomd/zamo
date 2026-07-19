@@ -64,9 +64,9 @@ func (op Op) validate() error {
 		if op.BlockID == "" {
 			return fmt.Errorf("%s op with empty block id: %w", op.Kind, ErrInvalidOps)
 		}
-	case OpLink:
+	case OpLink, OpUnlink:
 		if op.From == "" || op.To == "" {
-			return fmt.Errorf("link op with empty from/to: %w", ErrInvalidOps)
+			return fmt.Errorf("%s op with empty from/to: %w", op.Kind, ErrInvalidOps)
 		}
 	default:
 		return fmt.Errorf("unknown op kind %q: %w", op.Kind, ErrInvalidOps)
