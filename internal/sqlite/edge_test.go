@@ -87,6 +87,65 @@ func TestGetEdgesReturnsIncidentEdges(t *testing.T) {
 	}
 }
 
+func TestApplyOpsUnlinkHidesEdge(t *testing.T) {
+	// An unlink op in a write batch removes a link through the op format, so
+	// any writer can remove one — not just the owner's direct RemoveEdge. An
+	// owner unlink hides it from GetEdges at once (born reviewed).
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	linkBase(t, repo)
+	if err := repo.ApplyOps(ctx, "01LINK", ownerMeta("link"), []knowledge.Op{
+		{Kind: knowledge.OpLink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "01UNLINK", ownerMeta("unlink"), []knowledge.Op{
+		{Kind: knowledge.OpUnlink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	got, err := repo.GetEdges(ctx, "01AAA")
+	if err != nil {
+		t.Fatalf("GetEdges: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("edge still visible after unlink: %+v", got)
+	}
+}
+
+func TestApplyOpsUnlinkAbsentEdgeIsNoOp(t *testing.T) {
+	// Unlinking an edge that was never created must not fail the batch.
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	linkBase(t, repo)
+	if err := repo.ApplyOps(ctx, "01UNLINK", ownerMeta("unlink"), []knowledge.Op{
+		{Kind: knowledge.OpUnlink, From: "01AAA", To: "01BBB", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Errorf("unlink of an absent edge must be a no-op, got %v", err)
+	}
+}
+
+func TestApplyOpsDeleteBlockWithEdgesSucceeds(t *testing.T) {
+	// Deleting a block that still has an edge must not fail: edges keep no FK
+	// (they survive tombstoned for restoration), so the delete succeeds and the
+	// edge simply stops showing — never a raw sqlite foreign-key error (#53).
+	repo := newTestRepo(t)
+	ctx := t.Context()
+	linkBase(t, repo)
+	if err := repo.AddEdge(ctx, "01AAA", "01BBB", knowledge.RelationRelated, ownerMeta("link")); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "01DEL", ownerMeta("delete B"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01BBB"},
+	}); err != nil {
+		t.Fatalf("deleting a linked block must succeed (no FK), got %v", err)
+	}
+	got, _ := repo.GetEdges(ctx, "01AAA")
+	if len(got) != 0 {
+		t.Errorf("edge to a deleted block still visible: %+v", got)
+	}
+}
+
 func TestGetEdgesUnlinkedAndUnknownAreEmpty(t *testing.T) {
 	// No links — and even an unknown id — is an empty answer, not an error.
 	repo := newTestRepo(t)
