@@ -61,6 +61,10 @@
 	}
 	function editFromKey(e: KeyboardEvent): void {
 		if (e.key !== "Enter" && e.key !== " ") return;
+		// A rendered link is focusable; activating it by keyboard must open the
+		// link, not edit the block, so leave it to the anchor's own handling —
+		// mirror the anchor guard in editFromClick.
+		if ((e.target as HTMLElement).closest("a")) return;
 		e.preventDefault();
 		if (!base.busy) base.startEdit(node.block);
 	}
@@ -98,9 +102,12 @@
 				oncancel={() => base.cancelEdit()}
 			/>
 		{:else}
-			<!-- A real <button> cannot hold the links/blocks markdown emits, so the
-			     click-to-edit surface is a div with full button semantics (role +
-			     focusable + Enter/Space); biome's prefer-<button> rule can't apply. -->
+			<!-- The click-to-edit surface holds rendered markdown (possibly links),
+			     which a real <button> cannot legally contain, so it is a div with
+			     button semantics (role + focusable + Enter/Space). role="button"
+			     carries the same no-interactive-descendants ARIA constraint, so a
+			     screen reader still reads the block as one control — a known
+			     pragmatic trade-off for a single-user desktop tool, not a fix. -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<!-- biome-ignore lint/a11y/useSemanticElements: a <button> cannot contain the anchors/blocks rendered markdown emits -->
 			<div
