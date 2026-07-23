@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
 	import BlockLinks from "./BlockLinks.svelte";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
+	import { renderMarkdown } from "./markdown";
 	import TreeNode from "./TreeNode.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
@@ -41,6 +43,31 @@
 			flash = true;
 		});
 	});
+
+	// The content is a click-to-edit surface that now holds rendered markdown, so
+	// it is a div with button semantics rather than a <button> (a real button
+	// cannot contain the links markdown may emit). A click on a link opens it in
+	// the system browser — keeping the webview on the SPA — and must not also
+	// start an edit; any other click, or Enter/Space, edits.
+	function editFromClick(e: MouseEvent): void {
+		const link = (e.target as HTMLElement).closest("a");
+		if (link) {
+			e.preventDefault();
+			const href = link.getAttribute("href");
+			if (href) void Browser.OpenURL(href);
+			return;
+		}
+		if (!base.busy) base.startEdit(node.block);
+	}
+	function editFromKey(e: KeyboardEvent): void {
+		if (e.key !== "Enter" && e.key !== " ") return;
+		// A rendered link is focusable; activating it by keyboard must open the
+		// link, not edit the block, so leave it to the anchor's own handling —
+		// mirror the anchor guard in editFromClick.
+		if ((e.target as HTMLElement).closest("a")) return;
+		e.preventDefault();
+		if (!base.busy) base.startEdit(node.block);
+	}
 </script>
 
 <li>
@@ -66,7 +93,7 @@
 		{#if ghost}
 			<!-- A pending deletion: struck through, no edit/target/links affordances —
 			     there is nothing left to edit or link until it is restored. -->
-			<span class="content ghost-content"><code><s>{node.block.Content}</s></code></span>
+			<span class="content ghost-content">{@html renderMarkdown(node.block.Content)}</span>
 		{:else if editing}
 			<InlineEditor
 				bind:value={base.editText}
@@ -75,15 +102,25 @@
 				oncancel={() => base.cancelEdit()}
 			/>
 		{:else}
-			<button
-				type="button"
+			<!-- The click-to-edit surface holds rendered markdown (possibly links),
+			     which a real <button> cannot legally contain, so it is a div with
+			     button semantics (role + focusable + Enter/Space). role="button"
+			     carries the same no-interactive-descendants ARIA constraint, so a
+			     screen reader still reads the block as one control — a known
+			     pragmatic trade-off for a single-user desktop tool, not a fix. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- biome-ignore lint/a11y/useSemanticElements: a <button> cannot contain the anchors/blocks rendered markdown emits -->
+			<div
 				class="content"
+				class:busy={base.busy}
+				role="button"
+				tabindex={base.busy ? -1 : 0}
 				title="click to edit"
-				disabled={base.busy}
-				onclick={() => base.startEdit(node.block)}
+				onclick={editFromClick}
+				onkeydown={editFromKey}
 			>
-				<code>{node.block.Content}</code>
-			</button>
+				{@html renderMarkdown(node.block.Content)}
+			</div>
 			<button
 				type="button"
 				class="target"
@@ -223,8 +260,12 @@
 		border-radius: 3px;
 		cursor: pointer;
 		color: inherit;
+		min-width: 0;
 	}
-	.content:hover:not(:disabled) {
+	.content.busy {
+		cursor: default;
+	}
+	.content:not(.busy):hover {
 		background: rgba(127, 127, 127, 0.15);
 	}
 	.row.targeted {
@@ -267,8 +308,60 @@
 	.row.targeted .target {
 		opacity: 1;
 	}
-	.content code {
+	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
+	   reach it — style it through :global under .content. Block content is one
+	   short block (a heading, a claim), so headings must not blow up a tree row:
+	   collapse every level to the row's own size and let weight carry emphasis. */
+	.content :global(p) {
+		margin: 0;
+	}
+	.content :global(h1),
+	.content :global(h2),
+	.content :global(h3),
+	.content :global(h4),
+	.content :global(h5),
+	.content :global(h6) {
+		margin: 0;
+		font-size: 1em;
+		font-weight: 650;
+	}
+	.content :global(ul),
+	.content :global(ol) {
+		margin: 0.15rem 0;
+		padding-left: 1.1rem;
+	}
+	.content :global(code) {
 		white-space: pre-wrap;
+		font-size: 0.92em;
+		padding: 0.05rem 0.25rem;
+		border-radius: 3px;
+		background: rgba(127, 127, 127, 0.16);
+	}
+	.content :global(pre) {
+		margin: 0.2rem 0;
+		padding: 0.35rem 0.5rem;
+		border-radius: 4px;
+		overflow-x: auto;
+		background: rgba(127, 127, 127, 0.12);
+	}
+	.content :global(pre code) {
+		padding: 0;
+		background: none;
+	}
+	.content :global(a) {
+		color: #3b6fd6;
+	}
+	.content :global(blockquote) {
+		margin: 0.15rem 0;
+		padding-left: 0.5rem;
+		border-left: 2px solid rgba(127, 127, 127, 0.35);
+		opacity: 0.85;
+	}
+	.content :global(:first-child) {
+		margin-top: 0;
+	}
+	.content :global(:last-child) {
+		margin-bottom: 0;
 	}
 	.links-toggle {
 		flex: none;
@@ -318,9 +411,7 @@
 	.ghost-content {
 		flex: 1;
 		padding: 0.1rem 0.3rem;
-	}
-	.ghost-content code {
-		white-space: pre-wrap;
+		text-decoration: line-through;
 	}
 	/* accept/reject are a per-row status action, not a hover affordance like
 	   .target: always visible while a block is unreviewed, so the decision is
