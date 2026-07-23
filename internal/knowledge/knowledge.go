@@ -55,6 +55,11 @@ type Edge struct {
 	// the owner, born reviewed). Derived by storage on read; never
 	// written by callers.
 	Reviewed bool
+
+	// Removing reports that this is a pending removal (an unreviewed unlink):
+	// the edge is already hidden from the graph but the removal awaits review,
+	// which can reject it to restore the link. Derived by storage on read.
+	Removing bool
 }
 
 // LinkedBlock is a neighbour reachable over a typed link, hydrated for

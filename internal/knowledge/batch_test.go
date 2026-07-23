@@ -172,6 +172,32 @@ func TestPrepareOpsResolvesLinkEndpoints(t *testing.T) {
 	}
 }
 
+func TestPrepareOpsResolvesUnlinkEndpoints(t *testing.T) {
+	// Unlink is a first-class op: it validates on from/to and its endpoints
+	// resolve through temp ids exactly like a link's, so an unlink can name
+	// blocks added earlier in the same batch.
+	ops := []Op{
+		addOp("t1", "", "A"),
+		addOp("t2", "", "B"),
+		{Kind: OpUnlink, From: "t1", To: "t2", Relation: RelationRelated},
+	}
+	got, _, err := prepareOps(ops, seqIDs())
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	un := got[2]
+	if un.Kind != OpUnlink || un.From != "U1" || un.To != "U2" {
+		t.Errorf("unlink endpoints not resolved: %+v", un)
+	}
+}
+
+func TestPrepareOpsRejectsUnlinkWithoutEndpoints(t *testing.T) {
+	ops := []Op{{Kind: OpUnlink, From: "", To: "x", Relation: RelationRelated}}
+	if _, _, err := prepareOps(ops, seqIDs()); !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("unlink with empty from: got %v, want ErrInvalidOps", err)
+	}
+}
+
 func TestPrepareOpsOrdersParentsBeforeChildren(t *testing.T) {
 	// The ops arrive child-first (an MCP client need not pre-order them);
 	// prepareOps must topologically order parents before children and assign

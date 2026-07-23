@@ -117,17 +117,36 @@ func (r *Repo) MarkEdgeReviewed(ctx context.Context, from, to knowledge.ID, rel 
 // block revision. A reviewed edge (or an absent one) is refused with
 // ErrNotFound: only a pending edge is deletable this way.
 func (r *Repo) RejectEdge(ctx context.Context, from, to knowledge.ID, rel knowledge.Relation) error {
-	res, err := r.db.ExecContext(ctx,
-		`DELETE FROM edges WHERE from_id = ? AND to_id = ? AND relation = ? AND reviewed = 0`,
+	// Rejecting a pending change means undoing it, and the two pending kinds
+	// undo in opposite directions: a pending addition (deleted = 0) is
+	// hard-deleted — there is nothing to roll back to — while a pending removal
+	// (deleted = 1, an AI unlink) is restored to a live, reviewed edge. Both
+	// require reviewed = 0; a reviewed edge is not pending and is refused.
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE edges SET deleted = 0, reviewed = 1
+		WHERE from_id = ? AND to_id = ? AND relation = ? AND reviewed = 0 AND deleted = 1`,
 		string(from), string(to), string(rel))
 	if err != nil {
 		return fmt.Errorf("reject edge %s->%s: %w", from, to, translate(err))
 	}
-	n, err := res.RowsAffected()
+	restored, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("reject edge %s->%s: %w", from, to, translate(err))
 	}
-	if n == 0 {
+	if restored > 0 {
+		return nil // a pending removal, restored
+	}
+	res, err = r.db.ExecContext(ctx,
+		`DELETE FROM edges WHERE from_id = ? AND to_id = ? AND relation = ? AND reviewed = 0 AND deleted = 0`,
+		string(from), string(to), string(rel))
+	if err != nil {
+		return fmt.Errorf("reject edge %s->%s: %w", from, to, translate(err))
+	}
+	dropped, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reject edge %s->%s: %w", from, to, translate(err))
+	}
+	if dropped == 0 {
 		return fmt.Errorf("reject edge %s->%s: %w", from, to, knowledge.ErrNotFound)
 	}
 	return nil

@@ -199,14 +199,14 @@ const originMCP = "mcp"
 // the client's. Keeping it separate also decouples the tool's wire schema from
 // the domain type, so domain-only fields never leak into the public contract.
 type opInput struct {
-	Kind      string `json:"op" jsonschema:"the operation: add/edit/move/delete/link"`
+	Kind      string `json:"op" jsonschema:"the operation: add/edit/move/delete/link/unlink"`
 	TempID    string `json:"temp_id,omitzero" jsonschema:"temporary id of a block being added"`
 	Parent    string `json:"parent,omitzero" jsonschema:"temp_id or existing id; empty means topic root"`
 	BlockID   string `json:"block_id,omitzero" jsonschema:"existing block to edit/move/delete"`
 	Content   string `json:"content,omitzero" jsonschema:"the block content"`
-	From      string `json:"from,omitzero" jsonschema:"link source (temp_id or existing id)"`
-	To        string `json:"to,omitzero" jsonschema:"link target (temp_id or existing id)"`
-	Relation  string `json:"relation,omitzero" jsonschema:"the link relation"`
+	From      string `json:"from,omitzero" jsonschema:"link/unlink source (temp_id or existing id)"`
+	To        string `json:"to,omitzero" jsonschema:"link/unlink target (temp_id or existing id)"`
+	Relation  string `json:"relation,omitzero" jsonschema:"the link relation (link/unlink)"`
 	Rationale string `json:"rationale,omitzero" jsonschema:"why the AI makes this change"`
 }
 
