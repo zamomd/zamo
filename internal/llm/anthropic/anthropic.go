@@ -107,12 +107,14 @@ func (c *Client) GenerateTree(ctx context.Context, topic, hint string) ([]knowle
 	if err != nil {
 		return nil, err
 	}
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseParsing})
 	return llm.ParseOps([]byte(text))
 }
 
 // complete performs one Messages API call and returns the concatenated text of
 // the reply's text blocks.
 func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseRequesting})
 	key, err := c.key()
 	if err != nil {
 		return "", fmt.Errorf("%w: read API key: %w", knowledge.ErrLLMUnavailable, err)
@@ -138,6 +140,7 @@ func (c *Client) complete(ctx context.Context, prompt string) (string, error) {
 	req.Header.Set("X-Api-Key", key)
 	req.Header.Set("Anthropic-Version", apiVersion)
 
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting})
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
@@ -228,5 +231,6 @@ func (c *Client) GenerateEdit(
 	if err != nil {
 		return nil, err
 	}
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseParsing})
 	return llm.ParseEditOps([]byte(text))
 }

@@ -114,11 +114,12 @@ func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string,
 
 // runGUI runs the Wails application; it blocks until the window closes.
 func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
+	bind := wailsbind.New(svc, mgr)
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
-			application.NewService(wailsbind.New(svc, mgr)),
+			application.NewService(bind),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the
@@ -131,6 +132,9 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
+	// The event manager exists only after the app is built; wire it now, before
+	// Run, so generation progress reaches the frontend.
+	bind.SetEmitter(app.Event)
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",

@@ -295,6 +295,29 @@ func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
+func TestGenerateTreeReportsProgressPhases(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":`+
+			jsonString(`{"content":"root","children":[]}`)+`}]}`)
+	})
+
+	var phases []knowledge.GenerationPhase
+	ctx := knowledge.WithProgress(t.Context(), func(p knowledge.Progress) {
+		phases = append(phases, p.Phase)
+	})
+
+	if _, err := c.GenerateTree(ctx, "Go contexts", ""); err != nil {
+		t.Fatalf("GenerateTree: %v", err)
+	}
+	want := []knowledge.GenerationPhase{
+		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
+	}
+	if !slices.Equal(phases, want) {
+		t.Errorf("phases = %v, want %v", phases, want)
+	}
+}
+
 // bodyText concatenates the user message text of a decoded request body.
 func bodyText(body map[string]any) string {
 	msgs, _ := body["messages"].([]any)

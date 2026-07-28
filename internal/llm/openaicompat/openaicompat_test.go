@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -307,6 +308,51 @@ func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
 	}
 	if followed.Load() {
 		t.Error("the prompt was re-POSTed to the redirect target")
+	}
+}
+
+func TestGenerateTreeReportsProgressPhases(t *testing.T) {
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(tree))
+	})
+
+	var phases []knowledge.GenerationPhase
+	ctx := knowledge.WithProgress(t.Context(), func(p knowledge.Progress) {
+		phases = append(phases, p.Phase)
+	})
+
+	if _, err := c.GenerateTree(ctx, "Go contexts", ""); err != nil {
+		t.Fatalf("GenerateTree: %v", err)
+	}
+	want := []knowledge.GenerationPhase{
+		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
+	}
+	if !slices.Equal(phases, want) {
+		t.Errorf("phases = %v, want %v", phases, want)
+	}
+}
+
+func TestGenerateEditReportsProgressPhases(t *testing.T) {
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(`[{"op":"edit","block_id":"01A","content":"x"}]`))
+	})
+
+	var phases []knowledge.GenerationPhase
+	ctx := knowledge.WithProgress(t.Context(), func(p knowledge.Progress) {
+		phases = append(phases, p.Phase)
+	})
+
+	scope := []knowledge.Block{{ID: "01A", Content: "old"}}
+	if _, err := c.GenerateEdit(ctx, scope, "revise it"); err != nil {
+		t.Fatalf("GenerateEdit: %v", err)
+	}
+	want := []knowledge.GenerationPhase{
+		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
+	}
+	if !slices.Equal(phases, want) {
+		t.Errorf("phases = %v, want %v", phases, want)
 	}
 }
 

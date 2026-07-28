@@ -10,16 +10,51 @@ import (
 	"github.com/cominddev/comind/internal/settings"
 )
 
+// GenerationProgressEvent is the name of the Wails event carrying live LLM
+// generation progress to the frontend. Its payload is a progressPayload.
+const GenerationProgressEvent = "generation:progress"
+
+// Emitter delivers a named event with a payload to the frontend. The Wails
+// application's event manager (app.Event) satisfies it; tests pass a fake. The
+// bool return is Wails' delivered-flag, which the bridge ignores.
+type Emitter interface {
+	Emit(name string, data ...any) bool
+}
+
+// progressPayload is the JSON shape the frontend reads from a
+// GenerationProgressEvent: the coarse phase of the in-flight generation.
+type progressPayload struct {
+	Phase string `json:"phase"`
+}
+
 // App is the object bound into the Wails runtime; the frontend calls
 // its methods.
 type App struct {
 	svc      *knowledge.Service
 	settings *settings.Manager
+	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless
 }
 
 // New wraps the service and the settings manager for binding.
 func New(svc *knowledge.Service, mgr *settings.Manager) *App {
 	return &App{svc: svc, settings: mgr}
+}
+
+// SetEmitter wires the frontend event emitter. It is called once at startup,
+// after the Wails application (whose event manager is the emitter) is built but
+// before it runs, so no generation can be in flight yet.
+func (a *App) SetEmitter(e Emitter) { a.emit = e }
+
+// withProgress returns a context that forwards LLM generation progress to the
+// frontend as GenerationProgressEvent events. With no emitter set (headless,
+// tests) it returns ctx unchanged, so Report stays a no-op.
+func (a *App) withProgress(ctx context.Context) context.Context {
+	if a.emit == nil {
+		return ctx
+	}
+	return knowledge.WithProgress(ctx, func(p knowledge.Progress) {
+		a.emit.Emit(GenerationProgressEvent, progressPayload{Phase: string(p.Phase)})
+	})
 }
 
 // The methods below are direct pass-throughs; the Wails frontend binds
@@ -32,13 +67,13 @@ func (a *App) TopicMap(ctx context.Context) ([]knowledge.Block, error) {
 
 // ExpandTopic passes the call to knowledge.Service.
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
-	return a.svc.ExpandTopic(ctx, topic, hint)
+	return a.svc.ExpandTopic(a.withProgress(ctx), topic, hint)
 }
 
 // EditWithAI passes the call to knowledge.Service. The frontend supplies the
 // scope (a block or subtree root) and the user's text command.
 func (a *App) EditWithAI(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Applied, error) {
-	return a.svc.EditWithAI(ctx, scope, instruction)
+	return a.svc.EditWithAI(a.withProgress(ctx), scope, instruction)
 }
 
 // GetSubtree passes the call to knowledge.Service.

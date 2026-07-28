@@ -1,3 +1,4 @@
+import { Events } from "@wailsio/runtime";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
 	type Block,
@@ -13,6 +14,18 @@ import { changes } from "./changes.svelte";
 // How long typing settles before a link-target query is sent, so search-as-
 // you-type is not a backend call per keystroke. Mirrors the search store.
 const linkQueryDebounceMs = 200;
+
+// generationProgressEvent mirrors wailsbind.GenerationProgressEvent: the Go
+// side emits it with a { phase, detail } payload while an AI generation runs.
+const generationProgressEvent = "generation:progress";
+
+// generationPhaseLabels turns a backend phase into the line shown while a
+// generation is in flight; an unknown phase falls back to a generic message.
+const generationPhaseLabels: Record<string, string> = {
+	requesting: "sending the request…",
+	awaiting: "the model is working…",
+	parsing: "applying the response…",
+};
 
 // BaseStore is the Base tab's view-model: browse the tree and drive the two AI
 // flows from one command field. Expansion (no target) and restructuring (a
@@ -93,6 +106,17 @@ class BaseStore {
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
 	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""));
+
+	constructor() {
+		// Live generation progress: while a command is in flight (busy), reflect
+		// the backend's phase in the status line. Events outside a generation are
+		// ignored so a late one never overwrites an idle or already-final status.
+		Events.On(generationProgressEvent, (e) => {
+			if (!this.busy) return;
+			const data = e.data as { phase?: string } | undefined;
+			this.status = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…";
+		});
+	}
 
 	// activate re-reads the data on every mount; the UI state above persists.
 	activate(): void {
