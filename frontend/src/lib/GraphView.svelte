@@ -1,38 +1,19 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { graph } from "../stores/graph.svelte";
-	import { circleBox, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
+	import { circleBox, clampPad, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
 	import { openTopic } from "./navigate";
 
-	// Padding around the fitted bounding box, in the SVG's own units.
-	const PAD = 24;
+	// The fixed screen-space allowance around the fitted circles, before
+	// clampPad below has a chance to cap it. Real screen pixels, like
+	// LABEL_GAP, so the margin reads the same regardless of zoom — see box.
+	const PAD_PX = 24;
 	// Vertical gap between a node's circle and its label's baseline, in real
 	// screen pixels — see textScale below for why this is pixels and not
 	// viewBox units.
 	const LABEL_GAP = 12;
 
-	// Every character in the embedded JetBrains Mono face advances exactly
-	// 0.6× the font-size — measured with canvas measureText at five font
-	// sizes and a sample spanning letters, digits and spaces; all five sizes
-	// agreed to within floating-point noise. A monospace face makes a label's
-	// pixel width a direct product of its (bounded, see truncateLabel)
-	// character count, with no DOM measurement needed to fit it.
-	const CHAR_ADVANCE_EM = 0.6;
-	// A label's descenders reach below its baseline by roughly 0.18× the
-	// font-size for this face and the glyphs topics realistically use (also
-	// measured, via actualBoundingBoxDescent on the sample "Mgjpqy"); 0.2
-	// rounds that up for margin rather than fitting to the exact figure.
-	const LABEL_DESCENT_EM = 0.2;
-
 	onMount(() => {
-		// getPropertyValue reads the applied --size-small token rather than
-		// duplicating its "12" as an independent literal that could drift from
-		// the CSS below if the token is ever retuned.
-		const raw = getComputedStyle(document.documentElement).getPropertyValue("--size-small").trim();
-		const parsed = Number.parseFloat(raw);
-		if (Number.isFinite(parsed)) {
-			labelFontPx = parsed;
-		}
 		void graph.load();
 	});
 
@@ -46,7 +27,6 @@
 	// scaling, on whichever axis actually constrains the fit.
 	let svgPxWidth = $state(0);
 	let svgPxHeight = $state(0);
-	let labelFontPx = $state(12);
 
 	const nodes = $derived(
 		graph.topics.map((t) => {
@@ -61,45 +41,26 @@
 			.filter((l): l is { a: { x: number; y: number }; b: { x: number; y: number } } => l.a !== undefined && l.b !== undefined),
 	);
 
+	// Only circles are fitted — never labels. A label has a fixed screen
+	// size (see textScale/the label <g> below), so its extent in viewBox
+	// units is inversely proportional to the scale; folding it into the box
+	// that determines that same scale is positive feedback, and it diverged
+	// on windows this app does not prevent (see task-5 report). A label
+	// simply gets clipped by the SVG when a pane is too narrow to hold it —
+	// bounded clipping of an annotation beats an unreadable map, and the
+	// circles, which are the map, are never affected by a label's length.
 	const circleBoxes = $derived(nodes.map((n) => circleBox(n.x, n.y, n.r)));
 
-	// A label's box in viewBox units at a given scale: the pixel footprint
-	// (constant — see CHAR_ADVANCE_EM/LABEL_DESCENT_EM above) converted by
-	// that scale, anchored under the circle's own bottom edge.
-	function labelBoxAt(n: { x: number; y: number; r: number; label: string }, scale: number) {
-		const halfWidthPx = (n.label.length * CHAR_ADVANCE_EM * labelFontPx) / 2;
-		const heightPx = LABEL_GAP + labelFontPx * LABEL_DESCENT_EM;
-		const halfWidth = halfWidthPx * scale;
-		const height = heightPx * scale;
-		return { minX: n.x - halfWidth, maxX: n.x + halfWidth, minY: n.y + n.r, maxY: n.y + n.r + height };
-	}
-
-	// Fitting a label's footprint requires knowing the scale it will render
-	// at, and the scale depends on the fitted box — the box being computed.
-	// A single estimate-then-refit undershoots: growing the box to fit a
-	// label computed at one scale can itself raise the scale (most sharply
-	// when the SVG is narrow relative to a label's fixed pixel width), which
-	// the single-shot version never re-checked. REFINEMENT_PASSES re-derives
-	// the scale from the box it produced and refits again, repeatedly. Each
-	// pass's growth shrinks geometrically (ratio = widest label's pixel width
-	// ÷ the SVG's own pixel width) provided that ratio is below 1 — true
-	// whenever the SVG is wider than one fully truncated label, which every
-	// window size this was measured against (see task-5 report) satisfies —
-	// so a fixed pass count converges to a sub-pixel residual rather than
-	// iterating to a literal, input-dependent fixed point.
-	const REFINEMENT_PASSES = 20;
-
+	// One-shot, not iterative: the circles-only scale converts PAD_PX to user
+	// units exactly once, and that result feeds nothing back into itself.
+	// clampPad then hard-caps it so padding can never dominate the fit
+	// regardless of window shape — the guard the old iterative version
+	// lacked.
 	const box = $derived.by(() => {
-		let fitted = viewBox(circleBoxes, PAD);
-		for (let i = 0; i < REFINEMENT_PASSES; i++) {
-			const [, , w, h] = fitted.split(" ").map(Number);
-			const scale = scaleFor(w, h, svgPxWidth, svgPxHeight);
-			fitted = viewBox(
-				[...circleBoxes, ...nodes.map((n) => labelBoxAt(n, scale))],
-				PAD,
-			);
-		}
-		return fitted;
+		const [, , w0, h0] = viewBox(circleBoxes, 0).split(" ").map(Number);
+		const scale = scaleFor(w0, h0, svgPxWidth, svgPxHeight);
+		const pad = clampPad(circleBoxes, PAD_PX * scale);
+		return viewBox(circleBoxes, pad);
 	});
 
 	const textScale = $derived.by(() => {

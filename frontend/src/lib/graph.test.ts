@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { circleBox, layout, type Point, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
+import {
+	circleBox,
+	clampPad,
+	layout,
+	type Point,
+	radiusOf,
+	reducedLayout,
+	scaleFor,
+	truncateLabel,
+	viewBox,
+} from "./graph";
 
 // topics builds n topics with ids t0..t(n-1), the ULID order the read path
 // guarantees.
@@ -156,11 +166,44 @@ describe("viewBox", () => {
 		expect(h).toBeGreaterThan(0);
 	});
 
-	it("fits boxes that are not circles, such as a label's footprint", () => {
+	it("fits boxes that are not circles", () => {
+		// viewBox itself stays generic — clampPad below reuses it with pad 0
+		// to measure a box's own content extent — even though GraphView now
+		// only ever calls it with circles.
 		const box = viewBox([circleBox(0, 0, 5), { minX: 50, minY: -2, maxX: 90, maxY: 6 }], 4);
 		const [minX, minY, w] = box.split(" ").map(Number);
 		expect(minX + w).toBeGreaterThanOrEqual(94);
 		expect(minY).toBeLessThanOrEqual(-6);
+	});
+});
+
+describe("clampPad", () => {
+	it("passes small requests through unchanged", () => {
+		const boxes = [{ minX: 0, minY: 0, maxX: 100, maxY: 40 }];
+		expect(clampPad(boxes, 5)).toBe(5);
+	});
+
+	it("clamps a large request to a fraction of the tighter content axis", () => {
+		const boxes = [{ minX: 0, minY: 0, maxX: 100, maxY: 40 }]; // w=100, h=40
+		expect(clampPad(boxes, 1000)).toBe(10); // 0.25 * 40
+	});
+
+	it("returns the request unclamped when there is no content to dominate", () => {
+		expect(clampPad([], 24)).toBe(24);
+	});
+
+	// This is the property that actually matters — not the clamp's internal
+	// arithmetic, but what it guarantees about the fitted box: a node's
+	// rendered size cannot collapse, no matter how large a padding request a
+	// runaway scale conversion produces. The old iterative version failed
+	// exactly this, unmeasured, at 520×760 with six topics.
+	it("never lets padding shrink the circle box below half the fitted viewBox on either axis", () => {
+		const boxes = [circleBox(0, 0, 10)];
+		const pad = clampPad(boxes, 1_000_000);
+		const [, , w, h] = viewBox(boxes, pad).split(" ").map(Number);
+		const content = 20; // 2 * r
+		expect(content / w).toBeGreaterThanOrEqual(0.5);
+		expect(content / h).toBeGreaterThanOrEqual(0.5);
 	});
 });
 
@@ -194,5 +237,28 @@ describe("truncateLabel", () => {
 		expect(result.length).toBeLessThan(title.length);
 		expect(result.endsWith("…")).toBe(true);
 		expect(title.startsWith(result.slice(0, -1))).toBe(true);
+	});
+
+	// Pins the actual bound rather than just "shorter than the input": a
+	// change to the internal MAX_LABEL_CHARS constant (28 → 60, say) leaves
+	// every other truncateLabel test green, since they only assert relative
+	// properties. This one fails, because it names the number.
+	it("bounds a long title to exactly 28 characters, ellipsis included", () => {
+		const title = "x".repeat(100);
+		expect(truncateLabel(title).length).toBe(28);
+	});
+
+	it("truncates by code point, not UTF-16 code unit, so a surrogate pair is never split", () => {
+		// Each 🎯 is one code point but two UTF-16 units; 30 of them is well
+		// past the 28-character bound, forcing a cut. Slicing by code unit
+		// (the previous implementation's title.slice) can land inside a pair
+		// and emit a lone surrogate, which renders as U+FFFD.
+		const title = "🎯".repeat(30);
+		const result = truncateLabel(title);
+		expect(result.endsWith("…")).toBe(true);
+		expect(result).not.toContain("�");
+		// Everything before the ellipsis must be whole target emoji — never a
+		// half-pair left over from a mid-code-point cut.
+		expect(Array.from(result.slice(0, -1)).every((ch) => ch === "🎯")).toBe(true);
 	});
 });

@@ -178,10 +178,14 @@ export function circleBox(x: number, y: number, r: number): Box {
 
 // viewBox fits every given box, plus pad, into an SVG viewBox string. Fitting
 // the content is what lets the first version ship without pan or zoom. An
-// empty graph still needs a box with area, or the SVG collapses. Boxes are
-// not necessarily circles: GraphView also folds each label's own footprint
-// in (computed via scaleFor and truncateLabel below), so a label cannot
-// render outside the region this function fits.
+// empty graph still needs a box with area, or the SVG collapses. Only nodes'
+// circles are ever passed in (see GraphView) — a label is deliberately left
+// out of the fit and simply clipped by the SVG on a pane too narrow to hold
+// it, because letting a label's screen-constant pixel size feed back into
+// the very box that determines its own scale is a runaway: shrinking the
+// pane grows the box to fit the label, which shrinks the scale, which grows
+// the label further in box units. Bounded clipping of an annotation beats an
+// unreadable map.
 export function viewBox(boxes: Box[], pad: number): string {
 	if (boxes.length === 0) {
 		return `0 0 ${2 * pad} ${2 * pad}`;
@@ -217,16 +221,45 @@ export function scaleFor(boxWidth: number, boxHeight: number, pxWidth: number, p
 	return Math.max(boxWidth / pxWidth, boxHeight / pxHeight);
 }
 
+// Padding exists so the map has breathing room, not to become the map: a
+// fixed pixel allowance converted to user units by the circles' own scale
+// (see GraphView) has no upper bound on its own — on a narrow enough pane
+// that conversion alone can ask for padding many times the content's size.
+// clampPad is the hard ceiling that makes that structurally impossible
+// rather than merely unlikely: whatever is requested, the padding actually
+// used can never exceed a quarter of the tighter axis of the boxes it
+// surrounds, so the circles a reader is looking at can never be squeezed
+// toward nothing by their own margin. A quarter is generous room on typical
+// windows (see task-5 report measurements) while still bounding the box's
+// total inflation from padding to at most 1.5× the content's own extent in
+// the worst case, against the roughly 4× this replaces.
+const PAD_CLAMP_FRACTION = 0.25;
+
+export function clampPad(boxes: Box[], requestedPad: number): number {
+	if (boxes.length === 0) {
+		return requestedPad;
+	}
+	const [, , w, h] = viewBox(boxes, 0).split(" ").map(Number);
+	return Math.min(requestedPad, PAD_CLAMP_FRACTION * Math.min(w, h));
+}
+
 // A topic's title is its root block's content — arbitrary prose, potentially
 // a full sentence — so a label needs a bounded length regardless of the
-// map's physical size. Bounding it keeps one long title from dictating the
-// viewBox fit, and also narrows (without eliminating — see the plan's parked
-// item) how far a label can reach over a neighbouring node's hit area.
+// map's physical size. Bounding it also narrows (without eliminating — see
+// the plan's parked item) how far a label can reach over a neighbouring
+// node's hit area. It no longer has anything to do with the viewBox fit —
+// see viewBox's comment above — this is purely about not drawing an entire
+// sentence next to a node.
 const MAX_LABEL_CHARS = 28;
 
 export function truncateLabel(title: string): string {
-	if (title.length <= MAX_LABEL_CHARS) {
+	// Array.from splits on Unicode code points, not UTF-16 code units: a
+	// title with astral characters (emoji, and most CJK is within the BMP but
+	// some ideographs and all emoji are not) would otherwise risk slicing a
+	// surrogate pair in half, rendering the broken half as U+FFFD.
+	const codePoints = Array.from(title);
+	if (codePoints.length <= MAX_LABEL_CHARS) {
 		return title;
 	}
-	return `${title.slice(0, MAX_LABEL_CHARS - 1)}…`;
+	return `${codePoints.slice(0, MAX_LABEL_CHARS - 1).join("")}…`;
 }
