@@ -28,7 +28,17 @@
 				<ul>
 					{#each search.results as hit (hit.ID)}
 						<li>
-							<button type="button" class="row hit" onclick={() => search.jumpTo(hit)}>
+							<!-- The sidebar is mounted in every mode, so a jump has to bring
+							     the tree back into view or it lands somewhere the reader
+							     cannot see. -->
+							<button
+								type="button"
+								class="row hit"
+								onclick={() => {
+									shell.setMode("tree");
+									search.jumpTo(hit);
+								}}
+							>
 								{hit.Content}
 							</button>
 						</li>
@@ -56,7 +66,17 @@
 							<ul class="sub">
 								{#each row.children as child (child.id)}
 									<li>
-										<button type="button" class="row child" onclick={() => base.reveal(child.id)}>
+										<!-- The sidebar is mounted in every mode, so a jump has to
+										     bring the tree back into view or it lands somewhere the
+										     reader cannot see. -->
+										<button
+											type="button"
+											class="row child"
+											onclick={() => {
+												shell.setMode("tree");
+												base.reveal(child.id);
+											}}
+										>
 											{child.title}
 										</button>
 									</li>
