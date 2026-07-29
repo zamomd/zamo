@@ -31,6 +31,8 @@ func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []Exp
 type fakeRepo struct {
 	topics     []Block // what GetTopics returns
 	topicsErr  error
+	graph      TopicGraph // what GetTopicGraph returns
+	graphErr   error
 	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
@@ -85,6 +87,10 @@ type fakeRepo struct {
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
+
+func (f *fakeRepo) GetTopicGraph(context.Context) (TopicGraph, error) {
+	return f.graph, f.graphErr
+}
 
 func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 	f.gotSubtree = root

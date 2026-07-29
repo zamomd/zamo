@@ -8,6 +8,9 @@ type Repository interface {
 	GetTopics(ctx context.Context) ([]Block, error)
 	GetSubtree(ctx context.Context, root ID) ([]Block, error)
 	GetBlocks(ctx context.Context, ids []ID) (map[ID]Block, error)
+	// GetTopicGraph returns every topic with its block count plus the edges
+	// between topics, aggregated from block-level links.
+	GetTopicGraph(ctx context.Context) (TopicGraph, error)
 
 	// ApplyOps applies a prepared, ordered batch in one transaction,
 	// writing one revision per touched block plus the projection.

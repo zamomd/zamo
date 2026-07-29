@@ -1,0 +1,102 @@
+package sqlite
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/cominddev/comind/internal/knowledge"
+)
+
+// topicRoots pairs every block with the topic root it descends from. Both graph
+// queries start here. UNION, not UNION ALL: on a database whose parent_id
+// somehow became cyclic the repeated row is discarded and the walk terminates
+// instead of looping forever (ARCHITECTURE.md §5.2), the same guard GetSubtree
+// uses.
+const topicRoots = `
+WITH RECURSIVE roots(id, root) AS (
+    SELECT id, id FROM blocks WHERE parent_id IS NULL
+    UNION
+    SELECT b.id, r.root FROM blocks b JOIN roots r ON b.parent_id = r.id
+)`
+
+// GetTopicGraph implements knowledge.Repository: the topic-level map. Two
+// queries rather than one join — a block count per topic and an edge set have
+// different grains, and multiplying them together in SQL only to divide them
+// back out in Go would be the more fragile shape.
+func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
+	topics, err := r.topicNodes(ctx)
+	if err != nil {
+		return knowledge.TopicGraph{}, err
+	}
+	edges, err := r.topicEdges(ctx)
+	if err != nil {
+		return knowledge.TopicGraph{}, err
+	}
+	return knowledge.TopicGraph{Topics: topics, Edges: edges}, nil
+}
+
+// topicNodes reads every topic root with the size of its subtree. Ordered by
+// id — ULID order, so creation order — because the layout seeds node positions
+// by index and an unstable order would reshuffle the map between reads.
+func (r *Repo) topicNodes(ctx context.Context) ([]knowledge.TopicNode, error) {
+	const q = topicRoots + `
+SELECT r.root, t.content, COUNT(*)
+FROM roots r JOIN blocks t ON t.id = r.root
+GROUP BY r.root, t.content
+ORDER BY r.root`
+
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("read topic nodes: %w", translate(err))
+	}
+	defer rows.Close()
+
+	var out []knowledge.TopicNode
+	for rows.Next() {
+		var n knowledge.TopicNode
+		if err := rows.Scan(&n.ID, &n.Title, &n.Blocks); err != nil {
+			return nil, fmt.Errorf("read topic nodes: %w", translate(err))
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read topic nodes: %w", translate(err))
+	}
+	return out, nil
+}
+
+// topicEdges lifts block-level links to the topic level. The CASE pair orders
+// each edge's endpoints, so A->B and B->A collapse to one row under DISTINCT;
+// the root inequality drops links inside a single topic; and joining both
+// endpoints against roots drops an edge whose block no longer exists — the
+// same visibility rule GetEdges spells out with EXISTS.
+func (r *Repo) topicEdges(ctx context.Context) ([]knowledge.TopicEdge, error) {
+	const q = topicRoots + `
+SELECT DISTINCT
+    CASE WHEN f.root < t.root THEN f.root ELSE t.root END AS a,
+    CASE WHEN f.root < t.root THEN t.root ELSE f.root END AS b
+FROM edges e
+JOIN roots f ON f.id = e.from_id
+JOIN roots t ON t.id = e.to_id
+WHERE e.deleted = 0 AND f.root <> t.root
+ORDER BY a, b`
+
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("read topic edges: %w", translate(err))
+	}
+	defer rows.Close()
+
+	var out []knowledge.TopicEdge
+	for rows.Next() {
+		var e knowledge.TopicEdge
+		if err := rows.Scan(&e.From, &e.To); err != nil {
+			return nil, fmt.Errorf("read topic edges: %w", translate(err))
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read topic edges: %w", translate(err))
+	}
+	return out, nil
+}
