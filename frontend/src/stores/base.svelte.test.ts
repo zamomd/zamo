@@ -16,10 +16,22 @@ vi.mock("@wailsio/runtime", () => ({
 const reloadFixture = vi.hoisted(() => ({
 	topics: [] as Block[],
 	subtrees: {} as Record<string, Block[]>,
+	// topicMapError makes the read fail; gate holds it open, so a test can act
+	// while a reload is still in flight and see which act wins.
+	topicMapError: null as Error | null,
+	gate: null as Promise<void> | null,
 }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
 	App: {
-		TopicMap: async () => reloadFixture.topics,
+		TopicMap: async () => {
+			if (reloadFixture.gate !== null) {
+				await reloadFixture.gate;
+			}
+			if (reloadFixture.topicMapError !== null) {
+				throw reloadFixture.topicMapError;
+			}
+			return reloadFixture.topics;
+		},
 		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
 		ExpandTopic: async () => {},
 		EditWithAI: async () => {},
@@ -57,6 +69,9 @@ beforeEach(() => {
 	base.selectedTopicID = "go";
 	base.collapsed.clear();
 	base.highlightID = null;
+	base.error = "";
+	reloadFixture.topicMapError = null;
+	reloadFixture.gate = null;
 });
 
 describe("selectTopic", () => {
@@ -115,6 +130,43 @@ describe("selectTopic", () => {
 		// pane keeps showing a real topic instead of the empty-state message.
 		expect(base.selectedTopicID).toBe("go");
 		expect(base.selectedTree).not.toBe(null);
+	});
+
+	// The re-read above is fired from markup, which cannot await it, so a second
+	// act can land while it is still in flight. Whatever the reader did last has
+	// to win, or the older click drags them back off the topic they moved to.
+	it("does not let a re-read land on top of a later selection", async () => {
+		let release: () => void = () => {};
+		reloadFixture.gate = new Promise((resolve) => {
+			release = () => resolve();
+		});
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("rust", "")];
+		reloadFixture.subtrees = {
+			go: [block("go", "")],
+			sqlite: [block("sqlite", "")],
+			rust: [block("rust", "")],
+		};
+
+		const stale = base.selectTopic("rust");
+		// "sqlite" is already in the forest, so this resolves without a re-read
+		// and is the reader's latest act.
+		await base.selectTopic("sqlite");
+		release();
+		await stale;
+
+		expect(base.selectedTopicID).toBe("sqlite");
+	});
+
+	// Nobody awaits selectTopic, so a rejected re-read has no other route to the
+	// reader: without this they click a node, stay where they were, and are told
+	// nothing.
+	it("reports a failed re-read instead of failing silently", async () => {
+		reloadFixture.topicMapError = new Error("database is locked");
+
+		await base.selectTopic("rust");
+
+		expect(base.error).not.toBe("");
+		expect(base.selectedTopicID).toBe("go");
 	});
 });
 
