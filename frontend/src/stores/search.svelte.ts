@@ -1,17 +1,16 @@
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { messageFor } from "../lib/callerror";
-import { base } from "./base.svelte";
 
 // How long typing settles before a query is sent, so search-as-you-type is not
 // a backend call per keystroke.
 const debounceMs = 200;
 
 // SearchStore is the search field's view-model: a live, debounced full-text
-// query over the base, and the jump that lands a result back in the tree. It is
-// read-only, so it stays independent of the AI and inline-edit flows the base
-// store guards with `busy`. Like the other stores it lives at module level, so
-// the field, its text and its results survive a tab switch.
+// query over the base. It is read-only, so it stays independent of the AI and
+// inline-edit flows the base store guards with `busy`. Like the other stores
+// it lives at module level, so the field, its text and its results survive a
+// mode switch.
 class SearchStore {
 	query = $state("");
 	results = $state<Block[]>([]);
@@ -64,12 +63,6 @@ class SearchStore {
 			this.status = "";
 			this.error = messageFor(err);
 		}
-	}
-
-	// jumpTo leaves the results in place so the reader can walk the list without
-	// searching again.
-	jumpTo(block: Block): void {
-		base.reveal(block.ID);
 	}
 
 	clear(): void {

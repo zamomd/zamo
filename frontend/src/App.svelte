@@ -2,6 +2,7 @@
 	import { onMount } from "svelte";
 	import ChangesView from "./ChangesView.svelte";
 	import ModeRail from "./lib/ModeRail.svelte";
+	import { jumpToBlock } from "./lib/navigate";
 	import Sidebar from "./lib/Sidebar.svelte";
 	import SettingsView from "./SettingsView.svelte";
 	import { base } from "./stores/base.svelte";
@@ -9,39 +10,34 @@
 	import { shell } from "./stores/shell.svelte";
 	import TopicView from "./TopicView.svelte";
 
-	// Three zones: the mode rail, the topic sidebar, and the main area whose
-	// content the rail selects. Unlike the tab shell this replaced, the views no
-	// longer remount on every switch — the sidebar and the base store stay put,
-	// so switching to the changes list and back keeps the reader's place.
-	function jump(id: string): void {
-		shell.setMode("tree");
-		base.reveal(id);
-	}
-
 	onMount(() => {
 		base.activate();
 		return changes.start();
 	});
 </script>
 
-<main>
+<div class="shell">
 	<ModeRail />
 	<Sidebar />
-	<section class="content">
+	<main class="content">
 		{#if shell.mode === "tree"}
 			<TopicView />
 		{:else if shell.mode === "graph"}
-			<p class="placeholder">The graph view arrives in the next change.</p>
+			<div class="scroll"><p class="placeholder">The graph view arrives in the next change.</p></div>
 		{:else if shell.mode === "changes"}
-			<ChangesView onjump={jump} />
+			<div class="scroll"><ChangesView onjump={jumpToBlock} /></div>
 		{:else}
-			<SettingsView />
+			<div class="scroll"><SettingsView /></div>
 		{/if}
-	</section>
-</main>
+	</main>
+</div>
 
 <style>
-	main {
+	/* Three top-level landmarks (nav, aside, main) rather than nav/aside nested
+	   inside main: a screen reader's landmark navigation would otherwise see
+	   one region instead of three. This div carries the flex layout that used
+	   to live on main. */
+	.shell {
 		display: flex;
 		height: 100vh;
 		overflow: hidden;
@@ -53,6 +49,16 @@
 		flex-direction: column;
 		overflow: hidden;
 		padding: calc(var(--unit) * 2);
+	}
+	/* TopicView brings its own scroll container (.tree); the other three
+	   branches need one of their own, or overflow: hidden above makes them
+	   unscrollable — no scrollbar, no wheel, no trackpad. min-height: 0 is
+	   what lets a flex item shrink below its content instead of growing the
+	   container. */
+	.scroll {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
 	}
 	.placeholder {
 		margin: 0;

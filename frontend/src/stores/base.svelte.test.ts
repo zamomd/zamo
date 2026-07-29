@@ -21,6 +21,8 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	App: {
 		TopicMap: async () => reloadFixture.topics,
 		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
+		ExpandTopic: async () => {},
+		EditWithAI: async () => {},
 	},
 }));
 vi.mock("./changes.svelte", () => ({
@@ -66,6 +68,12 @@ describe("selectTopic", () => {
 	it("exposes that topic's tree", () => {
 		base.selectTopic("sqlite");
 		expect(base.selectedTree?.block.ID).toBe("sqlite");
+	});
+
+	it("clears a stale jump flash from the previous topic", () => {
+		base.highlightID = "done";
+		base.selectTopic("sqlite");
+		expect(base.highlightID).toBe(null);
 	});
 });
 
@@ -141,5 +149,40 @@ describe("reload's selection fallback", () => {
 		await base.reload();
 
 		expect(base.selectedTopicID).toBe(null);
+	});
+});
+
+describe("askAI's selection", () => {
+	beforeEach(() => {
+		base.command = "";
+		base.scopeID = null;
+		base.busy = false;
+		base.editingID = null;
+	});
+
+	it("selects the newcomer after an untargeted expansion", async () => {
+		base.forest = [node("go", "")];
+		base.selectedTopicID = "go";
+		base.scopeID = null;
+		base.command = "rust";
+		reloadFixture.topics = [block("go", ""), block("rust", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] };
+
+		await base.askAI();
+
+		expect(base.selectedTopicID).toBe("rust");
+	});
+
+	it("leaves the selection alone for a scoped edit", async () => {
+		base.forest = [node("go", ""), node("sqlite", "")];
+		base.selectedTopicID = "go";
+		base.scopeID = "go";
+		base.command = "restructure this";
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.askAI();
+
+		expect(base.selectedTopicID).toBe("go");
 	});
 });

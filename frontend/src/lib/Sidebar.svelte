@@ -2,7 +2,7 @@
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
 	import { search } from "../stores/search.svelte";
-	import { shell } from "../stores/shell.svelte";
+	import { jumpToBlock, openTopic } from "./navigate";
 	import SearchBox from "./SearchBox.svelte";
 	import { topicRows } from "./tree";
 
@@ -21,24 +21,14 @@
 	<div class="list">
 		{#if searching}
 			{#if search.error !== ""}
-				<p class="note" role="alert">{search.error}</p>
+				<p class="note error" role="alert">{search.error}</p>
 			{:else if search.results.length === 0}
 				<p class="note">{search.status === "" ? "searching…" : search.status}</p>
 			{:else}
 				<ul>
 					{#each search.results as hit (hit.ID)}
 						<li>
-							<!-- The sidebar is mounted in every mode, so a jump has to bring
-							     the tree back into view or it lands somewhere the reader
-							     cannot see. -->
-							<button
-								type="button"
-								class="row hit"
-								onclick={() => {
-									shell.setMode("tree");
-									search.jumpTo(hit);
-								}}
-							>
+							<button type="button" class="row hit" onclick={() => jumpToBlock(hit.ID)}>
 								{hit.Content}
 							</button>
 						</li>
@@ -55,10 +45,8 @@
 							type="button"
 							class="row topic"
 							class:selected={row.selected}
-							onclick={() => {
-								shell.setMode("tree");
-								base.selectTopic(row.id);
-							}}
+							aria-current={row.selected ? "true" : undefined}
+							onclick={() => openTopic(row.id)}
 						>
 							{row.title}
 						</button>
@@ -66,17 +54,7 @@
 							<ul class="sub">
 								{#each row.children as child (child.id)}
 									<li>
-										<!-- The sidebar is mounted in every mode, so a jump has to
-										     bring the tree back into view or it lands somewhere the
-										     reader cannot see. -->
-										<button
-											type="button"
-											class="row child"
-											onclick={() => {
-												shell.setMode("tree");
-												base.reveal(child.id);
-											}}
-										>
+										<button type="button" class="row child" onclick={() => jumpToBlock(child.id)}>
 											{child.title}
 										</button>
 									</li>
@@ -157,6 +135,9 @@
 		padding: 0 var(--unit);
 		font-size: var(--size-small);
 		color: var(--text-faint);
+	}
+	.note.error {
+		color: var(--danger);
 	}
 	footer {
 		flex: none;

@@ -1,9 +1,10 @@
 import type { Edge, UnreviewedBlock } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 
-// The unreviewed-change set shared by the whole window: the nav badge, the
-// Changes screen and the tree's ghost rows read the same snapshot, so there
-// is exactly one polling source (no push channel from the MCP server — #15).
+// The unreviewed-change set shared by the whole window: the sidebar footer,
+// the Changes screen and the tree's ghost rows read the same snapshot, so
+// there is exactly one polling source (no push channel from the MCP server —
+// #15).
 const POLL_MS = 5000;
 
 class ChangesStore {
