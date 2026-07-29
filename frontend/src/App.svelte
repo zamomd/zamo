@@ -23,7 +23,10 @@
 		{#if shell.mode === "tree"}
 			<TopicView />
 		{:else if shell.mode === "graph"}
-			<div class="scroll"><p class="placeholder">The graph view arrives in the next change.</p></div>
+			<!-- The mode is real so the shell never has to be reopened to admit the
+			     graph; the view itself is not built yet. The copy promises no date:
+			     a shipped string outlives the plan that scheduled it. -->
+			<div class="scroll"><p class="placeholder">The graph view is not built yet.</p></div>
 		{:else if shell.mode === "changes"}
 			<div class="scroll"><ChangesView onjump={jumpToBlock} /></div>
 		{:else}
