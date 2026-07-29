@@ -248,6 +248,8 @@
 		position: relative;
 		padding-left: var(--indent);
 	}
+	/* The vertical segment: full height for a middle sibling, cut at the tick
+	   for the last one, which is what turns the corner from a T into an L. */
 	/* The rails need their own token, not --hairline: a rectangle's border is
 	   four edges the eye integrates, a rail is one 1px line, and at --hairline's
 	   ~1.26:1 it simply is not there. */
