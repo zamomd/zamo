@@ -65,6 +65,13 @@ export interface Edge {
      * written by callers.
      */
     "Reviewed": boolean;
+
+    /**
+     * Removing reports that this is a pending removal (an unreviewed unlink):
+     * the edge is already hidden from the graph but the removal awaits review,
+     * which can reject it to restore the link. Derived by storage on read.
+     */
+    "Removing": boolean;
 }
 
 /**
