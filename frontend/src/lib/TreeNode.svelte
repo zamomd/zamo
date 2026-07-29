@@ -84,10 +84,10 @@
 				disabled={base.editingID !== null}
 				onclick={() => base.toggle(node.block.ID)}
 			>
-				{expanded ? "▾" : "▸"}
+				{expanded ? "▼" : "▶"}
 			</button>
 		{:else}
-			<span class="toggle leaf" aria-hidden="true">·</span>
+			<span class="toggle leaf" aria-hidden="true"></span>
 		{/if}
 
 		{#if ghost}
@@ -213,7 +213,7 @@
 		<HistoryPanel block={node.block} />
 	{/if}
 	{#if hasChildren && expanded}
-		<ul>
+		<ul class="children">
 			{#each node.children as child (child.block.ID)}
 				<TreeNode node={child} />
 			{/each}
@@ -222,45 +222,82 @@
 </li>
 
 <style>
-	/* The forest is a plain nested list; indentation and a faint guide rail carry
-	   the hierarchy. Colours are theme-neutral (grey alpha) so the rail and hover
-	   read on both light and dark backgrounds. */
+	/* The forest is a plain nested list. Indentation and the rails carry the
+	   hierarchy: each item draws a vertical segment for its own level and a
+	   horizontal tick into its row, so a run of siblings reads as the box-
+	   drawing tree the design calls for, without box-drawing characters
+	   landing in the text itself. */
 	ul {
 		list-style: none;
-		margin: 0 0 0 0.55rem;
-		padding: 0 0 0 0.7rem;
-		border-left: 1px solid var(--hairline);
+		margin: 0;
+		padding: 0;
+	}
+	ul.children {
+		margin-left: var(--indent);
+	}
+	ul.children > li {
+		position: relative;
+		padding-left: var(--indent);
+	}
+	/* The vertical segment: full height for a middle sibling, cut at the tick
+	   for the last one, which is what turns the corner from a T into an L. */
+	ul.children > li::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: var(--hairline);
+	}
+	ul.children > li:last-child::before {
+		bottom: auto;
+		height: calc(var(--row-height) / 2);
+	}
+	/* The horizontal tick, stopping short of the text so the join stays open. */
+	ul.children > li::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: calc(var(--row-height) / 2);
+		width: calc(var(--indent) - 6px);
+		height: 1px;
+		background: var(--hairline);
 	}
 	.row {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.15rem;
+		min-height: var(--row-height);
 	}
 	.toggle {
 		flex: none;
-		width: 1.1rem;
+		width: var(--indent);
 		padding: 0;
 		border: none;
 		background: none;
 		cursor: pointer;
-		color: inherit;
-		font-size: 0.8rem;
-		line-height: 1.5;
+		color: var(--text-dim);
+		font-size: 9px;
+		line-height: var(--row-height);
+	}
+	.toggle:hover:not(:disabled) {
+		color: var(--text);
 	}
 	.toggle.leaf {
 		cursor: default;
-		opacity: 0.35;
 	}
 	.content {
 		flex: 1;
 		text-align: left;
 		border: none;
 		background: none;
-		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
+		padding: 0 var(--unit) 0 0;
+		border-radius: var(--radius);
 		cursor: pointer;
 		color: inherit;
 		min-width: 0;
+		line-height: var(--row-height);
 	}
 	.content.busy {
 		cursor: default;
