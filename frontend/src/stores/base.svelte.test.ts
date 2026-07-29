@@ -75,6 +75,47 @@ describe("selectTopic", () => {
 		base.selectTopic("sqlite");
 		expect(base.highlightID).toBe(null);
 	});
+
+	// The graph view is the one caller whose ids come from an
+	// independently-refreshed read (see selectTopic's own comment): the topic
+	// map re-reads on every entry into graph mode, while the forest here still
+	// reflects whatever was loaded at startup or the last GUI mutation. A
+	// topic added out-of-band — comind mcp, while the reader was in graph
+	// mode — is real but absent from this.forest until a fresh read.
+	it("reaches a topic the forest predates, once the base is re-read", async () => {
+		base.error = "";
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("rust", "")];
+		reloadFixture.subtrees = {
+			go: [block("go", "")],
+			sqlite: [block("sqlite", "")],
+			rust: [block("rust", "")],
+		};
+
+		await base.selectTopic("rust");
+
+		expect(base.selectedTopicID).toBe("rust");
+		expect(base.selectedTree?.block.ID).toBe("rust");
+		expect(base.error).toBe("");
+	});
+
+	// A topic that is genuinely gone (deleted out-of-band, or a stale graph
+	// node from a map drawn before the deletion) must not leave the pane
+	// looking like nothing is selected — see TopicView's "No topic selected"
+	// message, which is only honest when nothing really is.
+	it("reports rather than blanks the pane when the topic is gone even after a re-read", async () => {
+		base.error = "";
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.selectTopic("nonexistent");
+
+		expect(base.error).not.toBe("");
+		// The previous, still-valid selection is left in place rather than
+		// pointed at the missing id, so selectedTree stays non-null and the
+		// pane keeps showing a real topic instead of the empty-state message.
+		expect(base.selectedTopicID).toBe("go");
+		expect(base.selectedTree).not.toBe(null);
+	});
 });
 
 describe("reveal", () => {

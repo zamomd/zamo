@@ -13,5 +13,8 @@ export function jumpToBlock(id: string): void {
 
 export function openTopic(id: string): void {
 	shell.setMode("tree");
-	base.selectTopic(id);
+	// selectTopic may need to re-read the base before it can resolve id (see
+	// its own comment) — this caller does not wait on that, matching every
+	// other fire-and-forget store call from markup, which cannot await.
+	void base.selectTopic(id);
 }

@@ -259,7 +259,33 @@ class BaseStore {
 		}
 	}
 
-	selectTopic(id: string): void {
+	// selectTopic switches the main area to the given topic. The sidebar is
+	// the usual caller, and it reads ids straight out of this.forest, so they
+	// are always already present. The topic graph is not: it re-reads on
+	// every entry into graph mode, while the forest only refreshes on a GUI
+	// mutation (see reload), so a base written from outside the GUI —
+	// `comind mcp` adding or deleting a topic while the reader is looking at
+	// the graph — hands this an id the forest has never seen, or one the
+	// forest's own last read has since dropped. Assigning selectedTopicID
+	// unconditionally would leave selectedTree null for an id that is
+	// perfectly real, mislabelling the pane "no topic selected". Re-reading
+	// once before giving up distinguishes that from a topic that is actually
+	// gone, without ever pointing the selection at an id this store cannot
+	// currently show.
+	async selectTopic(id: string): Promise<void> {
+		if (this.forest.some((t) => t.block.ID === id)) {
+			this.applySelection(id);
+			return;
+		}
+		await this.reload();
+		if (this.forest.some((t) => t.block.ID === id)) {
+			this.applySelection(id);
+			return;
+		}
+		this.error = "That topic no longer exists.";
+	}
+
+	private applySelection(id: string): void {
 		this.selectedTopicID = id;
 		// A flash armed for a row in the previously selected topic must not
 		// replay against whatever row now occupies that position after the
