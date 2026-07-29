@@ -168,22 +168,65 @@ export function radiusOf(blocks: number): number {
 	return Math.min(BASE_RADIUS * Math.sqrt(Math.max(blocks, 1)), MAX_RADIUS);
 }
 
-// viewBox fits every node's whole circle, plus pad, into an SVG viewBox string.
-// Fitting the content is what lets the first version ship without pan or zoom.
-// An empty graph still needs a box with area, or the SVG collapses.
-export function viewBox(nodes: Array<{ x: number; y: number; r: number }>, pad: number): string {
-	if (nodes.length === 0) {
+export type Box = { minX: number; minY: number; maxX: number; maxY: number };
+
+// circleBox is a circle's axis-aligned bounding box, in the same units as its
+// center and radius.
+export function circleBox(x: number, y: number, r: number): Box {
+	return { minX: x - r, minY: y - r, maxX: x + r, maxY: y + r };
+}
+
+// viewBox fits every given box, plus pad, into an SVG viewBox string. Fitting
+// the content is what lets the first version ship without pan or zoom. An
+// empty graph still needs a box with area, or the SVG collapses. Boxes are
+// not necessarily circles: GraphView also folds each label's own footprint
+// in (computed via scaleFor and truncateLabel below), so a label cannot
+// render outside the region this function fits.
+export function viewBox(boxes: Box[], pad: number): string {
+	if (boxes.length === 0) {
 		return `0 0 ${2 * pad} ${2 * pad}`;
 	}
 	let minX = Number.POSITIVE_INFINITY;
 	let minY = Number.POSITIVE_INFINITY;
 	let maxX = Number.NEGATIVE_INFINITY;
 	let maxY = Number.NEGATIVE_INFINITY;
-	for (const n of nodes) {
-		minX = Math.min(minX, n.x - n.r);
-		minY = Math.min(minY, n.y - n.r);
-		maxX = Math.max(maxX, n.x + n.r);
-		maxY = Math.max(maxY, n.y + n.r);
+	for (const b of boxes) {
+		minX = Math.min(minX, b.minX);
+		minY = Math.min(minY, b.minY);
+		maxX = Math.max(maxX, b.maxX);
+		maxY = Math.max(maxY, b.maxY);
 	}
 	return `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`;
+}
+
+// scaleFor is the number of viewBox units one screen pixel represents when a
+// box of the given width/height is fitted into a pxWidth×pxHeight container
+// under SVG's default `preserveAspectRatio="xMidYMid meet"`. `meet` scales
+// the whole box uniformly by the SMALLER of the two axis-fit ratios (so the
+// box is never cropped, only letterboxed) — which means the axis that is
+// NOT the bottleneck ends up with slack on screen, and converting back from
+// pixels to viewBox units, the bottleneck axis is the LARGER ratio. Taking
+// the min here (matching only the width) is the bug this function replaces:
+// whichever axis actually constrains the fit — commonly height, when a
+// near-square bounding box meets a wide, short pane — was silently ignored.
+// Falls back to 1 (no correction) before the SVG has a measured pixel size.
+export function scaleFor(boxWidth: number, boxHeight: number, pxWidth: number, pxHeight: number): number {
+	if (pxWidth <= 0 || pxHeight <= 0 || boxWidth <= 0 || boxHeight <= 0) {
+		return 1;
+	}
+	return Math.max(boxWidth / pxWidth, boxHeight / pxHeight);
+}
+
+// A topic's title is its root block's content — arbitrary prose, potentially
+// a full sentence — so a label needs a bounded length regardless of the
+// map's physical size. Bounding it keeps one long title from dictating the
+// viewBox fit, and also narrows (without eliminating — see the plan's parked
+// item) how far a label can reach over a neighbouring node's hit area.
+const MAX_LABEL_CHARS = 28;
+
+export function truncateLabel(title: string): string {
+	if (title.length <= MAX_LABEL_CHARS) {
+		return title;
+	}
+	return `${title.slice(0, MAX_LABEL_CHARS - 1)}…`;
 }

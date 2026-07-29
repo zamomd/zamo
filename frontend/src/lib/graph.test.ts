@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layout, type Point, radiusOf, reducedLayout, viewBox } from "./graph";
+import { circleBox, layout, type Point, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
 
 // topics builds n topics with ids t0..t(n-1), the ULID order the read path
 // guarantees.
@@ -134,15 +134,15 @@ describe("radiusOf", () => {
 	});
 });
 
+describe("circleBox", () => {
+	it("bounds a circle by its center and radius", () => {
+		expect(circleBox(10, -5, 3)).toEqual({ minX: 7, minY: -8, maxX: 13, maxY: -2 });
+	});
+});
+
 describe("viewBox", () => {
-	it("contains every node's whole circle plus the padding", () => {
-		const box = viewBox(
-			[
-				{ x: 0, y: 0, r: 10 },
-				{ x: 100, y: 40, r: 5 },
-			],
-			8,
-		);
+	it("contains every box plus the padding", () => {
+		const box = viewBox([circleBox(0, 0, 10), circleBox(100, 40, 5)], 8);
 		const [minX, minY, w, h] = box.split(" ").map(Number);
 		expect(minX).toBeLessThanOrEqual(-18);
 		expect(minY).toBeLessThanOrEqual(-18);
@@ -154,5 +154,45 @@ describe("viewBox", () => {
 		const [, , w, h] = viewBox([], 8).split(" ").map(Number);
 		expect(w).toBeGreaterThan(0);
 		expect(h).toBeGreaterThan(0);
+	});
+
+	it("fits boxes that are not circles, such as a label's footprint", () => {
+		const box = viewBox([circleBox(0, 0, 5), { minX: 50, minY: -2, maxX: 90, maxY: 6 }], 4);
+		const [minX, minY, w] = box.split(" ").map(Number);
+		expect(minX + w).toBeGreaterThanOrEqual(94);
+		expect(minY).toBeLessThanOrEqual(-6);
+	});
+});
+
+describe("scaleFor", () => {
+	it("uses the width ratio when width is the constraining axis", () => {
+		// A wide box (200x100) into a narrow-ish container (100x100): fitting
+		// the box's width into the container is the tighter constraint.
+		expect(scaleFor(200, 100, 100, 100)).toBeCloseTo(2);
+	});
+
+	it("uses the height ratio when height is the constraining axis", () => {
+		// A near-square box (100x100, like the golden-spiral bounding box) into
+		// a wide, short pane (200x50): height is the tighter constraint, and a
+		// formula that only looked at width would undershoot here.
+		expect(scaleFor(100, 100, 200, 50)).toBeCloseTo(2);
+	});
+
+	it("falls back to 1 before the SVG has a measured pixel size", () => {
+		expect(scaleFor(100, 100, 0, 0)).toBe(1);
+	});
+});
+
+describe("truncateLabel", () => {
+	it("leaves a short title untouched", () => {
+		expect(truncateLabel("Comind roadmap")).toBe("Comind roadmap");
+	});
+
+	it("bounds a long title with an ellipsis", () => {
+		const title = "A topic title long enough to be a full sentence about something";
+		const result = truncateLabel(title);
+		expect(result.length).toBeLessThan(title.length);
+		expect(result.endsWith("…")).toBe(true);
+		expect(title.startsWith(result.slice(0, -1))).toBe(true);
 	});
 });
