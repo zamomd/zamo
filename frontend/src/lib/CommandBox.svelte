@@ -3,7 +3,8 @@
 
 	// The one AI command field: expansion when nothing is targeted, a
 	// restructure of the targeted block otherwise. The write applies directly
-	// and lands unreviewed; the view stays on the Base tab (see base.askAI).
+	// and lands unreviewed; an expansion also moves the main area onto the
+	// topic it just created (see base.askAI).
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
 		await base.askAI();
@@ -42,7 +43,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
-		margin-bottom: 1rem;
 	}
 	.scope {
 		margin: 0;

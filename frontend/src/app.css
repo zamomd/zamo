@@ -49,11 +49,13 @@
 	--text-dim: #55555a;
 	--text-faint: #8a8a90;
 	--hairline: #e2e2e5;
-	/* ~3:1 against --ground: for interactive boundaries only (inputs,
-	   buttons), where --hairline alone is too faint to mark a control that
-	   has no fill. Passive separators (rails, panel borders, row rules)
-	   keep --hairline. */
+	/* Three tiers, by what the eye has to resolve alone: --hairline for a
+	   shape's own perimeter and for separators the eye reads as part of a
+	   larger form; --hairline-strong for the boundary of an interactive
+	   control that has no fill; --rail for a lone line that has to carry
+	   structure entirely on its own. */
 	--hairline-strong: #a8a8ae;
+	--rail: #94949a;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
 	/* Same value as --hover today, but a distinct token: this is a resting
@@ -72,6 +74,7 @@
 		--text-faint: #6a6a6d;
 		--hairline: #232326;
 		--hairline-strong: #54545a;
+		--rail: #5d5d63;
 		--accent: #5e8fd0;
 		--hover: rgba(255, 255, 255, 0.06);
 		--surface: rgba(255, 255, 255, 0.06);

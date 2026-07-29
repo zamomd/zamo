@@ -8,7 +8,7 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
+import { buildTree, findBlock, findPath, type TreeNodeData, topicOf } from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -27,12 +27,12 @@ const generationPhaseLabels: Record<string, string> = {
 	parsing: "applying the response…",
 };
 
-// BaseStore is the Base tab's view-model: browse the tree and drive the two AI
-// flows from one command field. Expansion (no target) and restructuring (a
-// targeted block) both write directly — every touched block lands flagged
+// BaseStore is the knowledge base's view-model: browse the tree and drive the
+// two AI flows from one command field. Expansion (no target) and restructuring
+// (a targeted block) both write directly — every touched block lands flagged
 // unreviewed, review is retroactive — then the base is re-read.
 //
-// It lives at module level so the view can unmount on a tab switch and come
+// It lives at module level so the view can unmount on a mode switch and come
 // back to the same place: the fold state, the targeted block, a half-typed
 // command and an open edit all survive; only the data is re-read on return.
 class BaseStore {
@@ -45,6 +45,11 @@ class BaseStore {
 	error = $state("");
 	busy = $state(false);
 	forest = $state<TreeNodeData[]>([]);
+
+	// The topic the main area shows. The sidebar picks it; a jump from search or
+	// the changes list can move it (see reveal). null means the base is empty or
+	// has not loaded yet.
+	selectedTopicID = $state<string | null>(null);
 
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
@@ -107,6 +112,12 @@ class BaseStore {
 	// a stale label behind.
 	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""));
 
+	// The tree the main area renders. Derived rather than stored so a reload
+	// that rebuilds the forest cannot leave a stale subtree on screen.
+	selectedTree = $derived(
+		this.selectedTopicID === null ? null : (this.forest.find((t) => t.block.ID === this.selectedTopicID) ?? null),
+	);
+
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
 		// the backend's phase in the status line. Events outside a generation are
@@ -118,7 +129,9 @@ class BaseStore {
 		});
 	}
 
-	// activate re-reads the data on every mount; the UI state above persists.
+	// activate re-reads the data once, for the window's lifetime: App.svelte
+	// calls it from its own onMount; the UI state above persists across every
+	// mode switch after that.
 	activate(): void {
 		this.reload().catch((err: unknown) => {
 			this.error = messageFor(err);
@@ -178,6 +191,12 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		// A reload can drop the selected topic (its page was accepted away) or
+		// arrive with nothing selected on first load. Fall back to the first
+		// topic so the main area is never blank while the base has content.
+		if (this.selectedTopicID === null || !trees.some((t) => t.block.ID === this.selectedTopicID)) {
+			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
+		}
 		// Links reflect the re-read base: drop the cache, close panels whose
 		// block vanished, and re-load the panels still open.
 		this.linksById.clear();
@@ -216,6 +235,15 @@ class BaseStore {
 			return;
 		}
 		this.pendingReveal = null;
+		// The main area shows one topic, so a jump into a different one has to
+		// move the selection first or it would scroll to a row that is not
+		// rendered.
+		const topic = topicOf(this.forest, id);
+		// findPath above already located id in this.forest, so topicOf cannot
+		// return null here; the guard is defensive, not load-bearing.
+		if (topic !== null) {
+			this.selectedTopicID = topic;
+		}
 		for (const ancestor of path) {
 			this.collapsed.delete(ancestor);
 		}
@@ -229,6 +257,14 @@ class BaseStore {
 		} else {
 			this.collapsed.add(id);
 		}
+	}
+
+	selectTopic(id: string): void {
+		this.selectedTopicID = id;
+		// A flash armed for a row in the previously selected topic must not
+		// replay against whatever row now occupies that position after the
+		// switch — see highlightID.
+		this.highlightID = null;
 	}
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
@@ -249,7 +285,9 @@ class BaseStore {
 	// expansion when nothing is targeted, a structure edit on the targeted
 	// block/page otherwise. Both write directly — every touched block lands
 	// flagged unreviewed rather than queued as a proposal — so the base is
-	// simply re-read afterwards; the view never switches tabs.
+	// simply re-read afterwards. An expansion also moves the main-area
+	// selection onto the newcomer: the reader asked for a new topic, and
+	// leaving the view on the old one would give them nothing to look at.
 	async askAI(): Promise<void> {
 		const text = this.command.trim();
 		// Locked mid inline-edit like every other tree action: reload moves the
@@ -270,7 +308,19 @@ class BaseStore {
 			}
 			this.command = "";
 			this.clearScope();
+			// Reload rebuilds the forest; diff the topic-root ids against what was
+			// there before to find the fresh one an expansion created. reload's own
+			// selection fallback only fires when the current selection is invalid —
+			// here it is still valid, so without this the view would stay on the
+			// topic the reader was already looking at.
+			const before = new Set(this.forest.map((t) => t.block.ID));
 			await this.reload();
+			if (scope === null) {
+				const fresh = this.forest.find((t) => !before.has(t.block.ID));
+				if (fresh) {
+					this.selectedTopicID = fresh.block.ID;
+				}
+			}
 			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
 			this.error = messageFor(err);

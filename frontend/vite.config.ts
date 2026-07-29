@@ -1,8 +1,9 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import wails from "@wailsio/runtime/plugins/vite";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
-// https://vitejs.dev/config/
+// vitest/config re-exports Vite's defineConfig, so one file still configures
+// both the build and the tests.
 export default defineConfig({
 	server: {
 		host: "127.0.0.1",
@@ -10,4 +11,10 @@ export default defineConfig({
 		strictPort: true,
 	},
 	plugins: [svelte(), wails("./bindings")],
+	test: {
+		// Stores and helpers are plain TypeScript; nothing here needs a DOM.
+		// Layout and appearance are verified by looking at the app, not here.
+		environment: "node",
+		include: ["src/**/*.test.ts"],
+	},
 });

@@ -1,74 +1,70 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import BaseView from "./BaseView.svelte";
 	import ChangesView from "./ChangesView.svelte";
+	import ModeRail from "./lib/ModeRail.svelte";
+	import { jumpToBlock } from "./lib/navigate";
+	import Sidebar from "./lib/Sidebar.svelte";
 	import SettingsView from "./SettingsView.svelte";
 	import { base } from "./stores/base.svelte";
 	import { changes } from "./stores/changes.svelte";
+	import { shell } from "./stores/shell.svelte";
+	import TopicView from "./TopicView.svelte";
 
-	// Tab shell: the Base view (the tree), the Changes view (everything
-	// awaiting review), and Settings (the provider configuration). Switching
-	// tabs remounts the view: each one re-reads its data on mount while its UI
-	// state survives in its store. The nav badge reads the shared changes
-	// store, whose polling starts here for the window's lifetime.
-	let tab: "base" | "changes" | "settings" = $state("base");
-
-	// jump lands a Changes-screen row back in the tree: switch tabs, then
-	// reveal (base.reveal already un-collapses ancestors and flashes the row —
-	// the same jump the search box uses).
-	function jump(id: string): void {
-		tab = "base";
-		base.reveal(id);
-	}
-
-	onMount(() => changes.start());
+	onMount(() => {
+		base.activate();
+		return changes.start();
+	});
 </script>
 
-<main>
-	<nav>
-		<button type="button" class:active={tab === "base"} onclick={() => (tab = "base")}>
-			Base
-		</button>
-		<button type="button" class:active={tab === "changes"} onclick={() => (tab = "changes")}>
-			Changes ({changes.count})
-		</button>
-		<button type="button" class:active={tab === "settings"} onclick={() => (tab = "settings")}>
-			Settings
-		</button>
-	</nav>
-
-	{#if tab === "base"}
-		<BaseView />
-	{:else if tab === "changes"}
-		<ChangesView onjump={jump} />
-	{:else}
-		<SettingsView />
-	{/if}
-</main>
+<div class="shell">
+	<ModeRail />
+	<Sidebar />
+	<main class="content">
+		{#if shell.mode === "tree"}
+			<TopicView />
+		{:else if shell.mode === "graph"}
+			<!-- The mode is real so the shell never has to be reopened to admit the
+			     graph; the view itself is not built yet. The copy promises no date:
+			     a shipped string outlives the plan that scheduled it. -->
+			<div class="scroll"><p class="placeholder">The graph view is not built yet.</p></div>
+		{:else if shell.mode === "changes"}
+			<div class="scroll"><ChangesView onjump={jumpToBlock} /></div>
+		{:else}
+			<div class="scroll"><SettingsView /></div>
+		{/if}
+	</main>
+</div>
 
 <style>
-	main {
+	/* Three top-level landmarks (nav, aside, main) rather than nav/aside nested
+	   inside main: a screen reader's landmark navigation would otherwise see
+	   one region instead of three. This div carries the flex layout that used
+	   to live on main. */
+	.shell {
+		display: flex;
+		height: 100vh;
+		overflow: hidden;
+	}
+	.content {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		padding: calc(var(--unit) * 2);
 	}
-	nav {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
+	/* TopicView brings its own scroll container (.tree); the other three
+	   branches need one of their own, or overflow: hidden above makes them
+	   unscrollable — no scrollbar, no wheel, no trackpad. min-height: 0 is
+	   what lets a flex item shrink below its content instead of growing the
+	   container. */
+	.scroll {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
 	}
-	nav button {
-		border: none;
-		border-radius: 0;
-		border-bottom: 1px solid transparent;
-		color: var(--text-dim);
-		padding: 0 var(--unit);
-		line-height: calc(var(--row-height) * 1.2);
-	}
-	nav button:hover:not(:disabled) {
-		color: var(--text);
-		background: none;
-	}
-	nav button.active {
-		color: var(--text);
-		border-bottom-color: var(--accent);
+	.placeholder {
+		margin: 0;
+		color: var(--text-faint);
 	}
 </style>

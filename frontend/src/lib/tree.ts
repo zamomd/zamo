@@ -66,3 +66,35 @@ export function findPath(nodes: TreeNodeData[], id: string): string[] | null {
 	}
 	return null;
 }
+
+// topicOf reports which topic root's tree a block belongs to. The sidebar
+// selects a topic while search and the changes list jump to blocks, so every
+// jump has to answer this before it can decide whether the main area must
+// switch topics first.
+export function topicOf(nodes: TreeNodeData[], id: string): string | null {
+	for (const node of nodes) {
+		if (findBlock([node], id) !== null) {
+			return node.block.ID;
+		}
+	}
+	return null;
+}
+
+// TopicRow is one line of the sidebar: a topic, and — for the selected one
+// only — its first level of children. The sidebar is an index, not a second
+// outliner, so it never goes deeper than one level.
+export type TopicRow = {
+	id: string;
+	title: string;
+	selected: boolean;
+	children: { id: string; title: string }[];
+};
+
+export function topicRows(nodes: TreeNodeData[], selected: string | null): TopicRow[] {
+	return nodes.map((node) => ({
+		id: node.block.ID,
+		title: node.block.Content,
+		selected: node.block.ID === selected,
+		children: node.block.ID === selected ? node.children.map((c) => ({ id: c.block.ID, title: c.block.Content })) : [],
+	}));
+}

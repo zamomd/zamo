@@ -11,7 +11,7 @@
 	// One row of the base tree, recursing into its children. All state and
 	// actions come from the base store; node and nested are the only inputs.
 	// nested is set by the recursion itself (never by the top-level caller in
-	// BaseView.svelte), so a topic root's own <li> stays unmarked and rail-less
+	// TopicView.svelte), so a topic root's own <li> stays unmarked and rail-less
 	// while every recursed child's <li> carries .nested.
 	let { node, nested = false }: { node: TreeNodeData; nested?: boolean } = $props();
 
@@ -250,6 +250,9 @@
 	}
 	/* The vertical segment: full height for a middle sibling, cut at the tick
 	   for the last one, which is what turns the corner from a T into an L. */
+	/* The rails need their own token, not --hairline: a rectangle's border is
+	   four edges the eye integrates, a rail is one 1px line, and at --hairline's
+	   ~1.26:1 it simply is not there. */
 	li.nested::before {
 		content: "";
 		position: absolute;
@@ -257,7 +260,7 @@
 		top: 0;
 		bottom: 0;
 		width: 1px;
-		background: var(--hairline);
+		background: var(--rail);
 	}
 	li.nested:last-child::before {
 		bottom: auto;
@@ -271,7 +274,7 @@
 		top: calc(var(--row-height) / 2);
 		width: calc(var(--indent) - 6px);
 		height: 1px;
-		background: var(--hairline);
+		background: var(--rail);
 	}
 	.row {
 		display: flex;
