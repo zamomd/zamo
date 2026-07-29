@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import ChangesView from "./ChangesView.svelte";
+	import GraphView from "./lib/GraphView.svelte";
 	import ModeRail from "./lib/ModeRail.svelte";
 	import { jumpToBlock } from "./lib/navigate";
 	import Sidebar from "./lib/Sidebar.svelte";
@@ -23,10 +24,7 @@
 		{#if shell.mode === "tree"}
 			<TopicView />
 		{:else if shell.mode === "graph"}
-			<!-- The mode is real so the shell never has to be reopened to admit the
-			     graph; the view itself is not built yet. The copy promises no date:
-			     a shipped string outlives the plan that scheduled it. -->
-			<div class="scroll"><p class="placeholder">The graph view is not built yet.</p></div>
+			<GraphView />
 		{:else if shell.mode === "changes"}
 			<div class="scroll"><ChangesView onjump={jumpToBlock} /></div>
 		{:else}
@@ -53,18 +51,14 @@
 		overflow: hidden;
 		padding: calc(var(--unit) * 2);
 	}
-	/* TopicView brings its own scroll container (.tree); the other three
-	   branches need one of their own, or overflow: hidden above makes them
-	   unscrollable — no scrollbar, no wheel, no trackpad. min-height: 0 is
-	   what lets a flex item shrink below its content instead of growing the
-	   container. */
+	/* TopicView brings its own scroll container (.tree) and GraphView fills its
+	   area rather than scrolling; changes and settings need a scroll container
+	   of their own, or overflow: hidden above makes them unscrollable — no
+	   scrollbar, no wheel, no trackpad. min-height: 0 is what lets a flex item
+	   shrink below its content instead of growing the container. */
 	.scroll {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-	}
-	.placeholder {
-		margin: 0;
-		color: var(--text-faint);
 	}
 </style>
