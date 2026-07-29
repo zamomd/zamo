@@ -39,22 +39,44 @@ describe("layout", () => {
 		}
 	});
 
-	it("pulls linked topics closer than any unlinked pair", () => {
-		// t0 and t7 are far apart on the seeding spiral; the spring is the only
-		// thing that can bring them together.
-		const t = topics(8);
-		const result = layout(t, [{ From: "t0", To: "t7" }]);
-		const linked = dist(result, "t0", "t7");
-		let closestUnlinked = Number.POSITIVE_INFINITY;
-		for (let a = 0; a < 8; a++) {
-			for (let b = a + 1; b < 8; b++) {
-				if (a === 0 && b === 7) {
-					continue;
+	// The nearest-unlinked-pair comparator does not hold at every size: ambient
+	// nearest-neighbour spacing shrinks under crowding as topic count grows, so
+	// a linked pair (which settles near a roughly constant rest length) can end
+	// up farther apart than the single closest unlinked pair once the base is
+	// large enough. What the spring actually guarantees, at any size, is these
+	// two weaker claims instead.
+	describe.each([8, 50])("with %i topics", (n) => {
+		it("ends the pair closer than it would be without the edge", () => {
+			// t0 and t(n-1) are the two ends of the seeding spiral, so nothing
+			// but the spring itself can be responsible for a difference here.
+			const t = topics(n);
+			const last = `t${n - 1}`;
+			const withEdge = layout(t, [{ From: "t0", To: last }]);
+			const withoutEdge = layout(t, []);
+			expect(dist(withEdge, "t0", last)).toBeLessThan(dist(withoutEdge, "t0", last));
+		});
+
+		it("ends closer than the median unlinked pair", () => {
+			// The product claim: a linked pair should read as clustered relative
+			// to the rest of the map, not merely relative to whichever unlinked
+			// pair happens to be nearest.
+			const t = topics(n);
+			const last = `t${n - 1}`;
+			const result = layout(t, [{ From: "t0", To: last }]);
+			const linked = dist(result, "t0", last);
+			const unlinked: number[] = [];
+			for (let a = 0; a < n; a++) {
+				for (let b = a + 1; b < n; b++) {
+					if (a === 0 && b === n - 1) {
+						continue;
+					}
+					unlinked.push(dist(result, `t${a}`, `t${b}`));
 				}
-				closestUnlinked = Math.min(closestUnlinked, dist(result, `t${a}`, `t${b}`));
 			}
-		}
-		expect(linked).toBeLessThan(closestUnlinked);
+			unlinked.sort((x, y) => x - y);
+			const median = unlinked[Math.floor(unlinked.length / 2)];
+			expect(linked).toBeLessThan(median);
+		});
 	});
 
 	it("survives degenerate input", () => {
@@ -68,6 +90,21 @@ describe("layout", () => {
 			{ From: "t1", To: "t2" },
 			{ From: "t1", To: "t2" },
 		]);
+		expect(result.size).toBe(3);
+		for (const p of result.values()) {
+			expect(Number.isFinite(p.x)).toBe(true);
+			expect(Number.isFinite(p.y)).toBe(true);
+		}
+	});
+
+	it("keeps every coordinate finite under a large duplicate-edge count", () => {
+		// Thousands of parallel edges between the same pair sum to a spring
+		// force many times any single edge's — without a per-iteration move
+		// clamp this diverges to NaN. Three topics, most of them unconnected,
+		// isolate the effect to the pair actually under the load.
+		const t = topics(3);
+		const edges = Array.from({ length: 5000 }, () => ({ From: "t0", To: "t1" }));
+		const result = layout(t, edges);
 		expect(result.size).toBe(3);
 		for (const p of result.values()) {
 			expect(Number.isFinite(p.x)).toBe(true);

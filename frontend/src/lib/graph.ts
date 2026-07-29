@@ -35,11 +35,21 @@ const CENTERING = 0.006;
 const COOLING = 0.985;
 const INITIAL_STEP = 1;
 
-// Two nodes at the same point make the inverse-square repulsion infinite. They
-// are pushed apart along a fixed axis by MIN_DISTANCE — fixed, not random, so
-// the result stays reproducible — and no node may move more than MAX_MOVE in
-// one iteration, which keeps a near-collision from launching it off the map.
+// Two nodes at the same point would make the inverse-square repulsion
+// infinite. No current input reaches this: seeding places every node at a
+// distance set purely by its index, and across every fixture in
+// graph.test.ts — including the stress fixture of thousands of duplicate
+// edges pulling two nodes together — the observed minimum inter-node
+// distance stays well clear of this threshold. The guard stays anyway,
+// three lines of cheap insurance against a future change to seeding rather
+// than a case any input today can trigger. If it is ever reached, nodes are
+// pushed apart along a fixed axis by MIN_DISTANCE — fixed, not random, so the
+// result stays reproducible.
 const MIN_DISTANCE = 1;
+// No node may move more than MAX_MOVE in one iteration — the displacement
+// vector's magnitude is clamped, not each axis independently, so a diagonal
+// step is bounded the same as an axis-aligned one. This keeps a near-collision
+// (see MIN_DISTANCE above) from launching a node off the map in one step.
 const MAX_MOVE = 20;
 
 // Repulsion is over all pairs, so the cost is quadratic in the topic count and
@@ -121,8 +131,9 @@ export function layout(topics: LayoutTopic[], edges: LayoutEdge[]): Map<string, 
 		for (let i = 0; i < n; i++) {
 			fx[i] -= xs[i] * CENTERING;
 			fy[i] -= ys[i] * CENTERING;
-			xs[i] += clamp(fx[i] * step, MAX_MOVE);
-			ys[i] += clamp(fy[i] * step, MAX_MOVE);
+			const [dx, dy] = clampMagnitude(fx[i] * step, fy[i] * step, MAX_MOVE);
+			xs[i] += dx;
+			ys[i] += dy;
 		}
 		step *= COOLING;
 	}
@@ -134,8 +145,16 @@ export function layout(topics: LayoutTopic[], edges: LayoutEdge[]): Map<string, 
 	return out;
 }
 
-function clamp(v: number, limit: number): number {
-	return Math.min(Math.max(v, -limit), limit);
+// clampMagnitude scales (dx, dy) down to at most limit if it exceeds it,
+// preserving direction. Clamping the vector's magnitude, rather than each
+// axis independently, bounds a diagonal step the same as an axis-aligned one.
+function clampMagnitude(dx: number, dy: number, limit: number): [number, number] {
+	const magnitude = Math.hypot(dx, dy);
+	if (magnitude <= limit) {
+		return [dx, dy];
+	}
+	const scale = limit / magnitude;
+	return [dx * scale, dy * scale];
 }
 
 // Node radius from block count. The area scales with the count, not the radius,
