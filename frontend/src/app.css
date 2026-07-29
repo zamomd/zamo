@@ -54,6 +54,7 @@
 	   has no fill. Passive separators (rails, panel borders, row rules)
 	   keep --hairline. */
 	--hairline-strong: #a8a8ae;
+	--rail: #b4b4ba;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
 	/* Same value as --hover today, but a distinct token: this is a resting
@@ -72,6 +73,7 @@
 		--text-faint: #6a6a6d;
 		--hairline: #232326;
 		--hairline-strong: #54545a;
+		--rail: #4a4a50;
 		--accent: #5e8fd0;
 		--hover: rgba(255, 255, 255, 0.06);
 		--surface: rgba(255, 255, 255, 0.06);
