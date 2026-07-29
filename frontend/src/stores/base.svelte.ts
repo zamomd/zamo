@@ -8,7 +8,7 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findPath, type TreeNodeData } from "../lib/tree";
+import { buildTree, findBlock, findPath, type TreeNodeData, topicOf } from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -45,6 +45,11 @@ class BaseStore {
 	error = $state("");
 	busy = $state(false);
 	forest = $state<TreeNodeData[]>([]);
+
+	// The topic the main area shows. The sidebar picks it; a jump from search or
+	// the changes list can move it (see reveal). null means the base is empty or
+	// has not loaded yet.
+	selectedTopicID = $state<string | null>(null);
 
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
@@ -106,6 +111,12 @@ class BaseStore {
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
 	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""));
+
+	// The tree the main area renders. Derived rather than stored so a reload
+	// that rebuilds the forest cannot leave a stale subtree on screen.
+	selectedTree = $derived(
+		this.selectedTopicID === null ? null : (this.forest.find((t) => t.block.ID === this.selectedTopicID) ?? null),
+	);
 
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
@@ -178,6 +189,12 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		// A reload can drop the selected topic (its page was accepted away) or
+		// arrive with nothing selected on first load. Fall back to the first
+		// topic so the main area is never blank while the base has content.
+		if (this.selectedTopicID === null || !trees.some((t) => t.block.ID === this.selectedTopicID)) {
+			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
+		}
 		// Links reflect the re-read base: drop the cache, close panels whose
 		// block vanished, and re-load the panels still open.
 		this.linksById.clear();
@@ -216,6 +233,13 @@ class BaseStore {
 			return;
 		}
 		this.pendingReveal = null;
+		// The main area shows one topic, so a jump into a different one has to
+		// move the selection first or it would scroll to a row that is not
+		// rendered.
+		const topic = topicOf(this.forest, id);
+		if (topic !== null) {
+			this.selectedTopicID = topic;
+		}
 		for (const ancestor of path) {
 			this.collapsed.delete(ancestor);
 		}
@@ -229,6 +253,10 @@ class BaseStore {
 		} else {
 			this.collapsed.add(id);
 		}
+	}
+
+	selectTopic(id: string): void {
+		this.selectedTopicID = id;
 	}
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
