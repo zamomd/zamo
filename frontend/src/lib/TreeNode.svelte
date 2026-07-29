@@ -229,7 +229,7 @@
 		list-style: none;
 		margin: 0 0 0 0.55rem;
 		padding: 0 0 0 0.7rem;
-		border-left: 1px solid rgba(127, 127, 127, 0.25);
+		border-left: 1px solid var(--hairline);
 	}
 	.row {
 		display: flex;
@@ -266,25 +266,26 @@
 		cursor: default;
 	}
 	.content:not(.busy):hover {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	.row.targeted {
-		background: rgba(127, 127, 127, 0.12);
+		background: var(--hover);
 		border-radius: 3px;
 	}
-	/* A jump from search flashes the row once, then fades back — long enough for
-	   the eye to catch it after the scroll, leaving no lingering state. The tint
-	   is a yellow alpha that reads on both themes. */
+	/* A jump from search flashes the row once, then fades back. The tint is the
+	   accent at low alpha rather than a yellow of its own: the flash says
+	   "here", which is the same thing selection says, so it spends the same
+	   colour instead of introducing a fourth one. */
 	.row.flash {
 		border-radius: 3px;
 		animation: flash 1.8s ease-out;
 	}
 	@keyframes flash {
 		0% {
-			background: rgba(255, 213, 0, 0.55);
+			background: var(--flash);
 		}
 		100% {
-			background: rgba(255, 213, 0, 0);
+			background: transparent;
 		}
 	}
 	/* The AI target is a per-row affordance kept out of the way until the row is
@@ -335,26 +336,26 @@
 		font-size: 0.92em;
 		padding: 0.05rem 0.25rem;
 		border-radius: 3px;
-		background: rgba(127, 127, 127, 0.16);
+		background: var(--hover);
 	}
 	.content :global(pre) {
 		margin: 0.2rem 0;
 		padding: 0.35rem 0.5rem;
 		border-radius: 4px;
 		overflow-x: auto;
-		background: rgba(127, 127, 127, 0.12);
+		background: var(--hover);
 	}
 	.content :global(pre code) {
 		padding: 0;
 		background: none;
 	}
 	.content :global(a) {
-		color: #3b6fd6;
+		color: var(--accent);
 	}
 	.content :global(blockquote) {
 		margin: 0.15rem 0;
 		padding-left: 0.5rem;
-		border-left: 2px solid rgba(127, 127, 127, 0.35);
+		border-left: 2px solid var(--hairline);
 		opacity: 0.85;
 	}
 	.content :global(:first-child) {
@@ -397,13 +398,14 @@
 	.history-toggle:hover:not(:disabled) {
 		opacity: 1;
 	}
-	/* Unreviewed rows get a standing orange rail — unlike .target/.links-toggle
-	   this is not a hover affordance, it is a status that must read at a glance
-	   across the whole tree. A ghost (pending delete) additionally dims, since
-	   it is on its way out pending Reject. */
+	/* Unreviewed rows get a standing rail at full text strength while every
+	   other rail is a hairline: the mark reads at a glance across the tree
+	   without spending the window's one accent, which belongs to selection.
+	   A ghost (pending delete) additionally dims, since it is on its way out
+	   pending Reject. */
 	.row.unreviewed {
 		padding-left: 0.3rem;
-		border-left: 2px solid rgba(255, 165, 0, 0.8);
+		border-left: 2px solid var(--text);
 	}
 	.row.ghost {
 		opacity: 0.55;

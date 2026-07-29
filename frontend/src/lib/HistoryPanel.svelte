@@ -62,7 +62,7 @@
 		margin: 0.1rem 0 0.25rem 1.25rem;
 		padding: 0.2rem 0.4rem;
 		font-size: 0.85rem;
-		border-left: 2px solid rgba(127, 127, 127, 0.25);
+		border-left: 2px solid var(--hairline);
 	}
 	.hint {
 		margin: 0 0 0.35rem;
@@ -80,7 +80,7 @@
 	}
 	.entry {
 		padding: 0.2rem 0;
-		border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+		border-bottom: 1px solid var(--hairline);
 	}
 	.entry:last-child {
 		border-bottom: none;
@@ -119,9 +119,11 @@
 	}
 	.deleted-tag {
 		flex: none;
-		background: rgba(255, 165, 0, 0.4);
+		border: 1px solid var(--hairline);
+		color: var(--text-dim);
+		background: none;
 		padding: 0 0.3em;
-		border-radius: 3px;
+		border-radius: var(--radius);
 	}
 	.delete {
 		flex: none;

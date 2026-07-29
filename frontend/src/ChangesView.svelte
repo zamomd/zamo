@@ -250,7 +250,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.25rem 0;
-		border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+		border-bottom: 1px solid var(--hairline);
 	}
 	.row.deleted {
 		opacity: 0.6;
@@ -268,10 +268,12 @@
 		opacity: 0.7;
 	}
 	.deleted-tag {
-		background: rgba(255, 165, 0, 0.4);
+		border: 1px solid var(--hairline);
+		color: var(--text-dim);
+		background: none;
 		padding: 0 0.3em;
 		margin-left: 0.4em;
-		border-radius: 3px;
+		border-radius: var(--radius);
 	}
 	.row button {
 		flex: none;

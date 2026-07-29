@@ -15,18 +15,24 @@
 <style>
 	.diff {
 		margin: 0.25rem 0 0.25rem 1.5rem;
-		padding: 0.5rem;
-		background: #f6f6f6;
-		font-size: 0.85em;
+		padding: var(--unit);
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
+		font-size: var(--size-small);
 		overflow-x: auto;
 	}
+	/* The +/- prefix already names the change, so the diff is carried by
+	   contrast rather than by hue: added lines at full strength, removed
+	   lines dimmed. That keeps the window at one accent, and it survives a
+	   theme whose green and red land somewhere unexpected. */
 	.del {
-		color: #a00;
+		color: var(--text-faint);
+		text-decoration: line-through;
 	}
 	.add {
-		color: #070;
+		color: var(--text);
 	}
 	.same {
-		color: #666;
+		color: var(--text-dim);
 	}
 </style>

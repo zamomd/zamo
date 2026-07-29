@@ -73,7 +73,7 @@
 		opacity: 0.75;
 	}
 	.error {
-		color: #c0392b;
+		color: var(--danger);
 	}
 	.results {
 		list-style: none;
@@ -83,7 +83,7 @@
 		   pushes the tree off-screen. */
 		max-height: 14rem;
 		overflow-y: auto;
-		border: 1px solid rgba(127, 127, 127, 0.25);
+		border: 1px solid var(--hairline);
 		border-radius: 4px;
 	}
 	.result {
@@ -97,7 +97,7 @@
 		color: inherit;
 	}
 	.result:hover {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	/* Keep each hit to a single elided line so the ranked order stays scannable;
 	   the full content lives in the tree the click jumps to. */
