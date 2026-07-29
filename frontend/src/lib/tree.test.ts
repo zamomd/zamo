@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { type TreeNodeData, topicOf } from "./tree";
+import { type TreeNodeData, topicOf, topicRows } from "./tree";
 
 // block builds the minimum Block the tree helpers read; the rest of the shape
 // never reaches them.
@@ -45,5 +45,34 @@ describe("topicOf", () => {
 
 	it("returns null for an empty forest", () => {
 		expect(topicOf([], "go")).toBe(null);
+	});
+});
+
+describe("topicRows", () => {
+	it("lists every topic in forest order", () => {
+		const rows = topicRows(forest, null);
+		expect(rows.map((r) => r.id)).toEqual(["go", "sqlite"]);
+	});
+
+	it("uses the block content as the title", () => {
+		expect(topicRows(forest, null)[0].title).toBe("go");
+	});
+
+	it("expands only the selected topic", () => {
+		const rows = topicRows(forest, "go");
+		expect(rows[0].selected).toBe(true);
+		expect(rows[0].children.map((c) => c.id)).toEqual(["ctx"]);
+		expect(rows[1].selected).toBe(false);
+		expect(rows[1].children).toEqual([]);
+	});
+
+	it("expands one level only", () => {
+		const rows = topicRows(forest, "go");
+		// "done" is a grandchild and must not appear in the sidebar.
+		expect(rows[0].children.map((c) => c.id)).not.toContain("done");
+	});
+
+	it("returns an empty list for an empty forest", () => {
+		expect(topicRows([], "go")).toEqual([]);
 	});
 });
