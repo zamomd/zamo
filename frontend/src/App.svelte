@@ -47,13 +47,28 @@
 </main>
 
 <style>
+	main {
+		padding: calc(var(--unit) * 2);
+	}
 	nav {
 		display: flex;
 		gap: 0.5rem;
 		margin-bottom: 1rem;
 	}
+	nav button {
+		border: none;
+		border-radius: 0;
+		border-bottom: 1px solid transparent;
+		color: var(--text-dim);
+		padding: 0 var(--unit);
+		line-height: calc(var(--row-height) * 1.2);
+	}
+	nav button:hover:not(:disabled) {
+		color: var(--text);
+		background: none;
+	}
 	nav button.active {
-		font-weight: bold;
-		text-decoration: underline;
+		color: var(--text);
+		border-bottom-color: var(--accent);
 	}
 </style>

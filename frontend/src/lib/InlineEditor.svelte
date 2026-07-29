@@ -30,6 +30,9 @@
 	.editor textarea {
 		flex: 1;
 		min-width: 12rem;
-		min-height: 3rem;
+		min-height: calc(var(--row-height) * 3);
+		padding: var(--unit);
+		line-height: var(--row-height);
+		resize: vertical;
 	}
 </style>

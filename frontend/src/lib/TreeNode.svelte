@@ -9,8 +9,11 @@
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	// One row of the base tree, recursing into its children. All state and
-	// actions come from the base store; the node is the only input.
-	let { node }: { node: TreeNodeData } = $props();
+	// actions come from the base store; node and nested are the only inputs.
+	// nested is set by the recursion itself (never by the top-level caller in
+	// BaseView.svelte), so a topic root's own <li> stays unmarked and rail-less
+	// while every recursed child's <li> carries .nested.
+	let { node, nested = false }: { node: TreeNodeData; nested?: boolean } = $props();
 
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
@@ -70,7 +73,7 @@
 	}
 </script>
 
-<li>
+<li class:nested>
 	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash class:unreviewed class:ghost>
 		<!-- Toggles are locked while an edit is open: collapsing an ancestor would
 		     unmount the editor while editingID lingers, silently dead-ending every
@@ -84,10 +87,10 @@
 				disabled={base.editingID !== null}
 				onclick={() => base.toggle(node.block.ID)}
 			>
-				{expanded ? "▾" : "▸"}
+				{expanded ? "▼" : "▶"}
 			</button>
 		{:else}
-			<span class="toggle leaf" aria-hidden="true">·</span>
+			<span class="toggle leaf" aria-hidden="true"></span>
 		{/if}
 
 		{#if ghost}
@@ -159,7 +162,7 @@
 			disabled={base.busy}
 			onclick={() => base.toggleHistory(node.block.ID)}
 		>
-			⌚
+			⌚︎
 		</button>
 
 		{#if unreviewed}
@@ -213,78 +216,122 @@
 		<HistoryPanel block={node.block} />
 	{/if}
 	{#if hasChildren && expanded}
-		<ul>
+		<ul class="children">
 			{#each node.children as child (child.block.ID)}
-				<TreeNode node={child} />
+				<TreeNode node={child} nested={true} />
 			{/each}
 		</ul>
 	{/if}
 </li>
 
 <style>
-	/* The forest is a plain nested list; indentation and a faint guide rail carry
-	   the hierarchy. Colours are theme-neutral (grey alpha) so the rail and hover
-	   read on both light and dark backgrounds. */
+	/* The forest is a plain nested list. Indentation and the rails carry the
+	   hierarchy: each item draws a vertical segment for its own level and a
+	   horizontal tick into its row, so a run of siblings reads as the box-
+	   drawing tree the design calls for, without box-drawing characters
+	   landing in the text itself. The rails hang off the <li> itself (the
+	   nested class the recursion sets below) rather than off a
+	   `ul.children > li` descendant selector: this component recurses through
+	   a child <TreeNode> component, not a literal <li> in its own template, so
+	   Svelte's static CSS scoping cannot see through that boundary — a
+	   selector that only matches through it is dead-code-eliminated from the
+	   build, not just warned about. */
 	ul {
 		list-style: none;
-		margin: 0 0 0 0.55rem;
-		padding: 0 0 0 0.7rem;
-		border-left: 1px solid rgba(127, 127, 127, 0.25);
+		margin: 0;
+		padding: 0;
+	}
+	ul.children {
+		margin-left: var(--indent);
+	}
+	li.nested {
+		position: relative;
+		padding-left: var(--indent);
+	}
+	/* The vertical segment: full height for a middle sibling, cut at the tick
+	   for the last one, which is what turns the corner from a T into an L. */
+	li.nested::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: var(--hairline);
+	}
+	li.nested:last-child::before {
+		bottom: auto;
+		height: calc(var(--row-height) / 2);
+	}
+	/* The horizontal tick, stopping short of the text so the join stays open. */
+	li.nested::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: calc(var(--row-height) / 2);
+		width: calc(var(--indent) - 6px);
+		height: 1px;
+		background: var(--hairline);
 	}
 	.row {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.15rem;
+		min-height: var(--row-height);
 	}
 	.toggle {
 		flex: none;
-		width: 1.1rem;
+		width: var(--indent);
 		padding: 0;
 		border: none;
 		background: none;
 		cursor: pointer;
-		color: inherit;
-		font-size: 0.8rem;
-		line-height: 1.5;
+		color: var(--text-dim);
+		font-size: 9px;
+		line-height: var(--row-height);
+	}
+	.toggle:hover:not(:disabled) {
+		color: var(--text);
 	}
 	.toggle.leaf {
 		cursor: default;
-		opacity: 0.35;
 	}
 	.content {
 		flex: 1;
 		text-align: left;
 		border: none;
 		background: none;
-		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
+		padding: 0 var(--unit) 0 0;
+		border-radius: var(--radius);
 		cursor: pointer;
 		color: inherit;
 		min-width: 0;
+		line-height: var(--row-height);
 	}
 	.content.busy {
 		cursor: default;
 	}
 	.content:not(.busy):hover {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	.row.targeted {
-		background: rgba(127, 127, 127, 0.12);
-		border-radius: 3px;
+		background: var(--hover);
+		border-radius: var(--radius);
 	}
-	/* A jump from search flashes the row once, then fades back — long enough for
-	   the eye to catch it after the scroll, leaving no lingering state. The tint
-	   is a yellow alpha that reads on both themes. */
+	/* A jump from search flashes the row once, then fades back. The tint is the
+	   accent at low alpha rather than a yellow of its own: the flash says
+	   "here", which is the same thing selection says, so it spends the same
+	   colour instead of introducing a fourth one. */
 	.row.flash {
-		border-radius: 3px;
+		border-radius: var(--radius);
 		animation: flash 1.8s ease-out;
 	}
 	@keyframes flash {
 		0% {
-			background: rgba(255, 213, 0, 0.55);
+			background: var(--flash);
 		}
 		100% {
-			background: rgba(255, 213, 0, 0);
+			background: transparent;
 		}
 	}
 	/* The AI target is a per-row affordance kept out of the way until the row is
@@ -334,27 +381,27 @@
 		white-space: pre-wrap;
 		font-size: 0.92em;
 		padding: 0.05rem 0.25rem;
-		border-radius: 3px;
-		background: rgba(127, 127, 127, 0.16);
+		border-radius: var(--radius);
+		background: var(--surface);
 	}
 	.content :global(pre) {
 		margin: 0.2rem 0;
 		padding: 0.35rem 0.5rem;
-		border-radius: 4px;
+		border-radius: var(--radius);
 		overflow-x: auto;
-		background: rgba(127, 127, 127, 0.12);
+		background: var(--surface);
 	}
 	.content :global(pre code) {
 		padding: 0;
 		background: none;
 	}
 	.content :global(a) {
-		color: #3b6fd6;
+		color: var(--accent);
 	}
 	.content :global(blockquote) {
 		margin: 0.15rem 0;
 		padding-left: 0.5rem;
-		border-left: 2px solid rgba(127, 127, 127, 0.35);
+		border-left: 2px solid var(--hairline);
 		opacity: 0.85;
 	}
 	.content :global(:first-child) {
@@ -397,13 +444,16 @@
 	.history-toggle:hover:not(:disabled) {
 		opacity: 1;
 	}
-	/* Unreviewed rows get a standing orange rail — unlike .target/.links-toggle
-	   this is not a hover affordance, it is a status that must read at a glance
-	   across the whole tree. A ghost (pending delete) additionally dims, since
-	   it is on its way out pending Reject. */
+	/* Unreviewed rows get a standing rail at full text strength while every
+	   other rail is a hairline: the mark reads at a glance across the tree.
+	   The window's one accent belongs to focus rings, the active tab and
+	   markdown links, not to this rail — it stays neutral so the mark
+	   survives a repaint of those other things.
+	   A ghost (pending delete) additionally dims, since it is on its way out
+	   pending Reject. */
 	.row.unreviewed {
 		padding-left: 0.3rem;
-		border-left: 2px solid rgba(255, 165, 0, 0.8);
+		border-left: 2px solid var(--text);
 	}
 	.row.ghost {
 		opacity: 0.55;
@@ -436,6 +486,6 @@
 	}
 	.accept-page,
 	.reject-page {
-		font-size: 0.8rem;
+		font-size: var(--size-small);
 	}
 </style>

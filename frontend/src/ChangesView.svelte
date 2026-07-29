@@ -229,14 +229,15 @@
 
 <style>
 	h1 {
-		font-size: 1.3rem;
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.5);
 		margin: 0 0 0.75rem;
 	}
 	.group {
 		margin-bottom: 1.25rem;
 	}
 	.group h2 {
-		font-size: 1rem;
+		font-size: var(--size-heading);
 		margin: 0 0 0.35rem;
 		opacity: 0.85;
 	}
@@ -250,7 +251,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.25rem 0;
-		border-bottom: 1px solid rgba(127, 127, 127, 0.15);
+		border-bottom: 1px solid var(--hairline);
 	}
 	.row.deleted {
 		opacity: 0.6;
@@ -264,14 +265,16 @@
 	}
 	.meta {
 		flex: none;
-		font-size: 0.8rem;
+		font-size: var(--size-small);
 		opacity: 0.7;
 	}
 	.deleted-tag {
-		background: rgba(255, 165, 0, 0.4);
+		border: 1px solid var(--hairline);
+		color: var(--text-dim);
+		background: none;
 		padding: 0 0.3em;
 		margin-left: 0.4em;
-		border-radius: 3px;
+		border-radius: var(--radius);
 	}
 	.row button {
 		flex: none;

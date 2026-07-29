@@ -67,37 +67,39 @@
 	.status,
 	.error {
 		margin: 0.35rem 0 0;
-		font-size: 0.85rem;
+		font-size: var(--size-small);
 	}
 	.status {
 		opacity: 0.75;
 	}
 	.error {
-		color: #c0392b;
+		color: var(--danger);
 	}
 	.results {
 		list-style: none;
 		margin: 0.35rem 0 0;
 		padding: 0;
-		/* The list is ranked and can be long; cap it and let it scroll so it never
-		   pushes the tree off-screen. */
+		/* The list is ranked and can be long; cap it and let it scroll so it
+		   never pushes the tree off-screen. */
 		max-height: 14rem;
 		overflow-y: auto;
-		border: 1px solid rgba(127, 127, 127, 0.25);
-		border-radius: 4px;
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
 	}
 	.result {
 		display: block;
 		width: 100%;
 		text-align: left;
 		border: none;
+		border-radius: 0;
 		background: none;
-		padding: 0.25rem 0.5rem;
+		padding: 0 var(--unit);
+		line-height: var(--row-height);
 		cursor: pointer;
 		color: inherit;
 	}
 	.result:hover {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	/* Keep each hit to a single elided line so the ranked order stays scannable;
 	   the full content lives in the tree the click jumps to. */

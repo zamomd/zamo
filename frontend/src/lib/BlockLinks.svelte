@@ -102,8 +102,8 @@
 	.links {
 		margin: 0.1rem 0 0.25rem 1.25rem;
 		padding: 0.2rem 0.4rem;
-		font-size: 0.85rem;
-		border-left: 2px solid rgba(127, 127, 127, 0.25);
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
 	}
 	.links ul {
 		list-style: none;
@@ -135,12 +135,12 @@
 		border: none;
 		background: none;
 		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
+		border-radius: var(--radius);
 		cursor: pointer;
 		color: inherit;
 	}
 	.neighbour:hover {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	/* One elided line per neighbour; the full content lives where the jump goes. */
 	.neighbour code {
@@ -192,8 +192,8 @@
 		max-height: 10rem;
 		overflow-y: auto;
 		margin-top: 0.25rem;
-		border: 1px solid rgba(127, 127, 127, 0.25);
-		border-radius: 4px;
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
 	}
 	.result {
 		display: block;
@@ -206,7 +206,7 @@
 		color: inherit;
 	}
 	.result:hover:not(:disabled) {
-		background: rgba(127, 127, 127, 0.15);
+		background: var(--hover);
 	}
 	.result code {
 		display: block;

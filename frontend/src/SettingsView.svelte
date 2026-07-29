@@ -301,8 +301,8 @@
 	}
 	.banner {
 		padding: 0.5rem;
-		border: 1px solid currentColor;
-		border-radius: 4px;
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
 	}
 	.actions {
 		display: flex;
@@ -316,8 +316,8 @@
 		flex-wrap: wrap;
 		margin-top: 0.5rem;
 		padding: 0.5rem;
-		border: 1px solid currentColor;
-		border-radius: 4px;
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
 	}
 	button.link {
 		border: none;
@@ -326,7 +326,7 @@
 		color: inherit;
 		text-decoration: underline;
 		cursor: pointer;
-		font-size: 0.85rem;
+		font-size: var(--size-small);
 		opacity: 0.7;
 		display: block;
 		margin-top: 0.25rem;
