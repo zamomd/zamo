@@ -66,3 +66,16 @@ export function findPath(nodes: TreeNodeData[], id: string): string[] | null {
 	}
 	return null;
 }
+
+// topicOf reports which topic root's tree a block belongs to. The sidebar
+// selects a topic while search and the changes list jump to blocks, so every
+// jump has to answer this before it can decide whether the main area must
+// switch topics first.
+export function topicOf(nodes: TreeNodeData[], id: string): string | null {
+	for (const node of nodes) {
+		if (findBlock([node], id) !== null) {
+			return node.block.ID;
+		}
+	}
+	return null;
+}

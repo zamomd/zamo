@@ -41,6 +41,10 @@ english-only:
 web-lint:
     cd frontend && bun run lint
 
+# run the frontend unit tests
+web-test:
+    cd frontend && bun run test
+
 # apply frontend formatting and safe fixes
 web-fmt:
     cd frontend && bun run lint:fix
@@ -50,7 +54,7 @@ changelog:
     git-cliff -o CHANGELOG.md
 
 # everything CI checks
-check: lint web-lint english-only test
+check: lint web-lint english-only test web-test
     go mod tidy -diff
 
 # per-package coverage (atomic mode: the only one correct under -race)
