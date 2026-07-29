@@ -9,8 +9,11 @@
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	// One row of the base tree, recursing into its children. All state and
-	// actions come from the base store; the node is the only input.
-	let { node }: { node: TreeNodeData } = $props();
+	// actions come from the base store; node and nested are the only inputs.
+	// nested is set by the recursion itself (never by the top-level caller in
+	// BaseView.svelte), so a topic root's own <li> stays unmarked and rail-less
+	// while every recursed child's <li> carries .nested.
+	let { node, nested = false }: { node: TreeNodeData; nested?: boolean } = $props();
 
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
@@ -70,7 +73,7 @@
 	}
 </script>
 
-<li>
+<li class:nested>
 	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash class:unreviewed class:ghost>
 		<!-- Toggles are locked while an edit is open: collapsing an ancestor would
 		     unmount the editor while editingID lingers, silently dead-ending every
@@ -215,7 +218,7 @@
 	{#if hasChildren && expanded}
 		<ul class="children">
 			{#each node.children as child (child.block.ID)}
-				<TreeNode node={child} />
+				<TreeNode node={child} nested={true} />
 			{/each}
 		</ul>
 	{/if}
@@ -226,7 +229,13 @@
 	   hierarchy: each item draws a vertical segment for its own level and a
 	   horizontal tick into its row, so a run of siblings reads as the box-
 	   drawing tree the design calls for, without box-drawing characters
-	   landing in the text itself. */
+	   landing in the text itself. The rails hang off the <li> itself (the
+	   nested class the recursion sets below) rather than off a
+	   `ul.children > li` descendant selector: this component recurses through
+	   a child <TreeNode> component, not a literal <li> in its own template, so
+	   Svelte's static CSS scoping cannot see through that boundary — a
+	   selector that only matches through it is dead-code-eliminated from the
+	   build, not just warned about. */
 	ul {
 		list-style: none;
 		margin: 0;
@@ -235,13 +244,13 @@
 	ul.children {
 		margin-left: var(--indent);
 	}
-	ul.children > li {
+	li.nested {
 		position: relative;
 		padding-left: var(--indent);
 	}
 	/* The vertical segment: full height for a middle sibling, cut at the tick
 	   for the last one, which is what turns the corner from a T into an L. */
-	ul.children > li::before {
+	li.nested::before {
 		content: "";
 		position: absolute;
 		left: 0;
@@ -250,12 +259,12 @@
 		width: 1px;
 		background: var(--hairline);
 	}
-	ul.children > li:last-child::before {
+	li.nested:last-child::before {
 		bottom: auto;
 		height: calc(var(--row-height) / 2);
 	}
 	/* The horizontal tick, stopping short of the text so the join stays open. */
-	ul.children > li::after {
+	li.nested::after {
 		content: "";
 		position: absolute;
 		left: 0;
