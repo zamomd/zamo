@@ -102,7 +102,7 @@
 	.links {
 		margin: 0.1rem 0 0.25rem 1.25rem;
 		padding: 0.2rem 0.4rem;
-		font-size: 0.85rem;
+		font-size: var(--size-small);
 		border-left: 2px solid var(--hairline);
 	}
 	.links ul {
@@ -135,7 +135,7 @@
 		border: none;
 		background: none;
 		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
+		border-radius: var(--radius);
 		cursor: pointer;
 		color: inherit;
 	}
@@ -193,7 +193,7 @@
 		overflow-y: auto;
 		margin-top: 0.25rem;
 		border: 1px solid var(--hairline);
-		border-radius: 4px;
+		border-radius: var(--radius);
 	}
 	.result {
 		display: block;

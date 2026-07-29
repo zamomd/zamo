@@ -32,7 +32,7 @@
 			type="submit"
 			disabled={base.busy || base.editingID !== null || base.command.trim() === ""}
 		>
-			↵ send
+			send
 		</button>
 	</div>
 </form>
@@ -46,7 +46,7 @@
 	}
 	.scope {
 		margin: 0;
-		font-size: 0.85rem;
+		font-size: var(--size-small);
 		opacity: 0.75;
 	}
 	/* Keep a long targeted-block content on one line so the command area does not
@@ -73,8 +73,9 @@
 	.ask {
 		display: flex;
 		align-items: stretch;
-		border: 1px solid var(--hairline);
+		border: 1px solid var(--hairline-strong);
 		border-radius: var(--radius);
+		overflow: hidden;
 	}
 	.ask:focus-within {
 		border-color: var(--accent);
@@ -92,7 +93,7 @@
 	.ask button {
 		flex: none;
 		border: none;
-		border-left: 1px solid var(--hairline);
+		border-left: 1px solid var(--hairline-strong);
 		border-radius: 0;
 		color: var(--text-dim);
 		padding: 0 calc(var(--unit) * 2);

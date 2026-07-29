@@ -162,7 +162,7 @@
 			disabled={base.busy}
 			onclick={() => base.toggleHistory(node.block.ID)}
 		>
-			⌚
+			⌚︎
 		</button>
 
 		{#if unreviewed}
@@ -316,14 +316,14 @@
 	}
 	.row.targeted {
 		background: var(--hover);
-		border-radius: 3px;
+		border-radius: var(--radius);
 	}
 	/* A jump from search flashes the row once, then fades back. The tint is the
 	   accent at low alpha rather than a yellow of its own: the flash says
 	   "here", which is the same thing selection says, so it spends the same
 	   colour instead of introducing a fourth one. */
 	.row.flash {
-		border-radius: 3px;
+		border-radius: var(--radius);
 		animation: flash 1.8s ease-out;
 	}
 	@keyframes flash {
@@ -381,15 +381,15 @@
 		white-space: pre-wrap;
 		font-size: 0.92em;
 		padding: 0.05rem 0.25rem;
-		border-radius: 3px;
-		background: var(--hover);
+		border-radius: var(--radius);
+		background: var(--surface);
 	}
 	.content :global(pre) {
 		margin: 0.2rem 0;
 		padding: 0.35rem 0.5rem;
-		border-radius: 4px;
+		border-radius: var(--radius);
 		overflow-x: auto;
-		background: var(--hover);
+		background: var(--surface);
 	}
 	.content :global(pre code) {
 		padding: 0;
@@ -445,8 +445,10 @@
 		opacity: 1;
 	}
 	/* Unreviewed rows get a standing rail at full text strength while every
-	   other rail is a hairline: the mark reads at a glance across the tree
-	   without spending the window's one accent, which belongs to selection.
+	   other rail is a hairline: the mark reads at a glance across the tree.
+	   The window's one accent belongs to focus rings, the active tab and
+	   markdown links, not to this rail — it stays neutral so the mark
+	   survives a repaint of those other things.
 	   A ghost (pending delete) additionally dims, since it is on its way out
 	   pending Reject. */
 	.row.unreviewed {
@@ -484,6 +486,6 @@
 	}
 	.accept-page,
 	.reject-page {
-		font-size: 0.8rem;
+		font-size: var(--size-small);
 	}
 </style>

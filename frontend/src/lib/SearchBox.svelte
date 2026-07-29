@@ -67,7 +67,7 @@
 	.status,
 	.error {
 		margin: 0.35rem 0 0;
-		font-size: 0.85rem;
+		font-size: var(--size-small);
 	}
 	.status {
 		opacity: 0.75;

@@ -237,7 +237,7 @@
 		margin-bottom: 1.25rem;
 	}
 	.group h2 {
-		font-size: 1rem;
+		font-size: var(--size-heading);
 		margin: 0 0 0.35rem;
 		opacity: 0.85;
 	}
@@ -265,7 +265,7 @@
 	}
 	.meta {
 		flex: none;
-		font-size: 0.8rem;
+		font-size: var(--size-small);
 		opacity: 0.7;
 	}
 	.deleted-tag {

@@ -26,7 +26,7 @@
 	   lines dimmed. That keeps the window at one accent, and it survives a
 	   theme whose green and red land somewhere unexpected. */
 	.del {
-		color: var(--text-faint);
+		color: var(--text-dim);
 		text-decoration: line-through;
 	}
 	.add {

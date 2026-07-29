@@ -47,6 +47,9 @@
 </main>
 
 <style>
+	main {
+		padding: calc(var(--unit) * 2);
+	}
 	nav {
 		display: flex;
 		gap: 0.5rem;

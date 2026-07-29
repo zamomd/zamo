@@ -32,8 +32,14 @@
 
 	--size-body: 14px;
 	--size-small: 12px;
+	--size-heading: 16px;
 	--size-title: 22px;
 	--row-height: 26px;
+	/* Unitless, unlike --row-height: a line-height that inherits as a length
+	   locks every descendant to 26px regardless of its own font-size. Body
+	   text uses this ratio; elements that must snap to the row grid keep
+	   an explicit line-height: var(--row-height) of their own. */
+	--line-body: 1.85;
 	--indent: 20px;
 	--unit: 8px;
 	--radius: 3px;
@@ -43,8 +49,17 @@
 	--text-dim: #55555a;
 	--text-faint: #8a8a90;
 	--hairline: #e2e2e5;
+	/* ~3:1 against --ground: for interactive boundaries only (inputs,
+	   buttons), where --hairline alone is too faint to mark a control that
+	   has no fill. Passive separators (rails, panel borders, row rules)
+	   keep --hairline. */
+	--hairline-strong: #a8a8ae;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
+	/* Same value as --hover today, but a distinct token: this is a resting
+	   surface (code/pre chips), not interaction feedback, so retuning hover
+	   must not silently repaint it. */
+	--surface: rgba(0, 0, 0, 0.05);
 	--flash: rgba(47, 111, 208, 0.18);
 	--danger: #b3261e;
 }
@@ -56,8 +71,10 @@
 		--text-dim: #9a9a9c;
 		--text-faint: #6a6a6d;
 		--hairline: #232326;
+		--hairline-strong: #54545a;
 		--accent: #5e8fd0;
 		--hover: rgba(255, 255, 255, 0.06);
+		--surface: rgba(255, 255, 255, 0.06);
 		--flash: rgba(94, 143, 208, 0.22);
 		--danger: #d96a6a;
 	}
@@ -80,7 +97,7 @@ body {
 	color: var(--text);
 	font-family: var(--font-mono);
 	font-size: var(--size-body);
-	line-height: var(--row-height);
+	line-height: var(--line-body);
 	/* The webview antialiases heavily by default, which fattens a monospace
 	   face at 14px and costs the design its crispness. */
 	-webkit-font-smoothing: antialiased;
@@ -102,16 +119,17 @@ input,
 textarea,
 select {
 	background: none;
-	border: 1px solid var(--hairline);
+	border: 1px solid var(--hairline-strong);
 	border-radius: var(--radius);
 	padding: 0 var(--unit);
 }
 
-input:focus,
-textarea:focus,
-select:focus {
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
 	outline: none;
 	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent);
 }
 
 input::placeholder,
@@ -121,7 +139,7 @@ textarea::placeholder {
 
 button {
 	background: none;
-	border: 1px solid var(--hairline);
+	border: 1px solid var(--hairline-strong);
 	border-radius: var(--radius);
 	padding: 0 var(--unit);
 	cursor: pointer;
