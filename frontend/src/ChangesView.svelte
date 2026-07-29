@@ -229,7 +229,8 @@
 
 <style>
 	h1 {
-		font-size: 1.3rem;
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.5);
 		margin: 0 0 0.75rem;
 	}
 	.group {

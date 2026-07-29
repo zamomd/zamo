@@ -79,20 +79,22 @@
 		list-style: none;
 		margin: 0.35rem 0 0;
 		padding: 0;
-		/* The list is ranked and can be long; cap it and let it scroll so it never
-		   pushes the tree off-screen. */
+		/* The list is ranked and can be long; cap it and let it scroll so it
+		   never pushes the tree off-screen. */
 		max-height: 14rem;
 		overflow-y: auto;
 		border: 1px solid var(--hairline);
-		border-radius: 4px;
+		border-radius: var(--radius);
 	}
 	.result {
 		display: block;
 		width: 100%;
 		text-align: left;
 		border: none;
+		border-radius: 0;
 		background: none;
-		padding: 0.25rem 0.5rem;
+		padding: 0 var(--unit);
+		line-height: var(--row-height);
 		cursor: pointer;
 		color: inherit;
 	}

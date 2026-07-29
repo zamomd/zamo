@@ -24,7 +24,7 @@
 	<div class="ask">
 		<input
 			aria-label="AI command"
-			placeholder={base.scopeID === null ? "new topic to expand…" : "how should the AI restructure this?"}
+			placeholder={base.scopeID === null ? "ask ai to expand a new topic" : "ask ai how to restructure this"}
 			bind:value={base.command}
 			disabled={base.busy || base.editingID !== null}
 		/>
@@ -32,7 +32,7 @@
 			type="submit"
 			disabled={base.busy || base.editingID !== null || base.command.trim() === ""}
 		>
-			Ask AI
+			↵ send
 		</button>
 	</div>
 </form>
@@ -67,11 +67,38 @@
 		color: inherit;
 		text-decoration: underline;
 	}
+	/* One frame around the pair; the divider between them is the frame's own
+	   hairline, so the action reads as part of the field rather than as a
+	   separate filled button. */
 	.ask {
 		display: flex;
-		gap: 0.5rem;
+		align-items: stretch;
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
+	}
+	.ask:focus-within {
+		border-color: var(--accent);
 	}
 	.ask input {
 		flex: 1;
+		min-width: 0;
+		border: none;
+		border-radius: 0;
+		height: calc(var(--row-height) * 1.5);
+	}
+	.ask input:focus {
+		border: none;
+	}
+	.ask button {
+		flex: none;
+		border: none;
+		border-left: 1px solid var(--hairline);
+		border-radius: 0;
+		color: var(--text-dim);
+		padding: 0 calc(var(--unit) * 2);
+	}
+	.ask button:hover:not(:disabled) {
+		color: var(--text);
+		background: var(--hover);
 	}
 </style>
