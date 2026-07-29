@@ -98,8 +98,13 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// Inserted out of id order; the read must still come back sorted, because
-	// the layout seeds positions by index.
+	// Inserted out of id order. This pins the caller-visible contract the
+	// layout depends on — sorted by id — which is what the explicit ORDER BY
+	// in graph.go exists to guarantee; nothing in this suite can tell that
+	// guarantee apart from SQLite incidentally sorting this fixture on its
+	// own (GROUP BY and SELECT DISTINCT both materialize through a sorted
+	// temp B-tree), since removing the ORDER BY still leaves this table small
+	// enough to come back sorted by chance.
 	insertBlock(ctx, t, db, "c", "", 0, "Topic C")
 	insertBlock(ctx, t, db, "a", "", 1, "Topic A")
 	insertBlock(ctx, t, db, "b", "", 2, "Topic B")
@@ -117,6 +122,45 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	want := []knowledge.TopicEdge{{From: "a", To: "c"}, {From: "b", To: "c"}}
 	if len(got.Edges) != 2 || got.Edges[0] != want[0] || got.Edges[1] != want[1] {
 		t.Errorf("edges = %v, want %v", got.Edges, want)
+	}
+}
+
+func TestPruneDanglingEdges(t *testing.T) {
+	topics := []knowledge.TopicNode{{ID: "a"}, {ID: "b"}}
+
+	cases := []struct {
+		name  string
+		edges []knowledge.TopicEdge
+		want  []knowledge.TopicEdge
+	}{
+		{
+			name:  "dangling on From",
+			edges: []knowledge.TopicEdge{{From: "gone", To: "b"}},
+			want:  nil,
+		},
+		{
+			name:  "dangling on To",
+			edges: []knowledge.TopicEdge{{From: "a", To: "gone"}},
+			want:  nil,
+		},
+		{
+			name:  "both endpoints present survives untouched",
+			edges: []knowledge.TopicEdge{{From: "a", To: "b"}},
+			want:  []knowledge.TopicEdge{{From: "a", To: "b"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pruneDanglingEdges(topics, tc.edges)
+			if len(got) != len(tc.want) {
+				t.Fatalf("pruneDanglingEdges = %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("edge %d = %+v, want %+v", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 

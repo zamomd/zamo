@@ -9,9 +9,9 @@ import (
 
 // topicRoots pairs every block with the topic root it descends from. Both graph
 // queries start here. UNION, not UNION ALL: on a database whose parent_id
-// somehow became cyclic the repeated row is discarded and the walk terminates
-// instead of looping forever (ARCHITECTURE.md §5.2), the same guard GetSubtree
-// uses.
+// somehow became cyclic, UNION discards the repeated row once a block is
+// already in roots, so the walk terminates instead of looping forever — the
+// same guard GetSubtree uses.
 const topicRoots = `
 WITH RECURSIVE roots(id, root) AS (
     SELECT id, id FROM blocks WHERE parent_id IS NULL
@@ -22,7 +22,12 @@ WITH RECURSIVE roots(id, root) AS (
 // GetTopicGraph implements knowledge.Repository: the topic-level map. Two
 // queries rather than one join — a block count per topic and an edge set have
 // different grains, and multiplying them together in SQL only to divide them
-// back out in Go would be the more fragile shape.
+// back out in Go would be the more fragile shape. The two queries run on
+// separate pooled connections with no shared transaction (a transaction here
+// would take the DSN's immediate write lock — see the comment on
+// pruneDanglingEdges), so a write landing between them can leave an edge
+// naming a topic the first query already missed; pruneDanglingEdges is the
+// after-the-fact fix for that skew.
 func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
 	topics, err := r.topicNodes(ctx)
 	if err != nil {
@@ -32,7 +37,29 @@ func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) 
 	if err != nil {
 		return knowledge.TopicGraph{}, err
 	}
-	return knowledge.TopicGraph{Topics: topics, Edges: edges}, nil
+	return knowledge.TopicGraph{Topics: topics, Edges: pruneDanglingEdges(topics, edges)}, nil
+}
+
+// pruneDanglingEdges drops any edge whose endpoint is not among topics. It
+// exists because topicNodes and topicEdges are two unsynchronized reads (see
+// GetTopicGraph): a write between them — e.g. comind mcp deleting a topic
+// after the node read and before the edge read — can hand back an edge that
+// names a topic absent from topics. Filtering here, rather than serializing
+// the two reads in a transaction, keeps the read lock-free; see GetTopicGraph
+// for why that trade was made. This is what lets TopicGraph promise every
+// edge's endpoints are present in Topics.
+func pruneDanglingEdges(topics []knowledge.TopicNode, edges []knowledge.TopicEdge) []knowledge.TopicEdge {
+	present := make(map[knowledge.ID]bool, len(topics))
+	for _, t := range topics {
+		present[t.ID] = true
+	}
+	var out []knowledge.TopicEdge
+	for _, e := range edges {
+		if present[e.From] && present[e.To] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // topicNodes reads every topic root with the size of its subtree. Ordered by

@@ -22,7 +22,11 @@ type TopicEdge struct {
 // TopicGraph is the whole map in one read. Topics come in id order, which is
 // ULID order, which is creation order — the graph layout seeds node positions
 // by index, so a stable order is what keeps the map from reshuffling when a
-// topic is added.
+// topic is added. Every edge's endpoints are present in Topics: Topics and
+// Edges come from two unsynchronized reads, so a write landing between them
+// could otherwise hand back an edge naming a topic the read missed; the
+// storage implementation is responsible for filtering that case out before
+// returning.
 type TopicGraph struct {
 	Topics []TopicNode
 	Edges  []TopicEdge
