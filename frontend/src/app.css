@@ -51,9 +51,9 @@
 	--hairline: #e2e2e5;
 	/* Three tiers, by what the eye has to resolve alone: --hairline for a
 	   shape's own perimeter and for separators the eye reads as part of a
-	   larger form; --hairline-strong (~3:1) for the boundary of an
-	   interactive control that has no fill; --rail (~3:1) for a lone line
-	   that has to carry structure entirely on its own. */
+	   larger form; --hairline-strong for the boundary of an interactive
+	   control that has no fill; --rail for a lone line that has to carry
+	   structure entirely on its own. */
 	--hairline-strong: #a8a8ae;
 	--rail: #94949a;
 	--accent: #2f6fd0;
