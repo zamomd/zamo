@@ -175,6 +175,37 @@ describe("viewBox", () => {
 		expect(minX + w).toBeGreaterThanOrEqual(94);
 		expect(minY).toBeLessThanOrEqual(-6);
 	});
+
+	// A single node's content extent is a 10-unit circle box — with nothing to
+	// fit against, the tight-fitting box used to scale that up to fill the
+	// whole pane, making a one-topic base draw the single largest circle the
+	// view can ever produce. See MIN_EXTENT.
+	it("floors a single node's extent instead of fitting tight to it", () => {
+		const box = viewBox([circleBox(0, 0, 5)], 0);
+		const [, , w, h] = box.split(" ").map(Number);
+		expect(w).toBeGreaterThanOrEqual(300);
+		expect(h).toBeGreaterThanOrEqual(300);
+	});
+
+	it("leaves a content extent already past the floor unaffected", () => {
+		const boxes = [circleBox(0, 0, 5), circleBox(400, 400, 5)];
+		const box = viewBox(boxes, 0);
+		const [minX, minY, w, h] = box.split(" ").map(Number);
+		expect(minX).toBe(-5);
+		expect(minY).toBe(-5);
+		expect(w).toBe(410);
+		expect(h).toBe(410);
+	});
+
+	it("floors each axis independently, not the box as a whole", () => {
+		// A wide, flat box (content 400x10): the wide axis already clears the
+		// floor and must stay untouched while the flat one is floored — proof
+		// the two axes are not both forced to the same fallback shape.
+		const box = viewBox([{ minX: 0, minY: 0, maxX: 400, maxY: 10 }], 0);
+		const [, , w, h] = box.split(" ").map(Number);
+		expect(w).toBe(400);
+		expect(h).toBe(300);
+	});
 });
 
 describe("clampPad", () => {
@@ -183,25 +214,42 @@ describe("clampPad", () => {
 		expect(clampPad(boxes, 5)).toBe(5);
 	});
 
+	// Content extent well past viewBox's MIN_EXTENT floor on both axes, so
+	// this isolates the tighter-axis fraction from the floor's own effect
+	// (covered separately below).
 	it("clamps a large request to a fraction of the tighter content axis", () => {
-		const boxes = [{ minX: 0, minY: 0, maxX: 100, maxY: 40 }]; // w=100, h=40
-		expect(clampPad(boxes, 1000)).toBe(10); // 0.25 * 40
+		const boxes = [{ minX: 0, minY: 0, maxX: 1000, maxY: 400 }]; // w=1000, h=400
+		expect(clampPad(boxes, 10_000)).toBe(100); // 0.25 * 400
 	});
 
 	it("returns the request unclamped when there is no content to dominate", () => {
 		expect(clampPad([], 24)).toBe(24);
 	});
 
+	// clampPad measures the content axis by calling viewBox with pad 0 (see
+	// its own comment), so it inherits viewBox's floor for a tiny box rather
+	// than clamping against the tiny raw extent. Without this, the smallest
+	// bases would get the *stingiest* pad allowance of any base size —
+	// backwards, since they are exactly the ones MIN_EXTENT exists to give
+	// room to breathe.
+	it("clamps against the floored extent, not the raw one, for content below the floor", () => {
+		const boxes = [circleBox(0, 0, 5)]; // raw extent 10, far below the floor
+		expect(clampPad(boxes, 1_000_000)).toBe(75); // 0.25 * 300
+	});
+
 	// This is the property that actually matters — not the clamp's internal
-	// arithmetic, but what it guarantees about the fitted box: a node's
-	// rendered size cannot collapse, no matter how large a padding request a
-	// runaway scale conversion produces. The old iterative version failed
-	// exactly this, unmeasured, at 520×760 with six topics.
+	// arithmetic, but what it guarantees about the fitted box: padding alone
+	// cannot make the box balloon without bound, no matter how large a
+	// request a runaway scale conversion produces. The old iterative version
+	// failed exactly this, unmeasured, at 520×760 with six topics. Content
+	// here is chosen past the floor so this isolates the pad clamp from the
+	// floor — the floor's own effect on a tiny node is covered above and in
+	// viewBox's own tests.
 	it("never lets padding shrink the circle box below half the fitted viewBox on either axis", () => {
-		const boxes = [circleBox(0, 0, 10)];
+		const boxes = [circleBox(0, 0, 200)];
 		const pad = clampPad(boxes, 1_000_000);
 		const [, , w, h] = viewBox(boxes, pad).split(" ").map(Number);
-		const content = 20; // 2 * r
+		const content = 400; // 2 * r
 		expect(content / w).toBeGreaterThanOrEqual(0.5);
 		expect(content / h).toBeGreaterThanOrEqual(0.5);
 	});

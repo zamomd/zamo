@@ -176,6 +176,33 @@ export function circleBox(x: number, y: number, r: number): Box {
 	return { minX: x - r, minY: y - r, maxX: x + r, maxY: y + r };
 }
 
+// A base with very few topics has almost no content extent to fit — the
+// nodes have nowhere to spread apart, so the tight-fitting viewBox scales
+// them up to fill the pane instead. Left alone, that makes the *smallest*
+// bases draw the *largest* circles: exactly backwards from block-count
+// sizing, where a bigger circle should mean more content, not less of it
+// to look at. Flooring the fitted extent (never the circle radius, which
+// stays a pure function of block count) puts every small base on the same
+// content-independent scale, so a topic's size on screen keeps meaning
+// what radiusOf says it means regardless of how many topics exist yet.
+// MIN_EXTENT is picked to sit above the extent a repulsion-only layout
+// settles a handful of nodes into, so it normalises the smallest bases
+// without ever having to fire for one a reader would call "not small".
+const MIN_EXTENT = 300;
+
+// floorAxis expands [min, max] to at least MIN_EXTENT, keeping it centered
+// on the original midpoint so flooring never shifts the content off-center
+// within its own box. An axis already at or past the floor is returned
+// unchanged.
+function floorAxis(min: number, max: number): [number, number] {
+	const extent = max - min;
+	if (extent >= MIN_EXTENT) {
+		return [min, max];
+	}
+	const mid = (min + max) / 2;
+	return [mid - MIN_EXTENT / 2, mid + MIN_EXTENT / 2];
+}
+
 // viewBox fits every given box, plus pad, into an SVG viewBox string. Fitting
 // the content is what lets the first version ship without pan or zoom. An
 // empty graph still needs a box with area, or the SVG collapses. Only nodes'
@@ -185,7 +212,9 @@ export function circleBox(x: number, y: number, r: number): Box {
 // the very box that determines its own scale is a runaway: shrinking the
 // pane grows the box to fit the label, which shrinks the scale, which grows
 // the label further in box units. Bounded clipping of an annotation beats an
-// unreadable map.
+// unreadable map. The fitted extent is floored per axis (see MIN_EXTENT)
+// before padding is added, so the floor and the pad never fight over the
+// same units.
 export function viewBox(boxes: Box[], pad: number): string {
 	if (boxes.length === 0) {
 		return `0 0 ${2 * pad} ${2 * pad}`;
@@ -200,6 +229,8 @@ export function viewBox(boxes: Box[], pad: number): string {
 		maxX = Math.max(maxX, b.maxX);
 		maxY = Math.max(maxY, b.maxY);
 	}
+	[minX, maxX] = floorAxis(minX, maxX);
+	[minY, maxY] = floorAxis(minY, maxY);
 	return `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`;
 }
 
