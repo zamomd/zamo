@@ -5,7 +5,3 @@ import * as App from "./app.js";
 export {
     App
 };
-
-export type {
-    Emitter
-} from "./models.js";

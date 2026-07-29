@@ -24,7 +24,7 @@ func (f *fakeEmitter) Emit(name string, data ...any) bool {
 func TestWithProgressForwardsReportsAsEvents(t *testing.T) {
 	fe := &fakeEmitter{}
 	app := New(nil, nil)
-	app.SetEmitter(fe)
+	SetEmitter(app, fe)
 
 	ctx := app.withProgress(context.Background())
 	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting})

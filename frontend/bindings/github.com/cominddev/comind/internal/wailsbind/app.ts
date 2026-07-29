@@ -18,10 +18,6 @@ import * as knowledge$0 from "../knowledge/models.js";
 // @ts-ignore: Unused imports
 import * as settings$0 from "../settings/models.js";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as $models from "./models.js";
-
 /**
  * AcceptBlock passes the call to knowledge.Service.
  */
@@ -171,15 +167,6 @@ export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
  */
 export function Search(query: string): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(1512770581, query);
-}
-
-/**
- * SetEmitter wires the frontend event emitter. It is called once at startup,
- * after the Wails application (whose event manager is the emitter) is built but
- * before it runs, so no generation can be in flight yet.
- */
-export function SetEmitter(e: $models.Emitter): $CancellablePromise<void> {
-    return $Call.ByID(3283708959, e);
 }
 
 /**

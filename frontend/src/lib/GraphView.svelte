@@ -162,6 +162,12 @@
 	.node text {
 		fill: var(--text-dim);
 		font-size: var(--size-small);
+		/* A label is wider than its own node and routinely lies over a
+		   neighbour's circle. Left hit-testable, it would take the click meant
+		   for the circle underneath it and open its own topic instead — the
+		   reader aims at one node and lands on another. Opening a topic by
+		   clicking its name is worth less than never opening the wrong one. */
+		pointer-events: none;
 	}
 	.node:hover circle,
 	.node:focus-visible circle {

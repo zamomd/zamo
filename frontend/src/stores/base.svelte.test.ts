@@ -157,6 +157,22 @@ describe("selectTopic", () => {
 		expect(base.selectedTopicID).toBe("sqlite");
 	});
 
+	// The "no longer exists" message belongs to the click that produced it. A
+	// later click that lands has answered it, and leaving it on screen would
+	// describe a topic the reader is no longer looking at.
+	it("clears a previous selection's error once a later one lands", async () => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.selectTopic("nonexistent");
+		expect(base.error).not.toBe("");
+
+		await base.selectTopic("sqlite");
+
+		expect(base.selectedTopicID).toBe("sqlite");
+		expect(base.error).toBe("");
+	});
+
 	// Nobody awaits selectTopic, so a rejected re-read has no other route to the
 	// reader: without this they click a node, stay where they were, and are told
 	// nothing.

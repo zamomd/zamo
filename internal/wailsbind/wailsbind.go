@@ -32,7 +32,7 @@ type progressPayload struct {
 type App struct {
 	svc      *knowledge.Service
 	settings *settings.Manager
-	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless
+	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless (see SetEmitter)
 }
 
 // New wraps the service and the settings manager for binding.
@@ -43,7 +43,12 @@ func New(svc *knowledge.Service, mgr *settings.Manager) *App {
 // SetEmitter wires the frontend event emitter. It is called once at startup,
 // after the Wails application (whose event manager is the emitter) is built but
 // before it runs, so no generation can be in flight yet.
-func (a *App) SetEmitter(e Emitter) { a.emit = e }
+//
+// A package function rather than a method on App: App is registered as a Wails
+// service, so every exported method it has becomes a callable frontend binding.
+// As a method this was reachable from JavaScript, where passing null would
+// silently detach progress events. Startup wiring is not the frontend's to do.
+func SetEmitter(a *App, e Emitter) { a.emit = e }
 
 // withProgress returns a context that forwards LLM generation progress to the
 // frontend as GenerationProgressEvent events. With no emitter set (headless,

@@ -134,7 +134,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 	})
 	// The event manager exists only after the app is built; wire it now, before
 	// Run, so generation progress reaches the frontend.
-	bind.SetEmitter(app.Event)
+	wailsbind.SetEmitter(bind, app.Event)
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",

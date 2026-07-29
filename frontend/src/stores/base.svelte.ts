@@ -315,6 +315,11 @@ class BaseStore {
 
 	private applySelection(id: string): void {
 		this.selectedTopicID = id;
+		// A selection that lands clears whatever the last one reported: the
+		// "no longer exists" message above outlives its own click otherwise,
+		// and would sit under a topic the reader is now looking at, describing
+		// a different one they are not.
+		this.error = "";
 		// A flash armed for a row in the previously selected topic must not
 		// replay against whatever row now occupies that position after the
 		// switch — see highlightID.
