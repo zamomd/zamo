@@ -192,6 +192,13 @@ export function Settings(): $CancellablePromise<settings$0.View> {
 }
 
 /**
+ * TopicGraph passes the call to knowledge.Service.
+ */
+export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
+    return $Call.ByID(362224900);
+}
+
+/**
  * TopicMap passes the call to knowledge.Service.
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {

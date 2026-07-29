@@ -478,6 +478,31 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 	}
 }
 
+func TestTopicGraphPassesThrough(t *testing.T) {
+	want := TopicGraph{
+		Topics: []TopicNode{{ID: "01A", Title: "Go", Blocks: 3}},
+		Edges:  []TopicEdge{{From: "01A", To: "01B"}},
+	}
+	repo := &fakeRepo{graph: want}
+	svc := NewService(nil, repo, nil, nil)
+
+	got, err := svc.TopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("TopicGraph: %v", err)
+	}
+	if len(got.Topics) != 1 || got.Topics[0] != want.Topics[0] {
+		t.Errorf("topics = %+v, want %+v", got.Topics, want.Topics)
+	}
+	if len(got.Edges) != 1 || got.Edges[0] != want.Edges[0] {
+		t.Errorf("edges = %+v, want %+v", got.Edges, want.Edges)
+	}
+
+	boom := errors.New("boom")
+	if _, err := NewService(nil, &fakeRepo{graphErr: boom}, nil, nil).TopicGraph(t.Context()); !errors.Is(err, boom) {
+		t.Errorf("error = %v, want %v", err, boom)
+	}
+}
+
 func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 	// The domain must render and hand the files to the injected writer, never
 	// touch the disk itself. GetTopics returns roots plus their first level;

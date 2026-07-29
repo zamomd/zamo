@@ -65,6 +65,11 @@ func (a *App) TopicMap(ctx context.Context) ([]knowledge.Block, error) {
 	return a.svc.TopicMap(ctx)
 }
 
+// TopicGraph passes the call to knowledge.Service.
+func (a *App) TopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
+	return a.svc.TopicGraph(ctx)
+}
+
 // ExpandTopic passes the call to knowledge.Service.
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
 	return a.svc.ExpandTopic(a.withProgress(ctx), topic, hint)
