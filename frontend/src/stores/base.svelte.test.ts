@@ -16,10 +16,22 @@ vi.mock("@wailsio/runtime", () => ({
 const reloadFixture = vi.hoisted(() => ({
 	topics: [] as Block[],
 	subtrees: {} as Record<string, Block[]>,
+	// topicMapError makes the read fail; gate holds it open, so a test can act
+	// while a reload is still in flight and see which act wins.
+	topicMapError: null as Error | null,
+	gate: null as Promise<void> | null,
 }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
 	App: {
-		TopicMap: async () => reloadFixture.topics,
+		TopicMap: async () => {
+			if (reloadFixture.gate !== null) {
+				await reloadFixture.gate;
+			}
+			if (reloadFixture.topicMapError !== null) {
+				throw reloadFixture.topicMapError;
+			}
+			return reloadFixture.topics;
+		},
 		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
 		ExpandTopic: async () => {},
 		EditWithAI: async () => {},
@@ -57,6 +69,9 @@ beforeEach(() => {
 	base.selectedTopicID = "go";
 	base.collapsed.clear();
 	base.highlightID = null;
+	base.error = "";
+	reloadFixture.topicMapError = null;
+	reloadFixture.gate = null;
 });
 
 describe("selectTopic", () => {
@@ -74,6 +89,100 @@ describe("selectTopic", () => {
 		base.highlightID = "done";
 		base.selectTopic("sqlite");
 		expect(base.highlightID).toBe(null);
+	});
+
+	// The graph view is the one caller whose ids come from an
+	// independently-refreshed read (see selectTopic's own comment): the topic
+	// map re-reads on every entry into graph mode, while the forest here still
+	// reflects whatever was loaded at startup or the last GUI mutation. A
+	// topic added out-of-band — comind mcp, while the reader was in graph
+	// mode — is real but absent from this.forest until a fresh read.
+	it("reaches a topic the forest predates, once the base is re-read", async () => {
+		base.error = "";
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("rust", "")];
+		reloadFixture.subtrees = {
+			go: [block("go", "")],
+			sqlite: [block("sqlite", "")],
+			rust: [block("rust", "")],
+		};
+
+		await base.selectTopic("rust");
+
+		expect(base.selectedTopicID).toBe("rust");
+		expect(base.selectedTree?.block.ID).toBe("rust");
+		expect(base.error).toBe("");
+	});
+
+	// A topic that is genuinely gone (deleted out-of-band, or a stale graph
+	// node from a map drawn before the deletion) must not leave the pane
+	// looking like nothing is selected — see TopicView's "No topic selected"
+	// message, which is only honest when nothing really is.
+	it("reports rather than blanks the pane when the topic is gone even after a re-read", async () => {
+		base.error = "";
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.selectTopic("nonexistent");
+
+		expect(base.error).not.toBe("");
+		// The previous, still-valid selection is left in place rather than
+		// pointed at the missing id, so selectedTree stays non-null and the
+		// pane keeps showing a real topic instead of the empty-state message.
+		expect(base.selectedTopicID).toBe("go");
+		expect(base.selectedTree).not.toBe(null);
+	});
+
+	// The re-read above is fired from markup, which cannot await it, so a second
+	// act can land while it is still in flight. Whatever the reader did last has
+	// to win, or the older click drags them back off the topic they moved to.
+	it("does not let a re-read land on top of a later selection", async () => {
+		let release: () => void = () => {};
+		reloadFixture.gate = new Promise((resolve) => {
+			release = () => resolve();
+		});
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("rust", "")];
+		reloadFixture.subtrees = {
+			go: [block("go", "")],
+			sqlite: [block("sqlite", "")],
+			rust: [block("rust", "")],
+		};
+
+		const stale = base.selectTopic("rust");
+		// "sqlite" is already in the forest, so this resolves without a re-read
+		// and is the reader's latest act.
+		await base.selectTopic("sqlite");
+		release();
+		await stale;
+
+		expect(base.selectedTopicID).toBe("sqlite");
+	});
+
+	// The "no longer exists" message belongs to the click that produced it. A
+	// later click that lands has answered it, and leaving it on screen would
+	// describe a topic the reader is no longer looking at.
+	it("clears a previous selection's error once a later one lands", async () => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.selectTopic("nonexistent");
+		expect(base.error).not.toBe("");
+
+		await base.selectTopic("sqlite");
+
+		expect(base.selectedTopicID).toBe("sqlite");
+		expect(base.error).toBe("");
+	});
+
+	// Nobody awaits selectTopic, so a rejected re-read has no other route to the
+	// reader: without this they click a node, stay where they were, and are told
+	// nothing.
+	it("reports a failed re-read instead of failing silently", async () => {
+		reloadFixture.topicMapError = new Error("database is locked");
+
+		await base.selectTopic("rust");
+
+		expect(base.error).not.toBe("");
+		expect(base.selectedTopicID).toBe("go");
 	});
 });
 

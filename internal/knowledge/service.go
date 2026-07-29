@@ -155,6 +155,14 @@ func (s *Service) TopicMap(ctx context.Context) ([]Block, error) {
 	return s.repo.GetTopics(ctx)
 }
 
+// TopicGraph returns the topic-level map: every topic with its block count and
+// the collapsed edges between topics. A pass-through — the aggregation is a
+// query, and doing it in Go would mean reading every block and every edge to
+// throw most of both away.
+func (s *Service) TopicGraph(ctx context.Context) (TopicGraph, error) {
+	return s.repo.GetTopicGraph(ctx)
+}
+
 // GetSubtree returns a block together with all of its descendants.
 func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 	return s.repo.GetSubtree(ctx, root)

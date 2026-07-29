@@ -107,6 +107,13 @@ class BaseStore {
 	// another block's revisions. Same pattern as linkQuerySeq.
 	private historySeq = 0;
 
+	// selectSeq stamps every act that moves the main area's topic — a sidebar
+	// or graph selection, and a jump from search or the changes list — so a
+	// selection that had to re-read the base cannot land after the reader has
+	// already moved somewhere else and drag them back. Same guard as
+	// linkQuerySeq and historySeq, for the same reason.
+	private selectSeq = 0;
+
 	// The scope label is read out of the live forest rather than copied on
 	// targeting: a targeted block that is edited or disappears can never leave
 	// a stale label behind.
@@ -229,6 +236,9 @@ class BaseStore {
 	// parked (see pendingReveal) rather than dropped, for the first-mount race
 	// where the field is usable before reload has built the forest.
 	reveal(id: string): void {
+		// A jump is an act of the reader's, so it outranks a selection still
+		// waiting on a re-read — see selectSeq.
+		this.selectSeq++;
 		const path = findPath(this.forest, id);
 		if (path === null) {
 			this.pendingReveal = id;
@@ -259,8 +269,57 @@ class BaseStore {
 		}
 	}
 
-	selectTopic(id: string): void {
+	// selectTopic switches the main area to the given topic. The sidebar is
+	// the usual caller, and it reads ids straight out of this.forest, so they
+	// are always already present. The topic graph is not: it re-reads on
+	// every entry into graph mode, while the forest only refreshes on a GUI
+	// mutation (see reload), so a base written from outside the GUI —
+	// `comind mcp` adding or deleting a topic while the reader is looking at
+	// the graph — hands this an id the forest has never seen, or one the
+	// forest's own last read has since dropped. Assigning selectedTopicID
+	// unconditionally would leave selectedTree null for an id that is
+	// perfectly real, mislabelling the pane "no topic selected". Re-reading
+	// once before giving up distinguishes that from a topic that is actually
+	// gone, without ever pointing the selection at an id this store cannot
+	// currently show.
+	async selectTopic(id: string): Promise<void> {
+		const mine = ++this.selectSeq;
+		if (this.forest.some((t) => t.block.ID === id)) {
+			this.applySelection(id);
+			return;
+		}
+		try {
+			await this.reload();
+		} catch (err: unknown) {
+			// Callers fire this from markup and cannot await it, so a rejection
+			// here has nobody to surface it: without this the reader clicks a
+			// node, stays on the topic they were already looking at, and is told
+			// nothing at all.
+			if (mine === this.selectSeq) {
+				this.error = messageFor(err);
+			}
+			return;
+		}
+		// Anything the reader did while the re-read was in flight outranks it —
+		// a second click, or a jump from search — or this would drag the
+		// selection back to where they no longer are.
+		if (mine !== this.selectSeq) {
+			return;
+		}
+		if (this.forest.some((t) => t.block.ID === id)) {
+			this.applySelection(id);
+			return;
+		}
+		this.error = "That topic no longer exists.";
+	}
+
+	private applySelection(id: string): void {
 		this.selectedTopicID = id;
+		// A selection that lands clears whatever the last one reported: the
+		// "no longer exists" message above outlives its own click otherwise,
+		// and would sit under a topic the reader is now looking at, describing
+		// a different one they are not.
+		this.error = "";
 		// A flash armed for a row in the previously selected topic must not
 		// replay against whatever row now occupies that position after the
 		// switch — see highlightID.

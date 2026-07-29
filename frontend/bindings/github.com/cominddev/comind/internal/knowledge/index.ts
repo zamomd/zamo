@@ -15,6 +15,9 @@ export type {
     LinkedBlock,
     Metadata,
     Revision,
+    TopicEdge,
+    TopicGraph,
+    TopicNode,
     UnreviewedBlock,
     UnreviewedChanges
 } from "./models.js";

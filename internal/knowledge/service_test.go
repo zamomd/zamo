@@ -31,6 +31,8 @@ func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []Exp
 type fakeRepo struct {
 	topics     []Block // what GetTopics returns
 	topicsErr  error
+	graph      TopicGraph // what GetTopicGraph returns
+	graphErr   error
 	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
@@ -85,6 +87,10 @@ type fakeRepo struct {
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }
+
+func (f *fakeRepo) GetTopicGraph(context.Context) (TopicGraph, error) {
+	return f.graph, f.graphErr
+}
 
 func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 	f.gotSubtree = root
@@ -469,6 +475,31 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 	if err := svc.RejectEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
 		repo.rejectedEdge != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
 		t.Errorf("RejectEdge did not reach RejectEdge: err=%v got=%+v", err, repo.rejectedEdge)
+	}
+}
+
+func TestTopicGraphPassesThrough(t *testing.T) {
+	want := TopicGraph{
+		Topics: []TopicNode{{ID: "01A", Title: "Go", Blocks: 3}},
+		Edges:  []TopicEdge{{From: "01A", To: "01B"}},
+	}
+	repo := &fakeRepo{graph: want}
+	svc := NewService(nil, repo, nil, nil)
+
+	got, err := svc.TopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("TopicGraph: %v", err)
+	}
+	if len(got.Topics) != 1 || got.Topics[0] != want.Topics[0] {
+		t.Errorf("topics = %+v, want %+v", got.Topics, want.Topics)
+	}
+	if len(got.Edges) != 1 || got.Edges[0] != want.Edges[0] {
+		t.Errorf("edges = %+v, want %+v", got.Edges, want.Edges)
+	}
+
+	boom := errors.New("boom")
+	if _, err := NewService(nil, &fakeRepo{graphErr: boom}, nil, nil).TopicGraph(t.Context()); !errors.Is(err, boom) {
+		t.Errorf("error = %v, want %v", err, boom)
 	}
 }
 
