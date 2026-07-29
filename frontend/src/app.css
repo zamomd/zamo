@@ -1,0 +1,142 @@
+/* The design foundation: one @font-face block, the semantic tokens, and the
+   element defaults every component inherits. Components must reference tokens
+   and never a literal colour — that indirection is what lets a base16 scheme
+   (stylix and friends) repaint the app later by overriding this layer alone. */
+
+@font-face {
+	font-family: "JetBrains Mono";
+	src: url("./assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: block;
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	src: url("./assets/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+	font-weight: 700;
+	font-style: normal;
+	font-display: block;
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	src: url("./assets/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+	font-weight: 400;
+	font-style: italic;
+	font-display: block;
+}
+
+/* Light is the declared default and dark overrides it below, so a webview that
+   reports no preference lands on light rather than on unstyled black-on-black. */
+:root {
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--size-body: 14px;
+	--size-small: 12px;
+	--size-title: 22px;
+	--row-height: 26px;
+	--indent: 20px;
+	--unit: 8px;
+	--radius: 3px;
+
+	--ground: #ffffff;
+	--text: #17171a;
+	--text-dim: #55555a;
+	--text-faint: #8a8a90;
+	--hairline: #e2e2e5;
+	--accent: #2f6fd0;
+	--hover: rgba(0, 0, 0, 0.05);
+	--flash: rgba(47, 111, 208, 0.18);
+	--danger: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ground: #0b0b0c;
+		--text: #e6e6e6;
+		--text-dim: #9a9a9c;
+		--text-faint: #6a6a6d;
+		--hairline: #232326;
+		--accent: #5e8fd0;
+		--hover: rgba(255, 255, 255, 0.06);
+		--flash: rgba(94, 143, 208, 0.22);
+		--danger: #d96a6a;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--ground);
+	color: var(--text);
+	font-family: var(--font-mono);
+	font-size: var(--size-body);
+	line-height: var(--row-height);
+	/* The webview antialiases heavily by default, which fattens a monospace
+	   face at 14px and costs the design its crispness. */
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Controls inherit the face rather than falling back to the platform UI font:
+   one typeface across the whole window is the point of this character. */
+input,
+textarea,
+button,
+select {
+	font: inherit;
+	color: inherit;
+}
+
+/* The control rule the moodboard's command line establishes and Task 4 spreads
+   everywhere: one hairline frame, no fill, no shadow. */
+input,
+textarea,
+select {
+	background: none;
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius);
+	padding: 0 var(--unit);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--text-faint);
+}
+
+button {
+	background: none;
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius);
+	padding: 0 var(--unit);
+	cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+	background: var(--hover);
+}
+
+button:disabled {
+	color: var(--text-faint);
+	cursor: default;
+}
+
+code,
+pre {
+	font-family: var(--font-mono);
+}
