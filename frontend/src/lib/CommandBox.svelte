@@ -42,7 +42,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
-		margin-bottom: 1rem;
 	}
 	.scope {
 		margin: 0;
