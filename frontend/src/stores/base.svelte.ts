@@ -237,6 +237,8 @@ class BaseStore {
 		// move the selection first or it would scroll to a row that is not
 		// rendered.
 		const topic = topicOf(this.forest, id);
+		// findPath above already located id in this.forest, so topicOf cannot
+		// return null here; the guard is defensive, not load-bearing.
 		if (topic !== null) {
 			this.selectedTopicID = topic;
 		}

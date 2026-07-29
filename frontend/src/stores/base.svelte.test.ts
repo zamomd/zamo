@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 
 // The store subscribes to a Wails event in its constructor and calls bindings
 // on load; neither exists outside the webview, so both are faked here. The
@@ -7,14 +8,25 @@ vi.mock("@wailsio/runtime", () => ({
 	Events: { On: () => () => {} },
 	Browser: { OpenURL: () => {} },
 }));
+
+// reloadFixture backs the two bindings reload() actually calls. It is
+// declared via vi.hoisted so the mock factory below (itself hoisted above
+// this file's imports) can close over it, and each reload test rewrites it
+// to control the base that reload() reads back.
+const reloadFixture = vi.hoisted(() => ({
+	topics: [] as Block[],
+	subtrees: {} as Record<string, Block[]>,
+}));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
-	App: {},
+	App: {
+		TopicMap: async () => reloadFixture.topics,
+		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
+	},
 }));
 vi.mock("./changes.svelte", () => ({
 	changes: { blocks: [], edges: [], count: 0, refresh: async () => {} },
 }));
 
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import type { TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";
 
@@ -82,5 +94,52 @@ describe("reveal", () => {
 		base.reveal("missing");
 		expect(base.selectedTopicID).toBe("go");
 		expect(base.highlightID).toBe(null);
+	});
+});
+
+describe("reload's selection fallback", () => {
+	beforeEach(() => {
+		reloadFixture.topics = [];
+		reloadFixture.subtrees = {};
+	});
+
+	it("picks the first topic on first load, when nothing is selected", async () => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+		base.selectedTopicID = null;
+
+		await base.reload();
+
+		expect(base.selectedTopicID).toBe("go");
+	});
+
+	it("falls back to the first surviving topic when the selected one disappeared", async () => {
+		reloadFixture.topics = [block("sqlite", "")];
+		reloadFixture.subtrees = { sqlite: [block("sqlite", "")] };
+		base.selectedTopicID = "go";
+
+		await base.reload();
+
+		expect(base.selectedTopicID).toBe("sqlite");
+	});
+
+	it("leaves a surviving selection unchanged", async () => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+		base.selectedTopicID = "sqlite";
+
+		await base.reload();
+
+		expect(base.selectedTopicID).toBe("sqlite");
+	});
+
+	it("settles on null for an empty base, not a stale id", async () => {
+		reloadFixture.topics = [];
+		reloadFixture.subtrees = {};
+		base.selectedTopicID = "go";
+
+		await base.reload();
+
+		expect(base.selectedTopicID).toBe(null);
 	});
 });
