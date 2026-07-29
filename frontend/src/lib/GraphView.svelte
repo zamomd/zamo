@@ -28,10 +28,17 @@
 	let svgPxWidth = $state(0);
 	let svgPxHeight = $state(0);
 
+	// A topic root with empty content (an untitled page) would otherwise give
+	// this a "" aria-label — a focusable control a screen reader cannot name,
+	// under a visible circle with an equally blank label. The fallback keeps
+	// both the control's accessible name and the on-screen label non-empty.
+	const UNTITLED = "Untitled topic";
+
 	const nodes = $derived(
 		graph.topics.map((t) => {
 			const p = graph.positions.get(t.ID) ?? { x: 0, y: 0 };
-			return { id: t.ID, title: t.Title, label: truncateLabel(t.Title), x: p.x, y: p.y, r: radiusOf(t.Blocks) };
+			const title = t.Title === "" ? UNTITLED : t.Title;
+			return { id: t.ID, title, label: truncateLabel(title), x: p.x, y: p.y, r: radiusOf(t.Blocks) };
 		}),
 	);
 
