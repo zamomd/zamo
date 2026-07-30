@@ -359,15 +359,24 @@
 	}
 	/* The triangle takes the tick's place on hover rather than sitting beside
 	   it: 14px of horizontal rail and a glyph in the same slot read as debris.
-	   z-index lifts it over the tick: li.nested::after is the li's last child in
-	   tree order, so at z-index auto the 1px rail would paint on top of this
-	   button's opaque background and strike through the glyph. */
+	   Three details make that mask hold, none of them visible in the values:
+	   z-index lifts the button over li.nested::after, which is the li's last
+	   child in tree order and would otherwise paint its 1px rail on top of an
+	   opaque background. It does not help on a ghost row, where .row.ghost's
+	   opacity makes .row a stacking context that confines this z-index — and
+	   makes the mask translucent regardless, so the tick shows through there.
+	   left starts at 1px rather than 0 so li.nested::before, the vertical
+	   sibling connector, is not erased for a whole row height; the price is the
+	   tick's leftmost pixel, which stays visible inside the connector's own 1px
+	   column and is the T- or L-junction the eye expects to see there anyway.
+	   The background is repeated on :hover below because app.css's global
+	   button:hover:not(:disabled) outweighs a single scoped class. */
 	.toggle {
 		position: absolute;
-		left: 0;
+		left: 1px;
 		top: 0;
 		z-index: 1;
-		width: calc(var(--indent) - 6px);
+		width: calc(var(--indent) - 7px);
 		padding: 0;
 		border: none;
 		background: var(--ground);
@@ -383,6 +392,7 @@
 		opacity: 1;
 	}
 	.toggle:hover {
+		background: var(--ground);
 		color: var(--text);
 	}
 	.content {
@@ -455,9 +465,13 @@
 		opacity: 0.6;
 	}
 	/* Three standing exceptions to the fade: the pointer is on the control, the
-	   row is the AI command's target, or the control's panel is open below. */
+	   row is the AI command's target, or the control's panel is open below.
+	   The targeted arm has to name .gutter and the button element, not just
+	   .target: the hover/focus rule above contributes an element selector that
+	   a plain .row.targeted .target cannot match, and the row holding focus
+	   right after a click on the mark is exactly when it must stay lit. */
 	.gutter button:hover:not(:disabled),
-	.row.targeted .target,
+	.row.targeted .gutter button.target,
 	.gutter button.open {
 		opacity: 1;
 	}
