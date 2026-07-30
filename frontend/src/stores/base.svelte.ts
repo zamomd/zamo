@@ -597,6 +597,17 @@ class BaseStore {
 		return true;
 	}
 
+	// The view's root is the page itself — the topic's title row, or the block a
+	// zoom is anchored to. It has no siblings to move among, nothing to be
+	// indented under and nothing to absorb, so no structural gesture applies to
+	// it. Its caret is legitimate (editing that row is how a topic is renamed);
+	// only the structure is fixed. Two of the six already refuse it because
+	// prevSibling and prevVisible are null at index 0 — this states the rule
+	// instead of relying on where the root happens to sit in the order.
+	private isViewRoot(id: string): boolean {
+		return id === this.viewRoot?.block.ID;
+	}
+
 	// splitAtCaret is Enter with the caret inside a block: this block keeps the
 	// head, a new sibling directly below takes the tail, and the caret follows the
 	// tail. The two halves are siblings even when the block has children — a split
@@ -606,7 +617,7 @@ class BaseStore {
 	// SplitBlock carries both halves in its arguments, so there is nothing to
 	// write first: the editor's text goes straight into the call.
 	async splitAtCaret(id: string, caret: number): Promise<void> {
-		if (this.busy) {
+		if (this.busy || this.isViewRoot(id)) {
 			return;
 		}
 		const topic = topicOf(this.forest, id);
@@ -634,7 +645,7 @@ class BaseStore {
 	// its id — and with it its revision history, its review state and its links.
 	// The caret stays where the reader left it.
 	async insertAbove(id: string): Promise<void> {
-		if (this.busy) {
+		if (this.busy || this.isViewRoot(id)) {
 			return;
 		}
 		const topic = topicOf(this.forest, id);
@@ -658,7 +669,7 @@ class BaseStore {
 	// "does this gesture apply here" itself, so an error from the bridge always
 	// means something actually went wrong.
 	async indent(id: string): Promise<void> {
-		if (this.busy || prevSibling(this.visibleNodes, id) === null) {
+		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id) === null) {
 			return;
 		}
 		await this.structural(id, () => App.IndentBlock(id));
@@ -671,7 +682,7 @@ class BaseStore {
 	async outdent(id: string): Promise<void> {
 		const node = findNode(this.visibleNodes, id);
 		const root = this.viewRoot;
-		if (this.busy || node === null || root === null || node.block.ParentID === root.block.ID) {
+		if (this.busy || this.isViewRoot(id) || node === null || root === null || node.block.ParentID === root.block.ID) {
 			return;
 		}
 		await this.structural(id, () => App.OutdentBlock(id));
@@ -686,11 +697,12 @@ class BaseStore {
 	async mergeIntoPrevious(id: string): Promise<void> {
 		const target = prevVisible(this.visibleNodes, id, this.collapsed);
 		// The view's root is the page's title row, and it *is* in the visible
-		// order — so it has to be excluded by name. Without this the first block
-		// of a page would try to merge into its own title, which the domain
-		// refuses ("a topic root cannot absorb text") and which would arrive back
-		// as an invalid_ops the reader did nothing to deserve.
-		if (this.busy || target === null || target === this.viewRoot?.block.ID) {
+		// order — so it has to be excluded by name as a target, on top of the
+		// isViewRoot check on id itself: without this the first block of a page
+		// would try to merge into its own title, which the domain refuses ("a
+		// topic root cannot absorb text") and which would arrive back as an
+		// invalid_ops the reader did nothing to deserve.
+		if (this.busy || this.isViewRoot(id) || target === null || target === this.viewRoot?.block.ID) {
 			return;
 		}
 		this.collapsed.delete(target);
@@ -703,7 +715,7 @@ class BaseStore {
 	// where it is.
 	async pullNextInto(id: string): Promise<void> {
 		const source = nextVisible(this.visibleNodes, id, this.collapsed);
-		if (this.busy || source === null) {
+		if (this.busy || this.isViewRoot(id) || source === null) {
 			return;
 		}
 		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret: this.editCaret });

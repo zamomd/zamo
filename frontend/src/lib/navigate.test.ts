@@ -7,9 +7,10 @@ const calls = vi.hoisted(() => ({
 	mode: "",
 	revealedID: "",
 	selectedID: "",
-	// Mirrors base.editingID: the fake setMode below leaves it set when a test
-	// wants to simulate a failed commit, the way the real commitEdit does.
-	editingID: null as string | null,
+	// Mirrors what base.commitEdit() resolves to: true when there was nothing
+	// to commit or the write succeeded, false when the write failed and the
+	// session is still open (spec §8).
+	commitResult: true,
 }));
 
 vi.mock("../stores/shell.svelte", () => ({
@@ -22,9 +23,7 @@ vi.mock("../stores/shell.svelte", () => ({
 
 vi.mock("../stores/base.svelte", () => ({
 	base: {
-		get editingID() {
-			return calls.editingID;
-		},
+		commitEdit: async () => calls.commitResult,
 		reveal: (id: string) => {
 			calls.revealedID = id;
 		},
@@ -40,7 +39,7 @@ beforeEach(() => {
 	calls.mode = "";
 	calls.revealedID = "";
 	calls.selectedID = "";
-	calls.editingID = null;
+	calls.commitResult = true;
 });
 
 describe("jumpToBlock", () => {
@@ -52,12 +51,12 @@ describe("jumpToBlock", () => {
 	});
 
 	// setMode awaits base.commitEdit() itself but its Promise<void> does not
-	// report whether the commit succeeded. A failed commit leaves the session
-	// open (spec §8) — editingID is what survives that — so jumpToBlock has to
-	// read it back rather than reveal() unconditionally, or a failed write
-	// would still get its editor's row switched out from under it.
-	it("does not reveal when the mode switch's own commit left the session open", async () => {
-		calls.editingID = "still-open";
+	// report whether the commit succeeded, so jumpToBlock reads the verdict
+	// back from its own call to commitEdit rather than assuming success.
+	// A failed commit leaves the session open (spec §8), and revealing
+	// unconditionally would switch topics under that still-open editor's row.
+	it("does not reveal when the commit it re-checks after the mode switch failed", async () => {
+		calls.commitResult = false;
 
 		await jumpToBlock("b1");
 

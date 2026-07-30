@@ -774,6 +774,23 @@ describe("Enter", () => {
 		await base.splitAtCaret("done", 5);
 		expect(App.SplitBlock).toHaveBeenCalledWith("done", "typed", " more");
 	});
+
+	// The view's root is the page: it has no siblings to split into, so Enter
+	// on the title row does nothing structural, whether or not the reader is
+	// zoomed into it.
+	it("refuses to split the page's own title row", async () => {
+		await base.startEdit(block("go", "", "go"), 1);
+		await base.splitAtCaret("go", 1);
+		expect(App.SplitBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("refuses to insert above the page's own title row", async () => {
+		await base.startEdit(block("go", "", "go"), 0);
+		await base.insertAbove("go");
+		expect(App.InsertBlockBefore).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
 });
 
 describe("Tab and Shift+Tab", () => {
@@ -796,6 +813,16 @@ describe("Tab and Shift+Tab", () => {
 		expect(base.error).toBe("");
 	});
 
+	// prevSibling is already null for the root at index 0, so this passes today
+	// by accident of position; it stays here so a future reordering of the
+	// forest cannot silently turn the accident into a bridge call.
+	it("refuses to indent the page's own title row", async () => {
+		await base.startEdit(block("go", "", "go"), 0);
+		await base.indent("go");
+		expect(App.IndentBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
 	it("outdents to the parent's next sibling slot", async () => {
 		await base.startEdit(block("done", "ctx", "done"), 0);
 		await base.outdent("done");
@@ -805,6 +832,15 @@ describe("Tab and Shift+Tab", () => {
 	it("is a silent no-op for a child of the view's root", async () => {
 		await base.startEdit(block("ctx", "go", "ctx"), 0);
 		await base.outdent("ctx");
+		expect(App.OutdentBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	// Without isViewRoot, the guard above (node.block.ParentID === root.block.ID)
+	// does not catch the root itself: its own ParentID is "", never its own ID.
+	it("refuses to outdent the page's own title row", async () => {
+		await base.startEdit(block("go", "", "go"), 0);
+		await base.outdent("go");
 		expect(App.OutdentBlock).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
 	});
@@ -850,6 +886,26 @@ describe("Backspace at the start", () => {
 		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "gen");
 		expect(base.editCaret).toBe(3); // the seam, at the end of "ctx"
 	});
+
+	// prevVisible is already null for the root at index 0, so this passes today
+	// by accident of position, same as indent's equivalent test above.
+	it("refuses to merge the page's own title row into anything", async () => {
+		await base.startEdit(block("go", "", "go"), 0);
+		await base.mergeIntoPrevious("go");
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	// The merged text comes back from the re-read, not from what the editor held
+	// before the gesture — otherwise leaving the block would write the pre-merge
+	// text back over the join and silently undo it. This also pins the ordering:
+	// refreshed before the re-read, editText would still be "done".
+	it("shows the joined text after a merge, not the text from before it", async () => {
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go", "ctxdone")];
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.mergeIntoPrevious("done");
+		expect(base.editText).toBe("ctxdone");
+	});
 });
 
 describe("Delete at the end", () => {
@@ -858,11 +914,20 @@ describe("Delete at the end", () => {
 		await base.pullNextInto("ctx");
 		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "done");
 		expect(base.editingID).toBe("ctx");
+		// The caret stays where it was — Delete does not move it, unlike Backspace.
+		expect(base.editCaret).toBe(3);
 	});
 
 	it("is a silent no-op in the last block of the page", async () => {
 		await base.startEdit(block("done", "ctx", "done"), 4);
 		await base.pullNextInto("done");
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("refuses to pull anything into the page's own title row", async () => {
+		await base.startEdit(block("go", "", "go"), 0);
+		await base.pullNextInto("go");
 		expect(App.MergeBlocks).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
 	});
