@@ -60,9 +60,12 @@
 	   block has hidden children"), which is why it is not --hover: that token is
 	   interaction feedback, and at rgba(0,0,0,0.05) over --ground it composites
 	   to #f2f2f2 — 1.12:1, below the 1.29:1 of --hairline that the tiers above
-	   already rejected as not-there. This value carries 2.37:1 against --ground,
-	   between --hairline-strong and --rail: present at rest, still well under the
-	   dot's own 7.41:1 so the fill stays the louder of the two facts. */
+	   already rejected as not-there. This value is --hairline-strong's, 2.37:1
+	   against --ground: the perimeter tier, one step under --rail's 3.02:1, and
+	   well under the dot's own 7.41:1 so the fill stays the louder of the two
+	   facts. It is a token of its own and not an alias because the two are one
+	   value by coincidence, not by rule — a control's border and a state mark
+	   must be free to be retuned apart. */
 	--halo: #a8a8ae;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
