@@ -213,6 +213,69 @@ func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
 	}
 }
 
+func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
+	blocks := map[ID]Block{
+		"root":     {ID: "root", Content: "Root"},
+		"target":   {ID: "target", ParentID: "root", Position: 0, Content: "Head "},
+		"source":   {ID: "source", ParentID: "root", Position: 65536, Content: "tail"},
+		"kid-a":    {ID: "kid-a", ParentID: "source", Position: 0, Content: "A"},
+		"kid-b":    {ID: "kid-b", ParentID: "source", Position: 65536, Content: "B"},
+		"grandkid": {ID: "grandkid", ParentID: "kid-b", Position: 0, Content: "G"},
+	}
+	repo := &fakeRepo{
+		blocks: blocks,
+		subtrees: map[ID][]Block{
+			// Preorder, as the Repository contract promises: source, then its
+			// two children, then kid-b's own child.
+			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"], blocks["grandkid"]},
+		},
+	}
+	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+
+	if err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
+		t.Fatalf("MergeBlocks: %v", err)
+	}
+
+	// A merge reparents source's direct children only; grandkid stays under
+	// kid-b, which is itself moving. A subtree-wide move (dropping the
+	// b.ParentID == source filter) would carry grandkid along too, and a test
+	// that only counted moves or checked op kinds would not catch that — both
+	// of the source's two fixtures here have exactly two direct children, so
+	// the ids moved must be checked, not just how many.
+	var moved []ID
+	for _, op := range repo.applyOps {
+		if op.Kind == OpMove {
+			moved = append(moved, op.BlockID)
+		}
+	}
+	if slices.Contains(moved, "grandkid") {
+		t.Errorf("moved = %v, grandkid must not be reparented directly", moved)
+	}
+	want := []ID{"kid-a", "kid-b"}
+	if !slices.Equal(moved, want) {
+		t.Fatalf("moved = %v, want only source's direct children %v", moved, want)
+	}
+}
+
+func TestMergeBlocksWithNoChildrenEmitsNoMoves(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// first and second, from outlineService's fixture, are childless: their
+	// subtree is absent from repo.subtrees, so GetSubtree serves nil.
+	if err := svc.MergeBlocks(t.Context(), "first", "second"); err != nil {
+		t.Fatalf("MergeBlocks: %v", err)
+	}
+
+	kinds := make([]OpKind, 0, len(repo.applyOps))
+	for _, op := range repo.applyOps {
+		kinds = append(kinds, op.Kind)
+	}
+	want := []OpKind{OpEdit, OpDelete}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("op kinds = %v, want %v", kinds, want)
+	}
+}
+
 func TestMergeBlocksRefusesMergingIntoItself(t *testing.T) {
 	svc, repo := outlineService(t)
 
