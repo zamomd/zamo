@@ -15,7 +15,14 @@ import (
 // the blocks table but not re-revisioned would be restored to a position it
 // no longer holds. Ordering only ever compares positions (see read.go's
 // preorder), so gaps are free.
-const positionStride = 1 << 16
+//
+// The size buys headroom against renumber, which is the one case that does
+// break the revision/table agreement (see there): a gap survives as many
+// midpoint inserts as the stride has halvings, so 1<<30 tolerates a run of 30
+// lines typed into one gap where 1<<16 tolerated 16. Nothing counts positions,
+// so the only ceiling is int64: even a million siblings appended at this
+// stride stays four orders of magnitude short of overflow.
+const positionStride = 1 << 30
 
 // nextPosition returns the position for a block appended under parent.
 // parent is nil for a topic root or a block id; `IS ?` matches both.
@@ -142,12 +149,13 @@ func precedingNeighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorI
 // positions without writing revisions: every sibling of parent then holds a
 // position its own head revision does not remember, so rolling back any one
 // of them — including a block the user never touched — lands it one slot off.
-// Accepted deliberately. It fires on the 17th consecutive insert anchored
-// into the same gap; because each Enter anchors on the block the caret just
-// landed in, that gap halves with every insert, so "17 consecutive inserts
-// into one gap" is just typing seventeen lines between two existing
-// blocks — an ordinary gesture, not a pathological one — and the result is a
-// reordering, not a loss.
+// Accepted deliberately, but only as far as the stride buys room: it fires on
+// the 31st consecutive insert anchored into the same gap, because each Enter
+// anchors on the block the caret just landed in and that gap halves with every
+// insert. So this is reachable by typing a run of thirty-one lines between two
+// existing blocks — unusual but not pathological, which is why the stride was
+// raised from 1<<16 (where the same gesture needed only seventeen lines) rather
+// than left alone. The result is a reordering, not a loss.
 func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM blocks WHERE parent_id IS ? ORDER BY position`, parent)
