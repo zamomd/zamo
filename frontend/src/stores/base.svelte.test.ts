@@ -67,8 +67,8 @@ function block(id: string, parent: string, content = id): Block {
 	};
 }
 
-function node(id: string, parent: string, children: TreeNodeData[] = []): TreeNodeData {
-	return { block: block(id, parent), children };
+function node(id: string, parent: string, children: TreeNodeData[] = [], content = id): TreeNodeData {
+	return { block: block(id, parent, content), children };
 }
 
 beforeEach(() => {
@@ -287,6 +287,19 @@ describe("reload's selection fallback", () => {
 	});
 });
 
+describe("toggle", () => {
+	it("collapses an expanded node", async () => {
+		await base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(true);
+	});
+
+	it("expands a collapsed node", async () => {
+		base.collapsed.add("ctx");
+		await base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(false);
+	});
+});
+
 describe("zoom-in", () => {
 	it("makes the focused block the view's root", async () => {
 		await base.focus("ctx");
@@ -476,6 +489,7 @@ describe("reloadTopic", () => {
 
 describe("the edit session", () => {
 	it("opens with the block's stored text and the caret it was given", async () => {
+		base.forest = [node("go", "", [node("ctx", "go", [], "the context package")])];
 		await base.startEdit(block("ctx", "go", "the context package"), 4);
 		expect(base.editingID).toBe("ctx");
 		expect(base.editText).toBe("the context package");
@@ -483,6 +497,7 @@ describe("the edit session", () => {
 	});
 
 	it("writes nothing when the text did not change", async () => {
+		base.forest = [node("go", "", [node("ctx", "go", [], "unchanged")])];
 		await base.startEdit(block("ctx", "go", "unchanged"), 0);
 		base.editText = "unchanged";
 		await base.commitEdit();
@@ -603,10 +618,103 @@ describe("an open edit no longer locks the interface", () => {
 	});
 });
 
+// A failed write keeps the session open (spec §8), and that is pointless if
+// the row it lives in gets unmounted anyway — so every gesture that would
+// unmount the editor aborts instead of proceeding when its own commit fails.
+// mockRejectedValueOnce fires once, so each case sets up its own.
+describe("a failed commit aborts the gesture", () => {
+	beforeEach(async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+	});
+
+	it("leaves the tree alone when the commit that a gesture triggers fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.toggle("go");
+		expect(base.collapsed.has("go")).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the focus alone when the commit that zooming in triggers fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.focus("ctx");
+		expect(base.focusID).toBe(null);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the selection alone when the commit that switching topic triggers fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.selectTopic("sqlite");
+		expect(base.selectedTopicID).toBe("go");
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the scope alone when the commit that targeting a block triggers fails", async () => {
+		// scopeID and busy aren't reset by the top-level beforeEach, so both
+		// baselines are set explicitly rather than assumed.
+		base.scopeID = null;
+		base.busy = false;
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.setScope(block("done", "ctx", "done"));
+		expect(base.scopeID).toBe(null);
+		expect(base.busy).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the command alone when the commit that sending an AI command triggers fails", async () => {
+		// busy isn't reset by the top-level beforeEach, so the baseline is set
+		// explicitly rather than assumed.
+		base.busy = false;
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		base.command = "tighten this";
+		await base.askAI();
+		expect(base.command).toBe("tighten this");
+		expect(base.busy).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the link picker alone when the commit that starting a link triggers fails", async () => {
+		// linkingID and busy aren't reset by the top-level beforeEach, so both
+		// baselines are set explicitly here rather than assumed — the point is
+		// that they do not move, not that they happen to already be at rest.
+		base.linkingID = null;
+		base.busy = false;
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.startLink("ctx");
+		expect(base.linkingID).toBe(null);
+		expect(base.busy).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("keeps the previous session open when the commit that opening another block triggers fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.startEdit(block("done", "ctx", "done"), 2);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+});
+
 it("leaving the tree for another mode commits the open edit", async () => {
 	await base.startEdit(block("ctx", "go", "before"), 0);
 	base.editText = "after";
 	await shell.setMode("graph");
 	expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
 	expect(shell.mode).toBe("graph");
+});
+
+it("leaves the mode alone when the commit that switching modes triggers fails", async () => {
+	shell.mode = "tree";
+	await base.startEdit(block("ctx", "go", "before"), 0);
+	base.editText = "after";
+	vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+	await shell.setMode("graph");
+	expect(shell.mode).toBe("tree");
+	expect(base.editingID).toBe("ctx");
+	expect(base.editText).toBe("after");
 });

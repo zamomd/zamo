@@ -11,9 +11,13 @@ class ShellStore {
 
 	// Every mode change leaves the tree, which can unmount an open editor's
 	// row, so it commits first — the rail owning all four switches (see above)
-	// is what makes this the one place that has to.
+	// is what makes this the one place that has to. A failed write stays on
+	// the tree with the text still in the editor (spec §8) rather than switch
+	// away underneath it.
 	async setMode(m: Mode): Promise<void> {
-		await base.commitEdit();
+		if (!(await base.commitEdit())) {
+			return;
+		}
 		this.mode = m;
 	}
 }

@@ -344,7 +344,9 @@ class BaseStore {
 	// see commitEdit's own comment for why every caller that can unmount the
 	// editor goes through it.
 	async toggle(id: string): Promise<void> {
-		await this.commitEdit();
+		if (!(await this.commitEdit())) {
+			return;
+		}
 		if (this.collapsed.has(id)) {
 			this.collapsed.delete(id);
 		} else {
@@ -358,7 +360,9 @@ class BaseStore {
 	async focus(id: string): Promise<void> {
 		// Zooming in unmounts every row outside the new root, so it commits first
 		// like toggle — see commitEdit's own comment.
-		await this.commitEdit();
+		if (!(await this.commitEdit())) {
+			return;
+		}
 		if (findNode(this.forest, id) === null) {
 			return;
 		}
@@ -396,7 +400,9 @@ class BaseStore {
 	async selectTopic(id: string): Promise<void> {
 		// Switching topic unmounts the whole tree the open editor's row lives in,
 		// so it commits first — see commitEdit's own comment.
-		await this.commitEdit();
+		if (!(await this.commitEdit())) {
+			return;
+		}
 		const mine = ++this.selectSeq;
 		if (this.forest.some((t) => t.block.ID === id)) {
 			this.applySelection(id);
@@ -451,8 +457,16 @@ class BaseStore {
 		if (this.busy) {
 			return;
 		}
-		await this.commitEdit();
+		// busy goes up before the commit, not after: the commit's own write is
+		// already in flight, so the control greys out for its whole duration
+		// rather than staying clickable until the state change lands.
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.scopeID = this.scopeID === block.ID ? null : block.ID;
+		this.busy = false;
 	}
 
 	clearScope(): void {
@@ -471,10 +485,17 @@ class BaseStore {
 		if (text === "" || this.busy) {
 			return;
 		}
+		// busy goes up before the commit, not after: the commit's own write is
+		// already in flight, so the send control greys out for its whole
+		// duration rather than staying clickable until ExpandTopic/EditWithAI
+		// starts.
+		this.busy = true;
 		// reload moves the forest under an open editor, so an open edit commits
 		// first — see commitEdit's own comment.
-		await this.commitEdit();
-		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			const scope = this.scopeID;
@@ -518,15 +539,16 @@ class BaseStore {
 	// makes "click another block" a save rather than a discard.
 	async startEdit(block: Block, caret: number): Promise<void> {
 		if (this.editingID !== null && this.editingID !== block.ID) {
-			await this.commitEdit();
+			// A failed write keeps the previous session open (spec §8); opening a
+			// different block on top of it would abandon the text just as surely
+			// as collapsing its ancestor would, so this bails rather than proceeds.
+			if (!(await this.commitEdit())) {
+				return;
+			}
 		}
 		// commitEdit re-read the topic, so the caller's copy of the block may be
-		// one generation old; its content is what the editor round-trips, so the
-		// forest's copy is brought in line with it rather than the other way
-		// around — otherwise writeIfChanged's later comparison would run against
-		// a value the editor never showed.
+		// one generation old; its content is what the editor round-trips.
 		const fresh = findBlock(this.forest, block.ID) ?? block;
-		fresh.Content = block.Content;
 		this.editingID = fresh.ID;
 		this.editText = fresh.Content;
 		this.editCaret = caret;
@@ -557,28 +579,32 @@ class BaseStore {
 		return true;
 	}
 
+	private committing: Promise<boolean> | null = null;
+
+	// commitEdit resolves to whether the session is closed: true when it
+	// committed or had nothing to commit, false when the write failed and the
+	// text is still in the editor. A caller that would unmount the editor has to
+	// honour that — spec §8 keeps the paragraph on screen, and keeping it is
+	// pointless if the row it lives in is collapsed away underneath it.
+	//
 	// Every caller that can unmount the editor commits through here first —
 	// collapsing an ancestor, zooming in, switching topic, targeting a block,
-	// sending an AI command, opening the link picker. That is the whole of what
-	// used to be a modal lock: while the editor was a box with Save and Cancel it
-	// was right to refuse those actions, and it stopped being right the moment
-	// editing became the default state (spec §4.5). busy still greys out buttons;
-	// nothing refuses because a caret is somewhere.
+	// sending an AI command, opening the link picker, opening a different block.
+	// That is the whole of what used to be a modal lock: while the editor was a
+	// box with Save and Cancel it was right to refuse those actions, and it
+	// stopped being right the moment editing became the default state (spec
+	// §4.5). busy still greys out buttons; nothing refuses because a caret is
+	// somewhere — a failed write is the one thing that still stops a gesture,
+	// and it stops it by aborting the gesture rather than by refusing to start.
 	//
-	// commitEdit is the single exit from an edit: click away, Esc, a gesture that
-	// moves to another block, a mode switch, an AI command. It writes only if the
-	// text changed, and drops a block left empty with no children — press Enter,
-	// think better of it, leave, and nothing is left behind.
-	//
-	// A failed write keeps the session open with the text and caret intact
-	// (spec §8): losing a paragraph to a bridge error is not acceptable.
+	// It writes only if the text changed, and drops a block left empty with no
+	// children — press Enter, think better of it, leave, and nothing is left
+	// behind.
 	//
 	// Concurrent callers share one in-flight promise rather than the second being
 	// refused: the textarea's blur and the next block's click both land here in
 	// the same tick, and a guard would swallow the click.
-	private committing: Promise<void> | null = null;
-
-	commitEdit(): Promise<void> {
+	commitEdit(): Promise<boolean> {
 		if (this.committing !== null) {
 			return this.committing;
 		}
@@ -588,16 +614,20 @@ class BaseStore {
 		return this.committing;
 	}
 
-	private async runCommit(): Promise<void> {
+	// runCommit resolves true on every path that leaves no open session —
+	// nothing to do, the block vanished, deleted, written, or unchanged — and
+	// false only from the catch below, where the text and caret are left
+	// exactly as the reader typed them (spec §8).
+	private async runCommit(): Promise<boolean> {
 		const id = this.editingID;
 		if (id === null) {
-			return;
+			return true;
 		}
 		const node = findNode(this.forest, id);
 		if (node === null) {
 			// The block went away under the editor — nothing to write it to.
 			this.clearEdit();
-			return;
+			return true;
 		}
 		const topic = topicOf(this.forest, id);
 		this.error = "";
@@ -611,15 +641,17 @@ class BaseStore {
 				await App.DeleteBlock(id);
 			} else if (!(await this.writeIfChanged(id))) {
 				this.clearEdit();
-				return;
+				return true;
 			}
 			this.clearEdit();
 			if (topic !== null) {
 				await this.reloadTopic(topic);
 			}
+			return true;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
+			return false;
 		}
 	}
 
@@ -737,7 +769,14 @@ class BaseStore {
 		if (this.busy) {
 			return;
 		}
-		await this.commitEdit();
+		// busy goes up before the commit, not after: the commit's own write is
+		// already in flight, so the +link control greys out for its whole
+		// duration rather than staying clickable until the picker opens.
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.linkingID = id;
 		this.linkQuery = "";
 		this.linkResults = [];
@@ -748,6 +787,7 @@ class BaseStore {
 			clearTimeout(this.linkQueryTimer);
 			this.linkQueryTimer = null;
 		}
+		this.busy = false;
 	}
 
 	cancelLink(): void {
