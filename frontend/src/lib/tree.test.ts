@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { crumbTrail, findNode, type TreeNodeData, topicOf, topicRows } from "./tree";
+import {
+	crumbTrail,
+	findNode,
+	nextVisible,
+	prevSibling,
+	prevVisible,
+	type TreeNodeData,
+	topicOf,
+	topicRows,
+	visibleOrder,
+} from "./tree";
 
 // block builds the minimum Block the tree helpers read; the rest of the shape
 // never reaches them.
@@ -130,5 +140,86 @@ describe("crumbTrail", () => {
 			children: [deep],
 		};
 		expect(crumbTrail([root], "child")).toEqual([{ id: "root", title: "Rate limiting" }]);
+	});
+});
+
+describe("visibleOrder", () => {
+	// go > ctx > done, and sqlite > wal: two topics, one of them two deep.
+	const forest = [
+		node("go", "", [node("ctx", "go", [node("done", "ctx")])]),
+		node("sqlite", "", [node("wal", "sqlite")]),
+	];
+
+	it("walks the whole forest in document order when nothing is collapsed", () => {
+		expect(visibleOrder(forest, new Set())).toEqual(["go", "ctx", "done", "sqlite", "wal"]);
+	});
+
+	it("keeps a collapsed node itself but drops everything under it", () => {
+		expect(visibleOrder(forest, new Set(["ctx"]))).toEqual(["go", "ctx", "sqlite", "wal"]);
+	});
+
+	it("drops a whole branch when its top is collapsed", () => {
+		expect(visibleOrder(forest, new Set(["go"]))).toEqual(["go", "sqlite", "wal"]);
+	});
+
+	it("is empty for an empty forest", () => {
+		expect(visibleOrder([], new Set())).toEqual([]);
+	});
+});
+
+describe("prevVisible and nextVisible", () => {
+	const forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
+
+	it("steps into a child, because a child is what is visible next", () => {
+		expect(nextVisible(forest, "go", new Set())).toBe("ctx");
+	});
+
+	it("steps out of a branch to the parent's next child", () => {
+		expect(nextVisible(forest, "done", new Set())).toBe("gen");
+	});
+
+	it("returns null at the end of the visible order", () => {
+		expect(nextVisible(forest, "gen", new Set())).toBe(null);
+	});
+
+	it("returns null at the start of the visible order", () => {
+		expect(prevVisible(forest, "go", new Set())).toBe(null);
+	});
+
+	it("walks back into the deepest visible descendant, not to the sibling's own row", () => {
+		// gen's predecessor is done, ctx's last child — not ctx itself.
+		expect(prevVisible(forest, "gen", new Set())).toBe("done");
+	});
+
+	// This is what makes Backspace land where the eye says it should: a collapsed
+	// block hides its subtree, so the row above is the collapsed block itself.
+	it("skips a collapsed block's hidden children", () => {
+		expect(prevVisible(forest, "gen", new Set(["ctx"]))).toBe("ctx");
+	});
+
+	it("returns null for an id the forest does not have", () => {
+		expect(prevVisible(forest, "nope", new Set())).toBe(null);
+		expect(nextVisible(forest, "nope", new Set())).toBe(null);
+	});
+});
+
+describe("prevSibling", () => {
+	const forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
+
+	it("returns the sibling directly above, ignoring how deep it is", () => {
+		// ctx has a child, but Tab indents gen under ctx, not under done.
+		expect(prevSibling(forest, "gen")).toBe("ctx");
+	});
+
+	it("returns null for a first child, which has nothing to be indented under", () => {
+		expect(prevSibling(forest, "ctx")).toBe(null);
+	});
+
+	it("returns null for a topic root", () => {
+		expect(prevSibling(forest, "go")).toBe(null);
+	});
+
+	it("returns null for an id the forest does not have", () => {
+		expect(prevSibling(forest, "nope")).toBe(null);
 	});
 });
