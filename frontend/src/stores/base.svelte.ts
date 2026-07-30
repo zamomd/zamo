@@ -325,11 +325,27 @@ class BaseStore {
 		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
 		if (tree === null) {
 			// The topic itself is gone — nothing to render from, so fall back the
-			// same way reload does rather than leaving a hole in the forest.
+			// same way reload does rather than leaving a hole in the forest. It is
+			// reachable from a keystroke: Backspace merging away a topic's last
+			// block takes the topic with it.
 			this.forest.splice(i, 1);
 			if (this.selectedTopicID === topicID) {
 				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
 				this.focusID = null;
+			}
+			// Every block of that topic went with it, so the panels keyed to one of
+			// them have nothing left to show. reload does this for the whole base;
+			// this is the same cleanup narrowed to what one topic's disappearance
+			// can invalidate.
+			for (const id of [...this.openLinks]) {
+				if (findBlock(this.forest, id) === null) {
+					this.openLinks.delete(id);
+					this.linksById.delete(id);
+				}
+			}
+			if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
+				this.historyID = null;
+				this.revisions = [];
 			}
 			return;
 		}
@@ -644,13 +660,18 @@ class BaseStore {
 	//
 	// SplitBlock carries both halves in its arguments, so there is nothing to
 	// write first: the editor's text goes straight into the call.
-	async splitAtCaret(id: string, caret: number): Promise<void> {
+	//
+	// end is where a selection stops. The run [caret, end) is what the split
+	// replaces, so Enter over a selection drops it the way it does in any other
+	// text field instead of leaving a copy in each half. Without a selection it is
+	// the caret itself and nothing is dropped, which is why it defaults to it.
+	async splitAtCaret(id: string, caret: number, end: number = caret): Promise<void> {
 		if (this.busy || this.isViewRoot(id)) {
 			return;
 		}
 		const topic = topicOf(this.forest, id);
 		const text = this.editText;
-		const tail = text.slice(caret);
+		const tail = text.slice(end);
 		this.busy = true;
 		this.error = "";
 		try {

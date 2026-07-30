@@ -79,10 +79,13 @@
 				// Enter at the very start of non-empty text inserts above instead of
 				// splitting, so the text keeps its block id and with it its history.
 				// An empty block has no text to protect and follows the split rule.
-				if (caret === 0 && value !== "") {
+				// So does a selection: it is replaced, so the text changes either way
+				// and there is no untouched block to keep the id for — the store drops
+				// the selected run between the two halves.
+				if (caret === 0 && value !== "" && !selecting) {
 					void base.insertAbove(id);
 				} else {
-					void base.splitAtCaret(id, caret);
+					void base.splitAtCaret(id, caret, el.selectionEnd);
 				}
 				return;
 			case "Tab":

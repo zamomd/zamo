@@ -105,6 +105,10 @@ beforeEach(() => {
 	// outcome of whatever test the shuffle runs next.
 	base.ghosts.clear();
 	base.busy = false;
+	base.openLinks.clear();
+	base.linksById.clear();
+	base.historyID = null;
+	base.revisions = [];
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 	reloadFixture.onSubtree = null;
@@ -504,6 +508,39 @@ describe("reloadTopic", () => {
 		await base.reloadTopic("nope");
 		expect(base.forest.length).toBe(before);
 	});
+
+	// Backspace-merging a topic's last block deletes the topic, so this branch is
+	// one keystroke away — and a panel left open on one of that topic's blocks
+	// would go on describing a block that no longer exists. reload closes them;
+	// so must this.
+	it("closes the panels of a topic that vanished entirely", async () => {
+		base.openLinks.add("ctx");
+		base.linksById.set("ctx", []);
+		base.historyID = "ctx";
+		base.revisions = [{ ID: "rev" }] as unknown as typeof base.revisions;
+		reloadFixture.subtrees.go = [];
+
+		await base.reloadTopic("go");
+
+		expect(base.forest.some((t) => t.block.ID === "go")).toBe(false);
+		expect(base.openLinks.has("ctx")).toBe(false);
+		expect(base.linksById.has("ctx")).toBe(false);
+		expect(base.historyID).toBe(null);
+		expect(base.revisions).toEqual([]);
+	});
+
+	it("leaves the panels of a surviving block alone", async () => {
+		base.openLinks.add("wal");
+		base.linksById.set("wal", []);
+		base.historyID = "wal";
+		reloadFixture.subtrees.go = [];
+
+		await base.reloadTopic("go");
+
+		expect(base.openLinks.has("wal")).toBe(true);
+		expect(base.linksById.has("wal")).toBe(true);
+		expect(base.historyID).toBe("wal");
+	});
 });
 
 describe("the edit session", () => {
@@ -844,6 +881,17 @@ describe("Enter", () => {
 		expect(base.editingID).toBe("new");
 	});
 
+	// Enter over a selection replaces it, the way it does in any other text
+	// field. Splitting at selectionStart alone left the run in the head *and* in
+	// the tail, which is content damage rather than a misplaced caret.
+	it("drops the selected run rather than keeping it in both halves", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "head SELECTED tail")])])];
+		await base.startEdit(block("done", "ctx", "head SELECTED tail"), 5);
+		await base.splitAtCaret("done", 5, 13);
+		expect(App.SplitBlock).toHaveBeenCalledWith("done", "head ", " tail");
+	});
+
 	it("splits with the text currently in the editor, not the stored text", async () => {
 		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
 		await base.startEdit(block("done", "ctx", "old"), 0);
@@ -1166,6 +1214,56 @@ describe("a ghost is on screen but no gesture reaches it", () => {
 		await base.startEdit(block("ctx", "go", "ctx"), 0);
 		await base.moveCaret("ctx", "down", 0);
 		expect(base.editingID).toBe("gen");
+	});
+});
+
+// busy is the branch's one remaining lock, and it now carries four jobs at
+// once: it keeps a second gesture from computing its target out of a forest the
+// first is about to replace, it makes the textarea readonly, it greys out every
+// control on the row, and it is what stops onblur from committing underneath a
+// gesture in flight.
+describe("a gesture in flight locks the next one out", () => {
+	beforeEach(async () => {
+		// gen is ctx's next sibling, so every gesture below has a real target: Tab
+		// indents under ctx, Backspace merges into ctx's last visible descendant,
+		// Delete pulls the row below, and ↑ has somewhere to go.
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
+		base.selectedTopicID = "go";
+		await base.startEdit(block("gen", "go", "gen"), 3);
+		base.busy = true;
+	});
+
+	it("refuses every structural gesture, then allows one once the flight ends", async () => {
+		await base.splitAtCaret("gen", 1);
+		await base.insertAbove("gen");
+		await base.indent("gen");
+		await base.outdent("done");
+		await base.mergeIntoPrevious("gen");
+		await base.pullNextInto("ctx", 3);
+		expect(App.SplitBlock).not.toHaveBeenCalled();
+		expect(App.InsertBlockBefore).not.toHaveBeenCalled();
+		expect(App.IndentBlock).not.toHaveBeenCalled();
+		expect(App.OutdentBlock).not.toHaveBeenCalled();
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+
+		// Proof the six above were refused for being in flight and not for having
+		// no target: the same call goes through the moment busy drops.
+		base.busy = false;
+		await base.indent("gen");
+		expect(App.IndentBlock).toHaveBeenCalledWith("gen");
+	});
+
+	it("refuses to move the caret out of the block", async () => {
+		await base.moveCaret("gen", "up", 0);
+		expect(base.editingID).toBe("gen");
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	it("leaves the caret where it is rather than announcing a placement", async () => {
+		const nonce = base.editCaretNonce;
+		await base.mergeIntoPrevious("gen");
+		expect(base.editCaret).toBe(3);
+		expect(base.editCaretNonce).toBe(nonce);
 	});
 });
 
