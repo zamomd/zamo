@@ -93,3 +93,76 @@ func TestSplitBlockReportsAMissingBlock(t *testing.T) {
 		t.Errorf("error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestIndentBlockMovesItUnderThePreviousSibling(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	if err := svc.IndentBlock(t.Context(), "second"); err != nil {
+		t.Fatalf("IndentBlock: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want a single move", repo.applyOps)
+	}
+	move := repo.applyOps[0]
+	// No anchor: the block becomes the previous sibling's last child, which
+	// is where it already appears on screen once it is indented.
+	if move.Kind != OpMove || move.BlockID != "second" || move.Parent != "first" {
+		t.Errorf("move op = %+v, want move of second under first", move)
+	}
+	if move.After != "" || move.Before != "" {
+		t.Errorf("move op = %+v, want no anchor (appended)", move)
+	}
+}
+
+func TestIndentFirstChildIsRefused(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// Nothing above it at its own level to become its parent.
+	err := svc.IndentBlock(t.Context(), "first")
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
+	}
+}
+
+func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
+	blocks := map[ID]Block{
+		"root":  {ID: "root", Content: "Root"},
+		"mid":   {ID: "mid", ParentID: "root", Position: 0, Content: "Mid"},
+		"leaf":  {ID: "leaf", ParentID: "mid", Position: 0, Content: "Leaf"},
+		"after": {ID: "after", ParentID: "root", Position: 65536, Content: "After"},
+	}
+	repo := &fakeRepo{
+		blocks: blocks,
+		subtrees: map[ID][]Block{
+			"root": {blocks["root"], blocks["mid"], blocks["leaf"], blocks["after"]},
+			"mid":  {blocks["mid"], blocks["leaf"]},
+		},
+	}
+	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+
+	if err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
+		t.Fatalf("OutdentBlock: %v", err)
+	}
+	move := repo.applyOps[0]
+	// Anchored on the old parent, so it lands directly after it and the
+	// parent's following siblings keep their places.
+	if move.Kind != OpMove || move.BlockID != "leaf" || move.Parent != "root" || move.After != "mid" {
+		t.Errorf("move op = %+v, want move of leaf under root after mid", move)
+	}
+}
+
+func TestOutdentChildOfTopicRootIsRefused(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// Outdenting here would make the block a second topic root.
+	err := svc.OutdentBlock(t.Context(), "first")
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
+	}
+}
