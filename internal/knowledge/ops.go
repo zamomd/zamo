@@ -40,6 +40,15 @@ type Op struct {
 	BlockID ID     `json:"block_id,omitzero"` // existing block (edit/move/delete)
 	Content string `json:"content,omitzero"`
 
+	// Anchor: where among its siblings a new or moved block lands. At most
+	// one may be set; both empty appends at the end. A TempID of this batch
+	// or an existing block ID, resolved like Parent. Needed because position
+	// is part of every revision snapshot: inserting by shifting the
+	// neighbours would leave their head revisions remembering a position they
+	// no longer hold.
+	After  string `json:"after,omitzero"`
+	Before string `json:"before,omitzero"`
+
 	// Link fields (OpLink only). From/To are TempIDs or existing IDs.
 	From     string   `json:"from,omitzero"`
 	To       string   `json:"to,omitzero"`
@@ -55,6 +64,10 @@ type Op struct {
 // are present. Existence and cycle checks depend on the base's state and
 // belong to prepareOps.
 func (op Op) validate() error {
+	if op.After != "" && op.Before != "" {
+		return fmt.Errorf("%s op anchored both after %q and before %q: %w",
+			op.Kind, op.After, op.Before, ErrInvalidOps)
+	}
 	switch op.Kind {
 	case OpAdd:
 		if op.TempID == "" {

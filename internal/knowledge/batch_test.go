@@ -267,3 +267,56 @@ func TestPrepareOpsResolvesAndOrders(t *testing.T) {
 		t.Errorf("ids = %+v, want 3 entries", ids)
 	}
 }
+
+func TestPrepareOpsResolvesAnchors(t *testing.T) {
+	ops := []Op{
+		{Kind: OpAdd, TempID: "t1", Parent: "root", Content: "first"},
+		{Kind: OpAdd, TempID: "t2", Parent: "root", After: "t1", Content: "second"},
+		{Kind: OpAdd, TempID: "t3", Parent: "root", Before: "t1", Content: "zeroth"},
+	}
+	seq := 0
+	out, ids, err := prepareOps(ops, func() ID { seq++; return ID(fmt.Sprintf("id-%d", seq)) })
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	// Anchors are resolved to the real ids the same batch assigned, so storage
+	// never sees a temp id.
+	for _, op := range out {
+		switch op.Content {
+		case "second":
+			if op.After != string(ids["t1"]) {
+				t.Errorf("after = %q, want %q", op.After, ids["t1"])
+			}
+		case "zeroth":
+			if op.Before != string(ids["t1"]) {
+				t.Errorf("before = %q, want %q", op.Before, ids["t1"])
+			}
+		}
+	}
+}
+
+func TestPrepareOpsOrdersAnchorAfterItsAdd(t *testing.T) {
+	// The anchored add is listed first; ordering must still emit the add that
+	// creates the anchor before it, or storage would resolve a position
+	// against a block that does not exist yet.
+	ops := []Op{
+		{Kind: OpAdd, TempID: "t2", Parent: "root", After: "t1", Content: "second"},
+		{Kind: OpAdd, TempID: "t1", Parent: "root", Content: "first"},
+	}
+	seq := 0
+	out, _, err := prepareOps(ops, func() ID { seq++; return ID(fmt.Sprintf("id-%d", seq)) })
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	if out[0].Content != "first" {
+		t.Errorf("first op = %q, want the anchor's own add (%q)", out[0].Content, "first")
+	}
+}
+
+func TestOpValidateRejectsBothAnchors(t *testing.T) {
+	op := Op{Kind: OpAdd, TempID: "t1", Parent: "root", After: "a", Before: "b"}
+	err := op.validate()
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("validate error = %v, want ErrInvalidOps", err)
+	}
+}

@@ -31,7 +31,8 @@ func validateAdds(ops []Op) error {
 // child → parent over block ids (temp or existing): an add links its TempID to
 // its Parent, a move links the moved BlockID to its new Parent. A ring means the
 // tree cannot be built — including a move of a block under its own descendant,
-// whose ring closes through an existing id.
+// whose ring closes through an existing id. Anchors (After/Before) are sibling
+// relations and cannot close a parent ring, so they are ignored here.
 func hasCycle(ops []Op) bool {
 	parents := make(map[string][]string)
 	for _, op := range ops {
@@ -122,9 +123,19 @@ func orderParentsFirst(ops []Op) []Op {
 func tempRefs(op Op) []string {
 	switch op.Kind {
 	case OpAdd, OpMove:
+		refs := make([]string, 0, 2)
 		if op.Parent != "" {
-			return []string{op.Parent}
+			refs = append(refs, op.Parent)
 		}
+		// The anchor is a reference like any other: an add that creates it
+		// must be ordered before this op.
+		if op.After != "" {
+			refs = append(refs, op.After)
+		}
+		if op.Before != "" {
+			refs = append(refs, op.Before)
+		}
+		return refs
 	case OpLink, OpUnlink:
 		return []string{op.From, op.To}
 	}
@@ -173,9 +184,13 @@ func prepareOps(ops []Op, newID IDGenerator) ([]Op, map[string]ID, error) {
 		case OpAdd:
 			op.BlockID = idOf[op.TempID]
 			op.Parent = resolve(op.Parent)
+			op.After = resolve(op.After)
+			op.Before = resolve(op.Before)
 			op.TempID = ""
 		case OpMove:
 			op.Parent = resolve(op.Parent)
+			op.After = resolve(op.After)
+			op.Before = resolve(op.Before)
 		case OpLink, OpUnlink:
 			op.From = resolve(op.From)
 			op.To = resolve(op.To)
