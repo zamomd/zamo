@@ -29,7 +29,7 @@
 				<ul>
 					{#each search.results as hit (hit.ID)}
 						<li>
-							<button type="button" class="row hit" onclick={() => jumpToBlock(hit.ID)}>
+							<button type="button" class="row hit" disabled={base.busy} onclick={() => jumpToBlock(hit.ID)}>
 								{plainText(hit.Content)}
 							</button>
 						</li>
@@ -47,6 +47,7 @@
 							class="row topic"
 							class:selected={row.selected}
 							aria-current={row.selected ? "true" : undefined}
+							disabled={base.busy}
 							onclick={() => openTopic(row.id)}
 						>
 							{row.title}
@@ -55,7 +56,12 @@
 							<ul class="sub">
 								{#each row.children as child (child.id)}
 									<li>
-										<button type="button" class="row child" onclick={() => jumpToBlock(child.id)}>
+										<button
+											type="button"
+											class="row child"
+											disabled={base.busy}
+											onclick={() => jumpToBlock(child.id)}
+										>
 											{child.title}
 										</button>
 									</li>

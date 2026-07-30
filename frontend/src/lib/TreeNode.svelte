@@ -2,6 +2,7 @@
 	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
 	import BlockLinks from "./BlockLinks.svelte";
+	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
@@ -48,6 +49,7 @@
 	// flash is toggled off then back on across a frame so the CSS animation
 	// restarts rather than sitting at its finished state.
 	let rowEl: HTMLElement | undefined;
+	let contentEl: HTMLElement | undefined = $state();
 	let flash = $state(false);
 	$effect(() => {
 		void base.highlightNonce; // subscribe: bumped on every reveal
@@ -74,7 +76,15 @@
 			if (href) void Browser.OpenURL(href);
 			return;
 		}
-		if (!base.busy) base.startEdit(node.block);
+		if (base.busy) {
+			return;
+		}
+		// Map the rendered click to the Markdown source; fall back to the end.
+		const raw = node.block.Content;
+		const rendered =
+			contentEl === undefined ? null : renderedOffsetFromPoint(contentEl, e.clientX, e.clientY);
+		const caret = rendered === null ? raw.length : sourceOffset(raw, rendered);
+		void base.startEdit(node.block, caret);
 	}
 	function editFromKey(e: KeyboardEvent): void {
 		if (e.key !== "Enter" && e.key !== " ") return;
@@ -83,7 +93,9 @@
 		// mirror the anchor guard in editFromClick.
 		if ((e.target as HTMLElement).closest("a")) return;
 		e.preventDefault();
-		if (!base.busy) base.startEdit(node.block);
+		if (!base.busy) {
+			void base.startEdit(node.block, node.block.Content.length);
+		}
 	}
 </script>
 
@@ -98,10 +110,7 @@
 		class:ghost
 	>
 		{#if !title}
-			<!-- The dot is the block's anchor: it carries authorship in its fill,
-			     hidden children in its halo, and zoom-in on click. Collapse lives
-			     on the triangle below, which replaces the rail's tick on hover so
-			     two lines never compete for the same 14px. -->
+			<!-- The dot identifies and zooms the block; the triangle controls collapse. -->
 			<button
 				type="button"
 				class="dot"
@@ -109,19 +118,16 @@
 				class:ring={hasHidden}
 				title="zoom into this block"
 				aria-label="zoom into this block"
+				disabled={base.busy}
 				onclick={() => base.focus(node.block.ID)}
 			></button>
 			{#if hasChildren}
-				<!-- INTERIM: disabled while an inline edit is open anywhere, the
-				     visible half of the guard base.toggle carries — see its comment
-				     for the bug (editingID outliving its editor's unmount) and for
-				     what retires both halves. -->
 				<button
 					type="button"
 					class="toggle"
 					aria-expanded={expanded}
 					aria-label={expanded ? "collapse" : "expand"}
-					disabled={base.editingID !== null}
+					disabled={base.busy}
 					onclick={() => base.toggle(node.block.ID)}
 				>
 					{expanded ? "▾" : "▸"}
@@ -134,12 +140,7 @@
 			     there is nothing left to edit or link until it is restored. -->
 			<span class="content ghost-content">{@html renderMarkdown(node.block.Content)}</span>
 		{:else if editing}
-			<InlineEditor
-				bind:value={base.editText}
-				busy={base.busy}
-				onsave={() => base.saveEdit()}
-				oncancel={() => base.cancelEdit()}
-			/>
+			<InlineEditor id={node.block.ID} />
 		{:else}
 			<!-- The click-to-edit surface holds rendered markdown (possibly links),
 			     which a real <button> cannot legally contain, so it is a div with
@@ -150,11 +151,12 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<!-- biome-ignore lint/a11y/useSemanticElements: a <button> cannot contain the anchors/blocks rendered markdown emits -->
 			<div
+				bind:this={contentEl}
 				class="content"
 				class:busy={base.busy}
 				role="button"
 				tabindex={base.busy ? -1 : 0}
-				title="click to edit"
+				title="click to put the caret here"
 				onclick={editFromClick}
 				onkeydown={editFromKey}
 			>
@@ -167,7 +169,7 @@
 					title="ask the AI to restructure this block"
 					aria-label="target this block for the AI command"
 					aria-pressed={base.scopeID === node.block.ID}
-					disabled={base.busy || base.editingID !== null}
+					disabled={base.busy}
 					onclick={() => base.setScope(node.block)}
 				>
 					⌖
@@ -358,10 +360,10 @@
 	.dot.ring {
 		box-shadow: 0 0 0 4px var(--halo);
 	}
-	.dot:hover {
+	.dot:hover:not(:disabled) {
 		background: var(--text);
 	}
-	.dot.ai:hover {
+	.dot.ai:hover:not(:disabled) {
 		background: transparent;
 		border-color: var(--text);
 	}
@@ -399,7 +401,7 @@
 	.toggle:focus-visible {
 		opacity: 1;
 	}
-	.toggle:hover {
+	.toggle:hover:not(:disabled) {
 		background: var(--ground);
 		color: var(--text);
 	}
@@ -425,6 +427,10 @@
 	   rails, and the one place type steps outside the 26px grid on purpose —
 	   1.5 cells, which is what the heading it replaces already used. */
 	.row.title .content {
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.5);
+	}
+	.row.title :global(.editor) {
 		font-size: var(--size-title);
 		line-height: calc(var(--row-height) * 1.5);
 	}

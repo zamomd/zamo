@@ -15,7 +15,11 @@
 	<nav aria-label="path to the focused block">
 		{#each trail as crumb, i (crumb.id)}
 			{#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
-			<button type="button" onclick={() => (i === 0 ? base.clearFocus() : base.focus(crumb.id))}>
+			<button
+				type="button"
+				disabled={base.busy}
+				onclick={() => (i === 0 ? base.clearFocus() : base.focus(crumb.id))}
+			>
 				{crumb.title}
 			</button>
 		{/each}
@@ -49,8 +53,14 @@
 	   button.svelte-x:hover and weighs exactly the same, and this component's CSS
 	   lands BEFORE app.css in the bundle, so the tie would go to the global. The
 	   nav qualifier is what carries it — nav.svelte-x button:where(.svelte-x):hover
-	   is (0,2,2), one element more. */
-	nav button:hover {
+	   is (0,2,2), one element more.
+
+	   :not(:disabled) for the same reason app.css's own hover rule carries it: a
+	   crumb that is refusing while a write is in flight must not brighten under
+	   the pointer as though it would answer. The rest state needs no rule of its
+	   own — the crumb already inherits nav's --text-faint, which is what
+	   button:disabled would paint it anyway. */
+	nav button:hover:not(:disabled) {
 		background: none;
 		color: var(--text);
 	}

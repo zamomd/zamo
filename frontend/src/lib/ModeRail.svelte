@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from "../stores/base.svelte";
 	import { type Mode, shell } from "../stores/shell.svelte";
 
 	// The glyphs are text, not icons: the window ships one embedded face and a
@@ -20,6 +21,7 @@
 			title={m.label}
 			aria-label={m.label}
 			aria-pressed={shell.mode === m.id}
+			disabled={base.busy}
 			onclick={() => shell.setMode(m.id)}
 		>
 			{m.glyph}

@@ -16,6 +16,7 @@
 	},
 	"dependencies": {
 		"@wailsio/runtime": "^3.0.0-alpha.95",
+		"entities": "^4.5.0",
 		"markdown-it": "^14.3.0"
 	},
 	"devDependencies": {

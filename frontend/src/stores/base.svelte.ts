@@ -8,7 +8,18 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findNode, findPath, type TreeNodeData, topicOf } from "../lib/tree";
+import { lineCount, offsetAtLine } from "../lib/caret";
+import {
+	buildTree,
+	findBlock,
+	findNode,
+	findPath,
+	nextVisible,
+	prevSibling,
+	prevVisible,
+	type TreeNodeData,
+	topicOf,
+} from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -74,6 +85,10 @@ class BaseStore {
 	// bypassing the review queue (review guards against AI, not the owner).
 	editingID = $state<string | null>(null);
 	editText = $state("");
+	// Caret state survives editor remounts. The nonce distinguishes repeated
+	// placement events from caret movements reported by the editor.
+	editCaret = $state(0);
+	editCaretNonce = $state(0);
 
 	// Jump-to-block target for a search result. highlightID names the row to
 	// flash and scroll to; highlightNonce is bumped on every reveal so a second
@@ -145,6 +160,9 @@ class BaseStore {
 		this.focusID === null ? this.selectedTree : (findNode(this.forest, this.focusID) ?? this.selectedTree),
 	);
 
+	// Structural navigation is restricted to the active topic or focused subtree.
+	visibleNodes = $derived<TreeNodeData[]>(this.viewRoot === null ? [] : [this.viewRoot]);
+
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
 		// the backend's phase in the status line. Events outside a generation are
@@ -165,26 +183,14 @@ class BaseStore {
 		});
 	}
 
-	// reload reads every topic root and its full subtree, rebuilding the
-	// forest, and merges in any pending deletion as a ghost row so it renders
-	// in place rather than vanishing before it is reviewed.
-	async reload(): Promise<void> {
-		const topics = (await App.TopicMap()) ?? [];
-		const roots = topics.filter((b) => b.ParentID === "");
-
-		// Ghosts: a pending delete drops the block from GetSubtree, so it is
-		// reconstructed from its unreviewed head revision and grouped by the
-		// topic it belongs to, ready to splice into that topic's block list
-		// before buildTree.
-		await changes.refresh();
-		this.ghosts.clear();
-		const ghostsByTopic = new Map<string, Block[]>();
+	// ghostsFor reconstructs pending deletions omitted by GetSubtree.
+	private ghostsFor(topicID: string): Block[] {
+		const out: Block[] = [];
 		for (const u of changes.blocks) {
-			if (!u.Head.Deleted) {
+			if (!u.Head.Deleted || u.TopicID !== topicID) {
 				continue;
 			}
-			this.ghosts.add(u.Head.BlockID);
-			const ghost: Block = {
+			out.push({
 				ID: u.Head.BlockID,
 				ParentID: u.Head.ParentID,
 				Position: u.Head.Position,
@@ -193,26 +199,46 @@ class BaseStore {
 				CreatedAt: "",
 				UpdatedAt: "",
 				Unreviewed: true,
-			};
-			const list = ghostsByTopic.get(u.TopicID) ?? [];
-			list.push(ghost);
-			ghostsByTopic.set(u.TopicID, list);
+			});
+		}
+		return out;
+	}
+
+	// reload reads every topic root and its full subtree, rebuilding the
+	// forest, and merges in any pending deletion as a ghost row so it renders
+	// in place rather than vanishing before it is reviewed.
+	async reload(): Promise<void> {
+		const topics = (await App.TopicMap()) ?? [];
+		const roots = topics.filter((b) => b.ParentID === "");
+
+		// changes.blocks backs ghostsFor below; refresh it once per whole-base
+		// reload rather than once per topic. this.ghosts and the set of topics
+		// that need a ghost-only root (see below) are collected in the same pass.
+		await changes.refresh();
+		this.ghosts.clear();
+		const ghostTopics = new Set<string>();
+		for (const u of changes.blocks) {
+			if (!u.Head.Deleted) {
+				continue;
+			}
+			this.ghosts.add(u.Head.BlockID);
+			ghostTopics.add(u.TopicID);
 		}
 
 		const trees: TreeNodeData[] = [];
 		for (const r of roots) {
 			const blocks = (await App.GetSubtree(r.ID)) ?? [];
-			const extra = ghostsByTopic.get(r.ID) ?? [];
-			ghostsByTopic.delete(r.ID);
+			const extra = this.ghostsFor(r.ID);
+			ghostTopics.delete(r.ID);
 			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
 			if (tree) {
 				trees.push(tree);
 			}
 		}
-		// Whatever is left is a ghost topic root itself: its whole page was
+		// Whatever topic remains is a ghost topic root itself: its whole page was
 		// deleted, so it has no live subtree to attach to and forms its own tree.
-		for (const list of ghostsByTopic.values()) {
-			const tree = buildTree(list);
+		for (const topicID of ghostTopics) {
+			const tree = buildTree(this.ghostsFor(topicID));
 			if (tree) {
 				trees.push(tree);
 			}
@@ -253,6 +279,52 @@ class BaseStore {
 		}
 	}
 
+	// reloadTopic refreshes one topic after an owner write.
+	async reloadTopic(topicID: string): Promise<void> {
+		if (this.forest.findIndex((t) => t.block.ID === topicID) < 0) {
+			return;
+		}
+		const blocks = (await App.GetSubtree(topicID)) ?? [];
+		// Locate the slot after the await because another reload may replace the forest.
+		const i = this.forest.findIndex((t) => t.block.ID === topicID);
+		if (i < 0) {
+			return;
+		}
+		const extra = this.ghostsFor(topicID);
+		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+		if (tree === null) {
+			this.forest.splice(i, 1);
+			if (this.selectedTopicID === topicID) {
+				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
+				this.focusID = null;
+			}
+			for (const id of [...this.openLinks]) {
+				if (findBlock(this.forest, id) === null) {
+					this.openLinks.delete(id);
+					this.linksById.delete(id);
+				}
+			}
+			if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
+				this.historyID = null;
+				this.revisions = [];
+			}
+			return;
+		}
+		this.forest[i] = tree;
+	}
+
+	// refresh reports cache refresh failures without changing the write verdict.
+	private async refresh(topic: string | null): Promise<void> {
+		if (topic === null) {
+			return;
+		}
+		try {
+			await this.reloadTopic(topic);
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		}
+	}
+
 	// reveal un-collapses a block's ancestors and arms its flash. It only ever
 	// expands, never collapses, so unlike toggle it is safe with an inline edit
 	// open: it cannot unmount a live editor. A block absent from the forest is
@@ -287,19 +359,12 @@ class BaseStore {
 		this.highlightNonce++;
 	}
 
-	// toggle folds a node's children away, or unfolds them again.
-	//
-	// INTERIM GUARD, do not remove: refused while an inline edit is open.
-	// Collapsing an ancestor unmounts the row holding the editor, InlineEditor
-	// has no teardown, and nothing else clears editingID — so the id outlives
-	// its editor and startEdit, setScope, startLink and askAI all silently
-	// become no-ops (CommandBox greys itself out) with no visible cause and no
-	// hint that re-expanding the ancestor is the way back. PR 3's
-	// commit-on-unmount rule is what makes the guard unnecessary; until that
-	// lands, "there is nothing on the other side of this lock" is wrong.
-	// The triangle's disabled attribute in TreeNode.svelte is the visible half.
-	toggle(id: string): void {
-		if (this.editingID !== null) {
+	// toggle commits before changing visibility because the editor may unmount.
+	async toggle(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		if (!(await this.commitEdit())) {
 			return;
 		}
 		if (this.collapsed.has(id)) {
@@ -312,13 +377,11 @@ class BaseStore {
 	// focus zooms the main area into one block. An id absent from the forest is
 	// ignored rather than blanking the pane: the caller is markup that cannot
 	// await a reload, so a stale id is a real case, not a programming error.
-	focus(id: string): void {
-		// INTERIM GUARD, do not remove: zooming in unmounts every row outside the
-		// new root, which strands editingID exactly as collapsing an ancestor
-		// does — see toggle, which also names what retires this. It sits in the
-		// store rather than on the dot because a crumb click lands here too and
-		// would otherwise route around a disabled attribute.
-		if (this.editingID !== null) {
+	async focus(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		if (!(await this.commitEdit())) {
 			return;
 		}
 		if (findNode(this.forest, id) === null) {
@@ -333,12 +396,11 @@ class BaseStore {
 		this.focusID = id;
 	}
 
-	// clearFocus zooms back out to the whole topic. Unguarded, unlike focus:
-	// widening the view only adds rows, so an open editor's row stays mounted
-	// (it re-mounts one level deeper with editText intact), and toggle's guard
-	// above is what keeps a collapsed node from appearing between the topic root
-	// and an open editor in the first place.
+	// clearFocus preserves the open edit because widening the view keeps its row.
 	clearFocus(): void {
+		if (this.busy) {
+			return;
+		}
 		this.focusID = null;
 	}
 
@@ -356,6 +418,12 @@ class BaseStore {
 	// gone, without ever pointing the selection at an id this store cannot
 	// currently show.
 	async selectTopic(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		if (!(await this.commitEdit())) {
+			return;
+		}
 		const mine = ++this.selectSeq;
 		if (this.forest.some((t) => t.block.ID === id)) {
 			this.applySelection(id);
@@ -404,12 +472,17 @@ class BaseStore {
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
 	// what the button's aria-pressed state promises.
-	setScope(block: Block): void {
-		// Ignore while busy or mid inline-edit, mirroring the tree's other actions.
-		if (this.busy || this.editingID !== null) {
+	async setScope(block: Block): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
 			return;
 		}
 		this.scopeID = this.scopeID === block.ID ? null : block.ID;
+		this.busy = false;
 	}
 
 	clearScope(): void {
@@ -425,13 +498,14 @@ class BaseStore {
 	// leaving the view on the old one would give them nothing to look at.
 	async askAI(): Promise<void> {
 		const text = this.command.trim();
-		// Locked mid inline-edit like every other tree action: reload moves the
-		// forest under an open editor, so submitting here would silently drop
-		// an open edit.
-		if (text === "" || this.busy || this.editingID !== null) {
+		if (text === "" || this.busy) {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			const scope = this.scopeID;
@@ -470,40 +544,258 @@ class BaseStore {
 		}
 	}
 
-	startEdit(block: Block): void {
-		// Ignore while busy or while another block is already being edited, so
-		// an in-progress edit is never silently discarded by switching blocks.
-		if (this.busy || this.editingID !== null) {
-			return;
+	// startEdit commits any different open block before starting the new session.
+	async startEdit(block: Block, caret: number): Promise<void> {
+		if (this.editingID !== null && this.editingID !== block.ID) {
+			if (!(await this.commitEdit())) {
+				return;
+			}
 		}
-		this.editingID = block.ID;
-		this.editText = block.Content;
+		const fresh = findBlock(this.forest, block.ID) ?? block;
+		// Set text before mounting the editor; assigning a control value moves its caret.
+		this.editText = fresh.Content;
+		this.editingID = fresh.ID;
+		this.editCaret = caret;
+		this.editCaretNonce++;
 	}
 
-	cancelEdit(): void {
+	// clearEdit closes a session after it is committed or its block disappears.
+	clearEdit(): void {
 		this.editingID = null;
 		this.editText = "";
+		this.editCaret = 0;
+		this.editCaretNonce++;
 	}
 
-	// saveEdit writes the block's new content directly, then re-reads the base.
-	async saveEdit(): Promise<void> {
-		if (this.editingID === null || this.busy) {
+	// syncCaret ignores stale reports and does not announce a new placement.
+	syncCaret(id: string, offset: number): void {
+		if (this.editingID !== id) {
 			return;
 		}
+		this.editCaret = offset;
+	}
+
+	// writeIfChanged persists one text snapshot and updates the cache immediately.
+	// Updating the cache prevents duplicate revisions when a later refresh fails.
+	private async writeIfChanged(id: string): Promise<boolean> {
+		const stored = findBlock(this.forest, id);
+		const text = this.editText;
+		if (stored === null || stored.Content === text) {
+			return false;
+		}
+		await App.EditBlockContent(id, text);
+		stored.Content = text;
+		return true;
+	}
+
+	// The active view root can be renamed but cannot participate in structural gestures.
+	private isViewRoot(id: string): boolean {
+		return id === this.viewRoot?.block.ID;
+	}
+
+	// Ghost rows represent deleted storage records and are never gesture targets.
+
+	// splitAtCaret keeps the head in place and moves the tail to a new sibling.
+	// The selected range [caret, end) is removed.
+	async splitAtCaret(id: string, caret: number, end: number = caret): Promise<void> {
+		if (this.busy || this.isViewRoot(id)) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		const text = this.editText;
+		const tail = text.slice(end);
 		this.busy = true;
 		this.error = "";
 		try {
-			await App.EditBlockContent(this.editingID, this.editText);
-			await this.reload();
-			this.status = "saved edit";
-			this.cancelEdit();
+			const newID = await App.SplitBlock(id, text.slice(0, caret), tail);
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
+			this.editText = tail;
+			this.editingID = newID;
+			this.editCaret = 0;
+			this.editCaretNonce++;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
-			this.status = "";
 		} finally {
 			this.busy = false;
 		}
 	}
+
+	// insertAbove preserves the current block identity and edit session.
+	async insertAbove(id: string): Promise<void> {
+		if (this.busy || this.isViewRoot(id)) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.InsertBlockBefore(id, "");
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// indent moves a block under its previous visible sibling.
+	async indent(id: string): Promise<void> {
+		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id, this.ghosts) === null) {
+			return;
+		}
+		await this.structural(id, () => App.IndentBlock(id));
+	}
+
+	// outdent moves a block after its parent without moving its former siblings.
+	async outdent(id: string): Promise<void> {
+		const node = findNode(this.visibleNodes, id);
+		const root = this.viewRoot;
+		if (this.busy || this.isViewRoot(id) || node === null || root === null || node.block.ParentID === root.block.ID) {
+			return;
+		}
+		await this.structural(id, () => App.OutdentBlock(id));
+	}
+
+	// mergeIntoPrevious joins the block into its previous visible live block.
+	async mergeIntoPrevious(id: string): Promise<void> {
+		const target = prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+		if (this.busy || this.isViewRoot(id) || target === null || target === this.viewRoot?.block.ID) {
+			return;
+		}
+		this.collapsed.delete(target);
+		const seam = findBlock(this.forest, target)?.Content.length ?? 0;
+		await this.structural(id, () => App.MergeBlocks(target, id), { id: target, caret: seam });
+	}
+
+	// pullNextInto joins the next visible live block into this one.
+	async pullNextInto(id: string, caret: number): Promise<void> {
+		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+		if (this.busy || this.isViewRoot(id) || source === null) {
+			return;
+		}
+		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret });
+	}
+
+	// moveCaret enters the adjacent block at the nearest matching column.
+	async moveCaret(id: string, direction: "up" | "down", column: number): Promise<void> {
+		const target =
+			direction === "up"
+				? prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
+				: nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+		if (this.busy || target === null) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			try {
+				if (await this.writeIfChanged(id)) {
+					await this.refresh(topic);
+				}
+			} catch (err: unknown) {
+				this.error = messageFor(err);
+				return;
+			}
+			const text = findBlock(this.forest, target)?.Content ?? "";
+			this.editText = text;
+			this.editingID = target;
+			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
+			this.editCaretNonce++;
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// structural writes pending text before applying an ID-based tree operation.
+	// Operation failure keeps the edit session; refresh failure does not undo a
+	// successful operation.
+	private async structural(
+		id: string,
+		op: () => Promise<unknown>,
+		land?: { id: string; caret: number },
+	): Promise<void> {
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			try {
+				await this.writeIfChanged(id);
+				await op();
+			} catch (err: unknown) {
+				this.error = messageFor(err);
+				return;
+			}
+			await this.refresh(topic);
+			if (land !== undefined) {
+				this.editText = findBlock(this.forest, land.id)?.Content ?? this.editText;
+				this.editingID = land.id;
+				this.editCaret = land.caret;
+				this.editCaretNonce++;
+			}
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// Concurrent commit callers share this promise.
+	private committing = $state<Promise<boolean> | null>(null);
+
+	// commitInFlight includes standalone blur and Escape commits not covered by busy.
+	get commitInFlight(): boolean {
+		return this.committing !== null;
+	}
+
+	// commitEdit resolves true when the session closed and false when a failed
+	// write left it open. Concurrent callers share the same commit.
+	commitEdit(): Promise<boolean> {
+		if (this.committing !== null) {
+			return this.committing;
+		}
+		this.committing = this.runCommit().finally(() => {
+			this.committing = null;
+		});
+		return this.committing;
+	}
+
+	// runCommit bases its result on persistence; a later refresh failure only
+	// leaves the cache stale.
+	private async runCommit(): Promise<boolean> {
+		const id = this.editingID;
+		if (id === null) {
+			return true;
+		}
+		const node = findNode(this.forest, id);
+		if (node === null) {
+			this.clearEdit();
+			return true;
+		}
+		const topic = topicOf(this.forest, id);
+		this.error = "";
+		try {
+			const empty = this.editText.trim() === "";
+			const disposable = empty && node.children.length === 0 && node.block.ParentID !== "";
+			if (disposable) {
+				await App.DeleteBlock(id);
+			} else if (!(await this.writeIfChanged(id))) {
+				this.clearEdit();
+				return true;
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+			return false;
+		}
+		this.clearEdit();
+		await this.refresh(topic);
+		return true;
+	}
+
+	// Review operations commit the editor before rebuilding the forest.
 
 	// accept marks a block's pending revisions reviewed: a live block keeps its
 	// new content, a ghost's tombstone becomes final and it drops out of the
@@ -513,6 +805,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.AcceptBlock(id);
@@ -534,6 +830,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.RejectBlock(id);
@@ -553,6 +853,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.AcceptPage(id);
@@ -573,6 +877,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.RejectPage(id);
@@ -613,9 +921,13 @@ class BaseStore {
 		}
 	}
 
-	startLink(id: string): void {
-		// Locked while busy or mid inline-edit, like the tree's other actions.
-		if (this.busy || this.editingID !== null) {
+	async startLink(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
 			return;
 		}
 		this.linkingID = id;
@@ -628,6 +940,7 @@ class BaseStore {
 			clearTimeout(this.linkQueryTimer);
 			this.linkQueryTimer = null;
 		}
+		this.busy = false;
 	}
 
 	cancelLink(): void {
@@ -764,22 +1077,16 @@ class BaseStore {
 		}
 	}
 
-	// deleteRevision removes one revision from a block's history — the
-	// rollback mechanism. Deleting the head reverts the block to the previous
-	// revision; deleting the last remaining revision removes the block
-	// entirely, in which case the follow-up BlockHistory errors not_found —
-	// that closes the panel rather than surfacing as an error. An invalid
-	// rollback (a live parent or children in the way) is refused by the
-	// backend with a message surfaced verbatim in base.error. The refresh is
-	// stamped with historySeq too, like toggleHistory: history-toggle buttons
-	// are disabled while busy so a panel switch cannot race this in practice,
-	// but the guard keeps the two call sites' invariant in one place rather
-	// than relying on that UI lock.
+	// deleteRevision rolls back one revision and closes history if the block vanishes.
 	async deleteRevision(blockID: string, revID: string): Promise<void> {
 		if (this.busy) {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		const mine = ++this.historySeq;
 		try {

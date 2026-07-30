@@ -138,3 +138,67 @@ export function topicRows(nodes: TreeNodeData[], selected: string | null): Topic
 				: [],
 	}));
 }
+
+// visibleOrder returns rendered rows in document order. Skipped rows are not
+// targets, but their visible descendants remain in the order.
+export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>, skip: Set<string>): string[] {
+	const out: string[] = [];
+	const walk = (list: TreeNodeData[]): void => {
+		for (const node of list) {
+			if (!skip.has(node.block.ID)) {
+				out.push(node.block.ID);
+			}
+			if (!collapsed.has(node.block.ID)) {
+				walk(node.children);
+			}
+		}
+	};
+	walk(nodes);
+	return out;
+}
+
+// prevVisible returns the previous rendered target.
+export function prevVisible(
+	nodes: TreeNodeData[],
+	id: string,
+	collapsed: Set<string>,
+	skip: Set<string>,
+): string | null {
+	const order = visibleOrder(nodes, collapsed, skip);
+	const i = order.indexOf(id);
+	return i > 0 ? order[i - 1] : null;
+}
+
+// nextVisible returns the next rendered target.
+export function nextVisible(
+	nodes: TreeNodeData[],
+	id: string,
+	collapsed: Set<string>,
+	skip: Set<string>,
+): string | null {
+	const order = visibleOrder(nodes, collapsed, skip);
+	const i = order.indexOf(id);
+	return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+}
+
+// prevSibling returns the previous non-skipped child of the same parent.
+export function prevSibling(nodes: TreeNodeData[], id: string, skip: Set<string>): string | null {
+	const search = (list: TreeNodeData[]): string | null => {
+		for (let i = 0; i < list.length; i++) {
+			if (list[i].block.ID === id) {
+				for (let j = i - 1; j >= 0; j--) {
+					if (!skip.has(list[j].block.ID)) {
+						return list[j].block.ID;
+					}
+				}
+				return null;
+			}
+			const hit = search(list[i].children);
+			if (hit !== null) {
+				return hit;
+			}
+		}
+		return null;
+	};
+	return search(nodes);
+}

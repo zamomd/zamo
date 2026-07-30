@@ -167,7 +167,11 @@
 										{b.GroupTitle}
 										{#if b.Head.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
 									</span>
-									<button type="button" title="jump to this block in the base" onclick={() => onjump(b.Head.BlockID)}>show</button>
+								<button
+									type="button"
+									title="jump to this block in the base"
+									disabled={base.busy}
+									onclick={() => onjump(b.Head.BlockID)}>show</button>
 									<button
 										type="button"
 										class="accept"
