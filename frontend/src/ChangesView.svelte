@@ -167,9 +167,6 @@
 										{b.GroupTitle}
 										{#if b.Head.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
 									</span>
-									<!-- Disabled with the other two: the jump commits the open edit
-								     on its way out (see navigate.ts), and a control that is
-								     refusing while a write is in flight has to look like it. -->
 								<button
 									type="button"
 									title="jump to this block in the base"

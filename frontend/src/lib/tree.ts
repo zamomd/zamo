@@ -139,23 +139,8 @@ export function topicRows(nodes: TreeNodeData[], selected: string | null): Topic
 	}));
 }
 
-// The four walks below take a skip set: rows that render but that no gesture
-// may reach. Today its one member is the ghost — a block with a pending
-// deletion, gone from storage and reconstructed into the forest only so the
-// reader can review the removal (see base.svelte.ts's ghosts). Asking storage
-// to merge into one, or to indent under one, names a row storage does not have,
-// so the id must never leave these walks. A skipped row's *children* stay in the
-// order: they are live blocks the reader can see, and dropping them would make
-// "the row above" mean something other than the row above on screen.
-//
-// The skip set is a rule about the whole visible order, which is why it is a
-// parameter here rather than a pruned copy of the forest at the call site: the
-// forest the tree renders and the order the gestures walk stay one structure.
-
-// visibleOrder flattens the forest to the ids the reader can actually see, in
-// document order. A collapsed node stays — its own row is visible — but its
-// descendants do not, which is what makes "the block above" mean the block above
-// on screen rather than the one above in the data.
+// visibleOrder returns rendered rows in document order. Skipped rows are not
+// targets, but their visible descendants remain in the order.
 export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>, skip: Set<string>): string[] {
 	const out: string[] = [];
 	const walk = (list: TreeNodeData[]): void => {
@@ -172,9 +157,7 @@ export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>, skip
 	return out;
 }
 
-// prevVisible is the row above id on screen, or null when id is the first
-// visible row — which is the caller's signal that Backspace has nothing to merge
-// into and the arrow has nowhere to go.
+// prevVisible returns the previous rendered target.
 export function prevVisible(
 	nodes: TreeNodeData[],
 	id: string,
@@ -186,7 +169,7 @@ export function prevVisible(
 	return i > 0 ? order[i - 1] : null;
 }
 
-// nextVisible is the row below id on screen, or null when id is the last one.
+// nextVisible returns the next rendered target.
 export function nextVisible(
 	nodes: TreeNodeData[],
 	id: string,
@@ -198,11 +181,7 @@ export function nextVisible(
 	return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
 }
 
-// prevSibling is the block directly above id under the same parent. Tab asks
-// this rather than prevVisible: the sibling above may be collapsed or deep, and
-// indenting still puts id under that sibling, not under whatever row happens to
-// be visible above. A skipped sibling is passed over rather than ending the
-// search — the block below it indents under the last one storage actually has.
+// prevSibling returns the previous non-skipped child of the same parent.
 export function prevSibling(nodes: TreeNodeData[], id: string, skip: Set<string>): string | null {
 	const search = (list: TreeNodeData[]): string | null => {
 		for (let i = 0; i < list.length; i++) {

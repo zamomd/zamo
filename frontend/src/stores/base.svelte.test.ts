@@ -643,6 +643,23 @@ describe("the edit session", () => {
 		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
 	});
 
+	it("exposes a standalone commit as in flight until its write settles", async () => {
+		let releaseWrite: (() => void) | undefined;
+		reloadFixture.writeGate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+
+		const commit = base.commitEdit();
+		expect(base.busy).toBe(false);
+		expect(base.commitInFlight).toBe(true);
+
+		releaseWrite?.();
+		await commit;
+		expect(base.commitInFlight).toBe(false);
+	});
+
 	it("does nothing when no edit is open", async () => {
 		await base.commitEdit();
 		expect(App.EditBlockContent).not.toHaveBeenCalled();

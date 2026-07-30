@@ -13,12 +13,6 @@
 	];
 </script>
 
-<!-- Every glyph leaves the tree, and leaving it commits the open edit, so the
-     rail greys out while a write is in flight like every other control that
-     reaches commitEdit — see base's commitEdit for the difference between a
-     caret being somewhere and a write being in flight. The rail's rest colour
-     is already the faint one, so it is the hover rule dropping out that carries
-     the refusal to the eye. -->
 <nav class="rail" aria-label="view">
 	{#each modes as m (m.id)}
 		<button

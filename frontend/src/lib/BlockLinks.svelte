@@ -5,6 +5,7 @@
 		Relation,
 	} from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { base } from "../stores/base.svelte";
+	import { jumpToBlock } from "./navigate";
 
 	// The inline links panel under a tree row: the block's typed links (with
 	// jump and unlink) plus the +link picker. All state and actions live in
@@ -34,7 +35,8 @@
 						type="button"
 						class="neighbour"
 						title="jump to this block"
-						onclick={() => base.reveal(link.Block.ID)}
+						disabled={base.busy}
+						onclick={() => jumpToBlock(link.Block.ID)}
 					>
 						<code>{link.Block.Content}</code>
 					</button>

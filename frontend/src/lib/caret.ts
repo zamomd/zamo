@@ -1,13 +1,6 @@
 import { renderMarkdown } from "./markdown";
 
-// The caret's arithmetic. A click lands on rendered markdown while the editor
-// edits the source, and the two do not share offsets: `**burst**` is nine
-// characters written and five read. Everything here is pure and offset-based
-// except renderedOffsetFromPoint, which is the one place a DOM is needed.
-
-// The entities markdown-it's escapeHtml produces. Nothing else can appear,
-// because markdown.ts runs with html: false, so content angle brackets are
-// escaped rather than passed through.
+// Entities produced by markdown-it with HTML disabled.
 const entities: [RegExp, string][] = [
 	[/&lt;/g, "<"],
 	[/&gt;/g, ">"],
@@ -17,16 +10,8 @@ const entities: [RegExp, string][] = [
 	[/&amp;/g, "&"],
 ];
 
-// renderedText is what the reader sees, as plain text. Its contract is
-// byte-for-byte agreement with the rendered container's textContent, because
-// sourceOffset maps between the two and a one-character disagreement is a
-// one-character caret error.
-//
-// Stripping tags with a regex is safe on this input specifically: markdown.ts
-// sets html: false, so every angle bracket in the content is already escaped and
-// the only tags left are markdown-it's own. Tags come out before entities go in,
-// or a decoded "<" would read as the start of a tag. Nothing is trimmed —
-// markdown-it emits "<p>foo</p>\n", whose textContent is "foo\n".
+// renderedText mirrors the rendered container's textContent. Tag stripping is
+// safe because Markdown input HTML is disabled.
 export function renderedText(raw: string): string {
 	let text = renderMarkdown(raw).replace(/<[^>]*>/g, "");
 	for (const [pattern, char] of entities) {
@@ -35,51 +20,30 @@ export function renderedText(raw: string): string {
 	return text;
 }
 
-// sourceOffset maps an offset in the rendered text to the offset in the markdown
-// source that produced it. Two pointers: equal characters advance both, unequal
-// characters mean the source is carrying syntax the reader never saw, so only
-// the source advances.
-//
-// A renderedOffset past the end of the rendered text — a click below the last
-// line, or a mapping that did not converge — returns the end of the source. That
-// is the deliberate safe default (spec §7.2): the worst outcome is a caret in
-// the wrong place, and no content is at risk.
+// sourceOffset maps a rendered-text offset to its Markdown source offset.
+// Unmappable positions fall back to the end of the source.
 export function sourceOffset(raw: string, renderedOffset: number): number {
 	const rendered = renderedText(raw);
 	const target = Math.max(renderedOffset, 0);
 	let r = 0;
 	let s = 0;
-	// Keep walking past the target once reached, as long as the next raw
-	// character is still syntax (it doesn't equal the upcoming rendered
-	// character). This is what carries the caret across a run of source-only
-	// punctuation adjacent to the target rendered position: leading marks
-	// before the first visible character of a run, or trailing marks right
-	// after the last one. A raw character that matches rendered[r] belongs to
-	// the *next* rendered position, so it stops the walk rather than being
-	// consumed.
+	// Continue past the target through adjacent source-only delimiters.
 	while (s < raw.length && (r < target || (r < rendered.length && raw[s] !== rendered[r]))) {
+		// An escape and its visible character form one rendered unit.
+		if (raw[s] === "\\" && raw[s + 1] === rendered[r]) {
+			if (r === target) {
+				break;
+			}
+			r++;
+			s += 2;
+			continue;
+		}
 		if (r < rendered.length && raw[s] === rendered[r]) {
 			r++;
 			s++;
 			continue;
 		}
-		// The source can carry characters the reader never saw — that is markdown
-		// syntax, and the walk skips them. The renderer does the same in the other
-		// direction: markdown-it puts a real newline between <ul> and <li>, and it
-		// is a text node, so it reaches textContent with nothing behind it in the
-		// source. Without this the walk never converges for a list and every click
-		// in one lands at the end of the block.
-		//
-		// Only while catching up, hence r < target. Past the target the walk has the
-		// opposite job — stepping the source over the delimiters that closed the run
-		// the caret is at the end of — and consuming a rendered newline there ends
-		// the walk (the loop's second clause needs r < rendered.length) with the
-		// caret still inside the markup: offset 5 of "**burst**" would come out as 7,
-		// between "burst" and its own closing stars, so the next keystroke would
-		// extend the emphasis rather than follow it.
-		//
-		// A hard break is untouched: there both sides hold "\n", so they match and
-		// advance together before this rule is reached.
+		// markdown-it inserts text-node newlines around list markup.
 		if (r < target && rendered[r] === "\n" && raw[s] !== "\n") {
 			r++;
 			continue;
@@ -127,17 +91,9 @@ export function offsetAtLine(text: string, line: number, column: number): number
 	return offset + Math.min(Math.max(column, 0), lines[index].length);
 }
 
-// renderedOffsetFromPoint reduces a click to a single offset into the container's
-// textContent, so sourceOffset can map it back to the markdown behind it.
-//
-// The only DOM-dependent function here, and therefore the only one without unit
-// tests: caretRangeFromPoint is WebKit's, has no jsdom equivalent worth mocking,
-// and what it returns is exactly what a real click produces. It is kept small
-// enough to read instead. A null return means "could not tell", which every
-// caller answers with the end of the block.
+// renderedOffsetFromPoint returns an offset into the container's textContent.
 export function renderedOffsetFromPoint(container: HTMLElement, x: number, y: number): number | null {
-	// caretRangeFromPoint is WebKit's non-standard spelling; it is what the Wails
-	// webview implements, and TypeScript's DOM lib does not declare it.
+	// Wails' WebKit webview exposes the non-standard caretRangeFromPoint API.
 	const fromPoint = (
 		document as Document & {
 			caretRangeFromPoint?: (x: number, y: number) => Range | null;

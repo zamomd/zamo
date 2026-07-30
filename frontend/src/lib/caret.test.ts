@@ -64,6 +64,10 @@ describe("sourceOffset", () => {
 		["a caret after bold text ending the block clears the stars", "**burst**", 5, 9],
 		["a caret after inline code ending the block clears the backtick", "`burst`", 5, 7],
 		["a caret after a link ending the block clears the target", "see [the RFC](https://x.y)", 11, 26],
+		["a caret before escaped punctuation stays before its backslash", String.raw`\*literal\*`, 0, 0],
+		["a caret after escaped punctuation clears its backslash pair", String.raw`\*literal\*`, 1, 2],
+		["a caret before a closing escaped punctuation stays before its backslash", String.raw`\*literal\*`, 8, 9],
+		["a caret after a literal backslash clears the escaped pair", String.raw`\\path`, 1, 2],
 		["a hard break maps to the newline it came from", "first\nsecond", 6, 6],
 		["offset zero is offset zero for plain text", "burst", 0, 0],
 	];

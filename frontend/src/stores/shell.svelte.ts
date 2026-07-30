@@ -9,12 +9,7 @@ export type Mode = "tree" | "graph" | "changes" | "settings";
 class ShellStore {
 	mode = $state<Mode>("tree");
 
-	// Every mode change leaves the tree, which can unmount an open editor's
-	// row, so it commits first — the rail owning all four switches (see above)
-	// is what makes this the one place that has to. A failed write stays on
-	// the tree with the text still in the editor (spec §8) rather than switch
-	// away underneath it, and a write still in flight is not committed through
-	// at all — see base's commitEdit for why those are different answers.
+	// setMode keeps the current mode when an open edit cannot be committed.
 	async setMode(m: Mode): Promise<void> {
 		if (base.busy) {
 			return;

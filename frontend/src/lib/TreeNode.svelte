@@ -49,11 +49,6 @@
 	// flash is toggled off then back on across a frame so the CSS animation
 	// restarts rather than sitting at its finished state.
 	let rowEl: HTMLElement | undefined;
-	// $state, unlike rowEl above: rowEl is only ever read inside the $effect
-	// below, where a plain let is enough because the effect's own re-run keeps
-	// it current. contentEl is read from editFromClick, an event handler outside
-	// any tracked scope, and svelte-check's non_reactive_update check cannot
-	// prove that read sees bind:this's assignment without $state.
 	let contentEl: HTMLElement | undefined = $state();
 	let flash = $state(false);
 	$effect(() => {
@@ -84,11 +79,7 @@
 		if (base.busy) {
 			return;
 		}
-		// The click lands on rendered markdown but the editor edits the source, and
-		// the offsets differ — `**burst**` is nine characters written and five read.
-		// A click that cannot be mapped puts the caret at the end of the block,
-		// which is the documented safe default: a caret in the wrong place is a
-		// nuisance, mangled text would not be.
+		// Map the rendered click to the Markdown source; fall back to the end.
 		const raw = node.block.Content;
 		const rendered =
 			contentEl === undefined ? null : renderedOffsetFromPoint(contentEl, e.clientX, e.clientY);
@@ -119,15 +110,7 @@
 		class:ghost
 	>
 		{#if !title}
-			<!-- The dot is the block's anchor: it carries authorship in its fill,
-			     hidden children in its halo, and zoom-in on click. Collapse lives
-			     on the triangle below, which replaces the rail's tick on hover so
-			     two lines never compete for the same 14px.
-			     Both are disabled while busy, like every other control on the row:
-			     each goes straight to commitEdit, and each can zoom or fold the
-			     tree out from under a gesture that is still running. They are the
-			     two controls physically closest to the block being edited, which
-			     is what made the omission easy to miss. -->
+			<!-- The dot identifies and zooms the block; the triangle controls collapse. -->
 			<button
 				type="button"
 				class="dot"
@@ -377,9 +360,6 @@
 	.dot.ring {
 		box-shadow: 0 0 0 4px var(--halo);
 	}
-	/* :not(:disabled) on both, matching the gutter's and accept/reject's hover
-	   rules: the dot greys out with the rest of the row while a write is in
-	   flight, and a control that cannot be pressed must not answer the pointer. */
 	.dot:hover:not(:disabled) {
 		background: var(--text);
 	}
@@ -450,10 +430,6 @@
 		font-size: var(--size-title);
 		line-height: calc(var(--row-height) * 1.5);
 	}
-	/* The editor is a sibling of .content, so the title row's larger type has to
-	   be stated for it as well or clicking the page title would shrink the text
-	   to body size at the moment of the click — the one thing the editor's metric
-	   exists to prevent. */
 	.row.title :global(.editor) {
 		font-size: var(--size-title);
 		line-height: calc(var(--row-height) * 1.5);
