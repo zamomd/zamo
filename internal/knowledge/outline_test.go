@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -164,5 +165,84 @@ func TestOutdentChildOfTopicRootIsRefused(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
+	}
+}
+
+func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
+	blocks := map[ID]Block{
+		"root":   {ID: "root", Content: "Root"},
+		"target": {ID: "target", ParentID: "root", Position: 0, Content: "Head "},
+		"source": {ID: "source", ParentID: "root", Position: 65536, Content: "tail"},
+		"kid-a":  {ID: "kid-a", ParentID: "source", Position: 0, Content: "A"},
+		"kid-b":  {ID: "kid-b", ParentID: "source", Position: 65536, Content: "B"},
+	}
+	repo := &fakeRepo{
+		blocks: blocks,
+		subtrees: map[ID][]Block{
+			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"]},
+		},
+	}
+	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+
+	if err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
+		t.Fatalf("MergeBlocks: %v", err)
+	}
+
+	// Order is load-bearing: applyDelete tombstones the whole subtree, so the
+	// children must be reparented before the delete runs. prepareOps keeps
+	// this order because every id here is real — there are no temp
+	// references, so orderParentsFirst leaves a batch of equals alone.
+	kinds := make([]OpKind, 0, len(repo.applyOps))
+	for _, op := range repo.applyOps {
+		kinds = append(kinds, op.Kind)
+	}
+	want := []OpKind{OpEdit, OpMove, OpMove, OpDelete}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("op kinds = %v, want %v", kinds, want)
+	}
+	if got := repo.applyOps[0].Content; got != "Head tail" {
+		t.Errorf("merged content = %q, want %q", got, "Head tail")
+	}
+	for _, op := range repo.applyOps[1:3] {
+		if op.Parent != "target" {
+			t.Errorf("child move %+v, want parent target", op)
+		}
+	}
+	if repo.applyOps[3].BlockID != "source" {
+		t.Errorf("delete op = %+v, want the source", repo.applyOps[3])
+	}
+}
+
+func TestMergeBlocksRefusesMergingIntoItself(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	if err := svc.MergeBlocks(t.Context(), "first", "first"); !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
+	}
+}
+
+func TestDeleteBlockEmitsOneDelete(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	if err := svc.DeleteBlock(t.Context(), "second"); err != nil {
+		t.Fatalf("DeleteBlock: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpDelete || repo.applyOps[0].BlockID != "second" {
+		t.Errorf("ops = %+v, want a single delete of second", repo.applyOps)
+	}
+}
+
+func TestMoveBlockPassesTheAnchorThrough(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	if err := svc.MoveBlock(t.Context(), "second", "root", "first"); err != nil {
+		t.Fatalf("MoveBlock: %v", err)
+	}
+	move := repo.applyOps[0]
+	if move.Kind != OpMove || move.BlockID != "second" || move.Parent != "root" || move.After != "first" {
+		t.Errorf("move op = %+v, want move of second under root after first", move)
 	}
 }

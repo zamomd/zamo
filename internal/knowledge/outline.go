@@ -157,3 +157,59 @@ func (s *Service) OutdentBlock(ctx context.Context, id ID) error {
 	})
 	return err
 }
+
+// MergeBlocks is Backspace at the start of a block: target absorbs source's
+// text, source's children become target's children, and source is gone. The
+// caret goes to the seam, which the caller computes as the length of target's
+// old content.
+//
+// The op order is load-bearing. applyDelete tombstones the whole subtree of
+// what it deletes, so source's children must be reparented before the delete
+// runs. prepareOps preserves this order because every id in the batch is
+// real: with no temp references every op has indegree zero, and
+// orderParentsFirst is a stable Kahn traversal, so it emits them as given.
+func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
+	if target == source {
+		return fmt.Errorf("merge %s into itself: %w", target, ErrInvalidOps)
+	}
+	dst, err := s.blockByID(ctx, target)
+	if err != nil {
+		return err
+	}
+	src, err := s.blockByID(ctx, source)
+	if err != nil {
+		return err
+	}
+	subtree, err := s.repo.GetSubtree(ctx, source)
+	if err != nil {
+		return err
+	}
+	ops := make([]Op, 0, len(subtree)+2)
+	ops = append(ops, Op{Kind: OpEdit, BlockID: target, Content: dst.Content + src.Content})
+	for _, b := range subtree {
+		if b.ParentID == source {
+			ops = append(ops, Op{Kind: OpMove, BlockID: b.ID, Parent: string(target)})
+		}
+	}
+	ops = append(ops, Op{Kind: OpDelete, BlockID: source})
+	_, err = s.ApplyOps(ctx, ownerMeta(), ops)
+	return err
+}
+
+// DeleteBlock removes a block and, through storage's cascade, everything under
+// it. The GUI only calls it for a childless empty block; the cascade is what
+// makes it safe to reuse for anything else later.
+func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
+	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
+	return err
+}
+
+// MoveBlock reparents a block, landing it after the named sibling or at the
+// end when after is empty. Indent and outdent are the keyboard's two fixed
+// cases; this is the general form, for a future drag.
+func (s *Service) MoveBlock(ctx context.Context, id, parent, after ID) error {
+	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{
+		{Kind: OpMove, BlockID: id, Parent: string(parent), After: string(after)},
+	})
+	return err
+}
