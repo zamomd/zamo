@@ -496,6 +496,16 @@ describe("the edit session", () => {
 		expect(base.editCaret).toBe(4);
 	});
 
+	// startEdit reads the forest, not the caller's copy: after a commit the topic
+	// is re-read and every block object is new, so a caller holding a block from
+	// before that reload is holding stale content. The fixture deliberately
+	// disagrees with the argument so a regression to block.Content would fail.
+	it("opens with the forest's content, not the caller's stale copy", async () => {
+		base.forest = [node("go", "", [node("ctx", "go", [], "what storage holds")])];
+		await base.startEdit(block("ctx", "go", "what the caller remembered"), 0);
+		expect(base.editText).toBe("what storage holds");
+	});
+
 	it("writes nothing when the text did not change", async () => {
 		base.forest = [node("go", "", [node("ctx", "go", [], "unchanged")])];
 		await base.startEdit(block("ctx", "go", "unchanged"), 0);
@@ -717,4 +727,179 @@ it("leaves the mode alone when the commit that switching modes triggers fails", 
 	expect(shell.mode).toBe("tree");
 	expect(base.editingID).toBe("ctx");
 	expect(base.editText).toBe("after");
+});
+
+describe("Enter", () => {
+	it("splits at the caret, keeping the head and moving the caret into the tail", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		// startEdit reads the forest, not the argument (see "the edit session"
+		// above), so the fixture carries the text under test rather than the
+		// default seeded forest's "done" placeholder.
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "head and tail")])])];
+		await base.startEdit(block("done", "ctx", "head and tail"), 4);
+		await base.splitAtCaret("done", 4);
+		expect(App.SplitBlock).toHaveBeenCalledWith("done", "head", " and tail");
+		expect(base.editingID).toBe("new");
+		expect(base.editText).toBe(" and tail");
+		expect(base.editCaret).toBe(0);
+	});
+
+	// The ID carries history, review state and links; Enter at the start must not
+	// move the text onto a new one.
+	it("inserts an empty block above when the caret is at the start of non-empty text", async () => {
+		vi.mocked(App.InsertBlockBefore).mockResolvedValueOnce("above");
+		await base.startEdit(block("done", "ctx", "untouched"), 0);
+		await base.insertAbove("done");
+		expect(App.InsertBlockBefore).toHaveBeenCalledWith("done", "");
+		expect(App.SplitBlock).not.toHaveBeenCalled();
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(0);
+	});
+
+	it("splits an empty block rather than inserting above it", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		// Same reason as above: the forest, not the argument, is what startEdit
+		// reads, so it has to actually hold the empty content under test.
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "")])])];
+		await base.startEdit(block("done", "ctx", ""), 0);
+		await base.splitAtCaret("done", 0);
+		expect(App.SplitBlock).toHaveBeenCalledWith("done", "", "");
+		expect(base.editingID).toBe("new");
+	});
+
+	it("splits with the text currently in the editor, not the stored text", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		await base.startEdit(block("done", "ctx", "old"), 0);
+		base.editText = "typed more";
+		await base.splitAtCaret("done", 5);
+		expect(App.SplitBlock).toHaveBeenCalledWith("done", "typed", " more");
+	});
+});
+
+describe("Tab and Shift+Tab", () => {
+	it("indents under the previous sibling", async () => {
+		// gen is ctx's next sibling, so Tab puts it under ctx.
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("gen", "go")];
+		await base.reloadTopic("go");
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.indent("gen");
+		expect(App.IndentBlock).toHaveBeenCalledWith("gen");
+		expect(base.editingID).toBe("gen");
+	});
+
+	// Spec §8: a gesture with no target is a silent no-op, never a message — and
+	// never a bridge call, which is what keeps invalid_ops meaning a real fault.
+	it("is a silent no-op for a first child", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.indent("ctx");
+		expect(App.IndentBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("outdents to the parent's next sibling slot", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.outdent("done");
+		expect(App.OutdentBlock).toHaveBeenCalledWith("done");
+	});
+
+	it("is a silent no-op for a child of the view's root", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.outdent("ctx");
+		expect(App.OutdentBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("writes the pending text before moving the block", async () => {
+		await base.startEdit(block("done", "ctx", "before"), 0);
+		base.editText = "after";
+		await base.outdent("done");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("done", "after");
+	});
+});
+
+describe("Backspace at the start", () => {
+	it("merges into the block above and puts the caret at the seam", async () => {
+		await base.startEdit(block("done", "ctx", "tail"), 0);
+		await base.mergeIntoPrevious("done");
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "done");
+		expect(base.editingID).toBe("ctx");
+		// ctx's stored content is "ctx" in the seeded forest: the seam is its length.
+		expect(base.editCaret).toBe(3);
+	});
+
+	// ctx's predecessor in the visible order is "go" — the page's title row. It is
+	// visible, so prevVisible returns it, and the refusal has to be by name.
+	it("is a silent no-op in the first block of the page, whose predecessor is the title", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.mergeIntoPrevious("ctx");
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	// The target is the block visible above — which, when it is collapsed, is the
+	// collapsed block itself, not the descendant it is hiding. It is expanded so
+	// the reader can see where the text went, and it stays the target: spec §4.3
+	// says unfold the target, not pick a different one.
+	it("expands a collapsed target rather than merging into what it hides", async () => {
+		base.collapsed.add("ctx");
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("done", "ctx"), block("gen", "go")];
+		await base.reloadTopic("go");
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.mergeIntoPrevious("gen");
+		expect(base.collapsed.has("ctx")).toBe(false);
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "gen");
+		expect(base.editCaret).toBe(3); // the seam, at the end of "ctx"
+	});
+});
+
+describe("Delete at the end", () => {
+	it("pulls the next visible block into this one", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 3);
+		await base.pullNextInto("ctx");
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "done");
+		expect(base.editingID).toBe("ctx");
+	});
+
+	it("is a silent no-op in the last block of the page", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 4);
+		await base.pullNextInto("done");
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+});
+
+describe("the arrows", () => {
+	it("moves up into the block above, keeping the column", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 2);
+		await base.moveCaret("done", "up", 2);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editCaret).toBe(2);
+	});
+
+	it("clamps the column to the target's shorter line", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 4);
+		await base.moveCaret("done", "up", 40);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editCaret).toBe(3); // "ctx"
+	});
+
+	it("moves down into the block below", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.moveCaret("ctx", "down", 0);
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(0);
+	});
+
+	it("stays put at the ends of the visible order", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.moveCaret("done", "down", 0);
+		expect(base.editingID).toBe("done");
+	});
+
+	it("writes the pending text before leaving the block", async () => {
+		await base.startEdit(block("done", "ctx", "before"), 0);
+		base.editText = "after";
+		await base.moveCaret("done", "up", 0);
+		expect(App.EditBlockContent).toHaveBeenCalledWith("done", "after");
+	});
 });

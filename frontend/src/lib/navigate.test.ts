@@ -7,6 +7,9 @@ const calls = vi.hoisted(() => ({
 	mode: "",
 	revealedID: "",
 	selectedID: "",
+	// Mirrors base.editingID: the fake setMode below leaves it set when a test
+	// wants to simulate a failed commit, the way the real commitEdit does.
+	editingID: null as string | null,
 }));
 
 vi.mock("../stores/shell.svelte", () => ({
@@ -19,6 +22,9 @@ vi.mock("../stores/shell.svelte", () => ({
 
 vi.mock("../stores/base.svelte", () => ({
 	base: {
+		get editingID() {
+			return calls.editingID;
+		},
 		reveal: (id: string) => {
 			calls.revealedID = id;
 		},
@@ -34,6 +40,7 @@ beforeEach(() => {
 	calls.mode = "";
 	calls.revealedID = "";
 	calls.selectedID = "";
+	calls.editingID = null;
 });
 
 describe("jumpToBlock", () => {
@@ -42,6 +49,20 @@ describe("jumpToBlock", () => {
 
 		expect(calls.mode).toBe("tree");
 		expect(calls.revealedID).toBe("b1");
+	});
+
+	// setMode awaits base.commitEdit() itself but its Promise<void> does not
+	// report whether the commit succeeded. A failed commit leaves the session
+	// open (spec §8) — editingID is what survives that — so jumpToBlock has to
+	// read it back rather than reveal() unconditionally, or a failed write
+	// would still get its editor's row switched out from under it.
+	it("does not reveal when the mode switch's own commit left the session open", async () => {
+		calls.editingID = "still-open";
+
+		await jumpToBlock("b1");
+
+		expect(calls.mode).toBe("tree");
+		expect(calls.revealedID).toBe("");
 	});
 });
 

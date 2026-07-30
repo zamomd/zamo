@@ -8,7 +8,18 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findNode, findPath, type TreeNodeData, topicOf } from "../lib/tree";
+import { lineCount, offsetAtLine } from "../lib/caret";
+import {
+	buildTree,
+	findBlock,
+	findNode,
+	findPath,
+	nextVisible,
+	prevSibling,
+	prevVisible,
+	type TreeNodeData,
+	topicOf,
+} from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -149,6 +160,13 @@ class BaseStore {
 	viewRoot = $derived(
 		this.focusID === null ? this.selectedTree : (findNode(this.forest, this.focusID) ?? this.selectedTree),
 	);
+
+	// The rows a gesture may reach. Navigation and merges are scoped to the view's
+	// own root, which does three things at once: a gesture cannot wander into
+	// another topic, it cannot escape a zoom, and the root is never a merge target
+	// — so Backspace in the first block of a page is the silent no-op the spec
+	// asks for rather than a refusal from the domain.
+	visibleNodes = $derived<TreeNodeData[]>(this.viewRoot === null ? [] : [this.viewRoot]);
 
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
@@ -577,6 +595,182 @@ class BaseStore {
 		}
 		await App.EditBlockContent(id, this.editText);
 		return true;
+	}
+
+	// splitAtCaret is Enter with the caret inside a block: this block keeps the
+	// head, a new sibling directly below takes the tail, and the caret follows the
+	// tail. The two halves are siblings even when the block has children — a split
+	// makes two equal parts, and the tail must not land a level deeper than the
+	// head.
+	//
+	// SplitBlock carries both halves in its arguments, so there is nothing to
+	// write first: the editor's text goes straight into the call.
+	async splitAtCaret(id: string, caret: number): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		const text = this.editText;
+		const tail = text.slice(caret);
+		this.busy = true;
+		this.error = "";
+		try {
+			const newID = await App.SplitBlock(id, text.slice(0, caret), tail);
+			this.editingID = newID;
+			this.editText = tail;
+			this.editCaret = 0;
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// insertAbove is Enter with the caret at the very start of a non-empty block:
+	// an empty sibling appears above and this block is not touched, so it keeps
+	// its id — and with it its revision history, its review state and its links.
+	// The caret stays where the reader left it.
+	async insertAbove(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			await App.InsertBlockBefore(id, "");
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// indent is Tab: this block becomes the last child of the sibling above it,
+	// carrying its own children along. No previous sibling means nothing to indent
+	// under — a silent no-op, and deliberately not a call: the client answers
+	// "does this gesture apply here" itself, so an error from the bridge always
+	// means something actually went wrong.
+	async indent(id: string): Promise<void> {
+		if (this.busy || prevSibling(this.visibleNodes, id) === null) {
+			return;
+		}
+		await this.structural(id, () => App.IndentBlock(id));
+	}
+
+	// outdent is Shift+Tab: this block becomes its parent's next sibling, carrying
+	// its own children but leaving its former following siblings where they are —
+	// the gesture moves one block, it does not re-cut the branch. A child of the
+	// view's root has nowhere to go.
+	async outdent(id: string): Promise<void> {
+		const node = findNode(this.visibleNodes, id);
+		const root = this.viewRoot;
+		if (this.busy || node === null || root === null || node.block.ParentID === root.block.ID) {
+			return;
+		}
+		await this.structural(id, () => App.OutdentBlock(id));
+	}
+
+	// mergeIntoPrevious is Backspace at the start: the block visible above absorbs
+	// this one's text, this one's children move to it, and this one is gone. The
+	// caret lands on the seam.
+	//
+	// A collapsed target is expanded first, or the text would disappear into a
+	// block whose content is not on screen.
+	async mergeIntoPrevious(id: string): Promise<void> {
+		const target = prevVisible(this.visibleNodes, id, this.collapsed);
+		// The view's root is the page's title row, and it *is* in the visible
+		// order — so it has to be excluded by name. Without this the first block
+		// of a page would try to merge into its own title, which the domain
+		// refuses ("a topic root cannot absorb text") and which would arrive back
+		// as an invalid_ops the reader did nothing to deserve.
+		if (this.busy || target === null || target === this.viewRoot?.block.ID) {
+			return;
+		}
+		this.collapsed.delete(target);
+		const seam = findBlock(this.forest, target)?.Content.length ?? 0;
+		await this.structural(id, () => App.MergeBlocks(target, id), { id: target, caret: seam });
+	}
+
+	// pullNextInto is Delete at the end: the mirror of Backspace. The block visible
+	// below is absorbed into this one, its children move here, and the caret stays
+	// where it is.
+	async pullNextInto(id: string): Promise<void> {
+		const source = nextVisible(this.visibleNodes, id, this.collapsed);
+		if (this.busy || source === null) {
+			return;
+		}
+		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret: this.editCaret });
+	}
+
+	// moveCaret is ↑ or ↓ leaving the block: the caret goes to the same column of
+	// the block visible above or below, on that block's last or first line. At the
+	// ends of the visible order it stays put.
+	async moveCaret(id: string, direction: "up" | "down", column: number): Promise<void> {
+		const target =
+			direction === "up"
+				? prevVisible(this.visibleNodes, id, this.collapsed)
+				: nextVisible(this.visibleNodes, id, this.collapsed);
+		if (this.busy || target === null) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			const wrote = await this.writeIfChanged(id);
+			const text = findBlock(this.forest, target)?.Content ?? "";
+			this.editingID = target;
+			this.editText = text;
+			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
+			if (wrote && topic !== null) {
+				await this.reloadTopic(topic);
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// structural is the shape every gesture below Enter shares: write the pending
+	// text (the backend methods take ids, not content, so an unwritten edit would
+	// be acted on stale), run the operation, land the caret, re-read the topic.
+	//
+	// A failure leaves the session exactly as it was — the text is still in the
+	// editor, which is the whole point of not clearing it (spec §8).
+	private async structural(
+		id: string,
+		op: () => Promise<unknown>,
+		land?: { id: string; caret: number },
+	): Promise<void> {
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			await this.writeIfChanged(id);
+			await op();
+			if (land !== undefined) {
+				this.editingID = land.id;
+				this.editCaret = land.caret;
+			}
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
+			if (land !== undefined) {
+				this.editText = findBlock(this.forest, land.id)?.Content ?? this.editText;
+			}
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		} finally {
+			this.busy = false;
+		}
 	}
 
 	private committing: Promise<boolean> | null = null;

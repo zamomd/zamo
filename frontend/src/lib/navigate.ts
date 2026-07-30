@@ -13,6 +13,15 @@ import { shell } from "../stores/shell.svelte";
 // does that itself, but reveal does not.
 export async function jumpToBlock(id: string): Promise<void> {
 	await shell.setMode("tree");
+	// setMode's own commit can fail and leave the previous session open (spec
+	// §8), but setMode's Promise<void> does not carry that verdict back here.
+	// editingID is what survives a failed commit — the write failed and the
+	// text is still in the editor — so it stands in for the boolean every
+	// other caller of commitEdit checks directly. Proceeding to reveal() would
+	// switch topics under that still-open editor's row.
+	if (base.editingID !== null) {
+		return;
+	}
 	base.reveal(id);
 }
 
