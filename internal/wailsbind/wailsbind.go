@@ -114,6 +114,46 @@ func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content str
 	return a.svc.EditBlockContent(ctx, id, content)
 }
 
+// SplitBlock is Enter with a caret inside a block: the block keeps head, a new
+// sibling below takes tail. Returns the new block's id for the caret.
+func (a *App) SplitBlock(ctx context.Context, id knowledge.ID, head, tail string) (knowledge.ID, error) {
+	return a.svc.SplitBlock(ctx, id, head, tail)
+}
+
+// InsertBlockBefore is Enter at the very start of a block: an empty sibling
+// appears above and the block keeps its id, history and links.
+func (a *App) InsertBlockBefore(ctx context.Context, id knowledge.ID, content string) (knowledge.ID, error) {
+	return a.svc.InsertBefore(ctx, id, content)
+}
+
+// IndentBlock is Tab: the block becomes the last child of the sibling above.
+func (a *App) IndentBlock(ctx context.Context, id knowledge.ID) error {
+	return a.svc.IndentBlock(ctx, id)
+}
+
+// OutdentBlock is Shift+Tab: the block becomes its parent's next sibling.
+func (a *App) OutdentBlock(ctx context.Context, id knowledge.ID) error {
+	return a.svc.OutdentBlock(ctx, id)
+}
+
+// MergeBlocks is Backspace at the start of a block: target absorbs source's
+// text and children, source is removed.
+func (a *App) MergeBlocks(ctx context.Context, target, source knowledge.ID) error {
+	return a.svc.MergeBlocks(ctx, target, source)
+}
+
+// DeleteBlock removes a block and everything under it. Meant for a childless
+// empty block the owner deletes.
+func (a *App) DeleteBlock(ctx context.Context, id knowledge.ID) error {
+	return a.svc.DeleteBlock(ctx, id)
+}
+
+// MoveBlock reparents a block after the named sibling, or last when after is
+// empty.
+func (a *App) MoveBlock(ctx context.Context, id, parent, after knowledge.ID) error {
+	return a.svc.MoveBlock(ctx, id, parent, after)
+}
+
 // Search passes the call to knowledge.Service. The frontend supplies the raw
 // query string; the backend owns the FTS syntax and its neutralisation.
 func (a *App) Search(ctx context.Context, query string) ([]knowledge.Block, error) {

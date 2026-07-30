@@ -197,7 +197,7 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
 }
 
 // DeleteBlock removes a block and, through storage's cascade, everything under
-// it. The GUI only calls it for a childless empty block; the cascade is what
+// it. Meant for a childless empty block the owner deletes; the cascade is what
 // makes it safe to reuse for anything else later.
 func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
 	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
