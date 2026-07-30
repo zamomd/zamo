@@ -201,6 +201,33 @@ func requireParent(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op kn
 	return nil
 }
 
+// requireAnchor rejects an op whose sibling anchor is missing or belongs to a
+// different parent. Without this an unknown anchor would fall through to a
+// plain append: the batch would succeed while putting the block somewhere the
+// caller did not ask for.
+func requireAnchor(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op knowledge.Op) error {
+	anchor := op.After
+	if anchor == "" {
+		anchor = op.Before
+	}
+	if anchor == "" {
+		return nil
+	}
+	var parent sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT parent_id FROM blocks WHERE id = ?`, anchor).Scan(&parent); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("apply %s %s: anchor %s: %w", kind, op.BlockID, anchor, knowledge.ErrNotFound)
+		}
+		return fmt.Errorf("apply %s %s: anchor %s: %w", kind, op.BlockID, anchor, translate(err))
+	}
+	if parent.String != op.Parent {
+		return fmt.Errorf("apply %s %s: anchor %s is not a child of %q: %w",
+			kind, op.BlockID, anchor, op.Parent, knowledge.ErrInvalidOps)
+	}
+	return nil
+}
+
 // applyAdd inserts a new block appended under its parent, tagged with the
 // batch's authorship and source as provenance, and writes its creation
 // revision (seq 1).
@@ -208,12 +235,15 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
 		return err
 	}
+	if err := requireAnchor(ctx, tx, op.Kind, op); err != nil {
+		return err
+	}
 	// A topic root has NULL parent_id; `IS ?` matches both NULL and a value.
 	var parent any
 	if op.Parent != "" {
 		parent = string(op.Parent)
 	}
-	pos, err := nextPosition(ctx, tx, parent)
+	pos, err := resolvePosition(ctx, tx, parent, op)
 	if err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
 	}
@@ -298,6 +328,9 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
 		return err
 	}
+	if err := requireAnchor(ctx, tx, op.Kind, op); err != nil {
+		return err
+	}
 	if err := rejectMoveCycle(ctx, tx, op); err != nil {
 		return err
 	}
@@ -310,7 +343,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if op.Parent != "" {
 		parent = string(op.Parent)
 	}
-	pos, err := nextPosition(ctx, tx, parent)
+	pos, err := resolvePosition(ctx, tx, parent, op)
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}

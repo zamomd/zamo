@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/cominddev/comind/internal/knowledge"
 )
 
 // positionStride spaces sibling positions so a block can be inserted between
@@ -25,4 +27,95 @@ func nextPosition(ctx context.Context, tx *sql.Tx, parent any) (int, error) {
 		return 0, fmt.Errorf("next position: %w", translate(err))
 	}
 	return pos, nil
+}
+
+// resolvePosition picks the position for an add or a move from the op's
+// anchor: after a sibling, before a sibling, or appended when neither is set.
+func resolvePosition(ctx context.Context, tx *sql.Tx, parent any, op knowledge.Op) (int, error) {
+	switch {
+	case op.After != "":
+		return positionAfter(ctx, tx, parent, op.After)
+	default:
+		return nextPosition(ctx, tx, parent)
+	}
+}
+
+// positionAfter returns the position for a block inserted directly after the
+// sibling anchor: the midpoint between the anchor and the next sibling, or a
+// stride past the anchor when it is last. When the midpoint does not exist
+// (the gap is smaller than 2) the parent's children are respaced first — see
+// renumber.
+func positionAfter(ctx context.Context, tx *sql.Tx, parent any, after string) (int, error) {
+	anchor, next, err := neighbourhood(ctx, tx, parent, after)
+	if err != nil {
+		return 0, err
+	}
+	if next == nil {
+		return anchor + positionStride, nil
+	}
+	if *next-anchor < 2 {
+		if err := renumber(ctx, tx, parent); err != nil {
+			return 0, err
+		}
+		if anchor, next, err = neighbourhood(ctx, tx, parent, after); err != nil {
+			return 0, err
+		}
+		if next == nil {
+			return anchor + positionStride, nil
+		}
+	}
+	return anchor + (*next-anchor)/2, nil
+}
+
+// neighbourhood returns the anchor's position and the position of the sibling
+// right after it, nil when the anchor is last.
+func neighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorID string) (int, *int, error) {
+	var anchor int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT position FROM blocks WHERE id = ?`, anchorID).Scan(&anchor); err != nil {
+		return 0, nil, fmt.Errorf("anchor %s position: %w", anchorID, translate(err))
+	}
+	var next sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MIN(position) FROM blocks WHERE parent_id IS ? AND position > ?`,
+		parent, anchor).Scan(&next); err != nil {
+		return 0, nil, fmt.Errorf("sibling after %s: %w", anchorID, translate(err))
+	}
+	if !next.Valid {
+		return anchor, nil, nil
+	}
+	return anchor, new(int(next.Int64)), nil
+}
+
+// renumber respaces every child of parent at positionStride intervals,
+// keeping their order, so an exhausted gap gets room again. It writes
+// positions without writing revisions: a respaced block's head revision then
+// remembers its old position, so rolling that block back lands it in a
+// neighbouring slot. Accepted deliberately — it needs 16 consecutive inserts
+// into one gap to happen at all, and the result is a reordering, not a loss.
+func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM blocks WHERE parent_id IS ? ORDER BY position`, parent)
+	if err != nil {
+		return fmt.Errorf("renumber children: %w", translate(err))
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("renumber children: %w", translate(err))
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("renumber children: %w", translate(err))
+	}
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE blocks SET position = ? WHERE id = ?`, i*positionStride, id); err != nil {
+			return fmt.Errorf("renumber %s: %w", id, translate(err))
+		}
+	}
+	return nil
 }
