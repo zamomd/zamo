@@ -320,3 +320,13 @@ func TestOpValidateRejectsBothAnchors(t *testing.T) {
 		t.Errorf("validate error = %v, want ErrInvalidOps", err)
 	}
 }
+
+func TestOpValidateRejectsAnAnchorOnAKindThatIgnoresIt(t *testing.T) {
+	// Only add and move place a block among siblings; an anchor on any other
+	// kind would be silently dropped rather than honoured.
+	op := Op{Kind: OpEdit, BlockID: "b1", After: "x"}
+	err := op.validate()
+	if !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("validate error = %v, want ErrInvalidOps", err)
+	}
+}
