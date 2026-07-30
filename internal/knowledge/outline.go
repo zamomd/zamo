@@ -86,6 +86,11 @@ func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (ID, 
 //
 // b must not be a topic root: roots live under no parent, and no outline
 // operation is defined on them.
+//
+// ponytail: reads b's parent's whole subtree to find one index — for Tab or
+// Shift+Tab on a child of a large topic, that is the entire topic per
+// keystroke. Fine for a personal base; give this its own narrow query
+// (siblings only, no descendants) if indenting ever gets slow.
 func (s *Service) siblingsOf(ctx context.Context, b Block) ([]Block, int, error) {
 	subtree, err := s.repo.GetSubtree(ctx, b.ParentID)
 	if err != nil {
@@ -180,6 +185,12 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
 	if err != nil {
 		return err
 	}
+	if src.IsTopic() {
+		return fmt.Errorf("merge %s: a topic root has no siblings: %w", source, ErrInvalidOps)
+	}
+	if dst.IsTopic() {
+		return fmt.Errorf("merge into %s: a topic root cannot absorb text: %w", target, ErrInvalidOps)
+	}
 	subtree, err := s.repo.GetSubtree(ctx, source)
 	if err != nil {
 		return err
@@ -196,9 +207,11 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
 	return err
 }
 
-// DeleteBlock removes a block and, through storage's cascade, everything under
-// it. Meant for a childless empty block the owner deletes; the cascade is what
-// makes it safe to reuse for anything else later.
+// DeleteBlock removes the block and everything beneath it, through storage's
+// cascade — including a whole topic when id names a topic root. There is no
+// guard here: unlike indent or split, delete is not meaningless on a root,
+// and collapsing a topic is a legitimate act. The caller decides when that is
+// appropriate.
 func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
 	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
 	return err
@@ -207,8 +220,19 @@ func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
 // MoveBlock reparents a block, landing it after the named sibling or at the
 // end when after is empty. Indent and outdent are the keyboard's two fixed
 // cases; this is the general form, for a future drag.
+//
+// A topic root is refused as the block being moved: reparenting a topic
+// under a block would un-root it, which is really merging two topics — a
+// different act than this method's job.
 func (s *Service) MoveBlock(ctx context.Context, id, parent, after ID) error {
-	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{
+	b, err := s.blockByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if b.IsTopic() {
+		return fmt.Errorf("move %s: a topic root cannot be moved: %w", id, ErrInvalidOps)
+	}
+	_, err = s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: id, Parent: string(parent), After: string(after)},
 	})
 	return err

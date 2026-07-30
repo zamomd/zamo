@@ -137,15 +137,17 @@ func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
 	}
 	repo := &fakeRepo{
 		blocks: blocks,
-		subtrees: map[ID][]Block{
-			"root": {blocks["root"], blocks["mid"], blocks["leaf"], blocks["after"]},
-			"mid":  {blocks["mid"], blocks["leaf"]},
-		},
+		// No subtrees fixture: OutdentBlock reads leaf and its parent by id
+		// (blockByID, twice) and never calls GetSubtree, so siblingsOf plays
+		// no part here.
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
 
 	if err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
 		t.Fatalf("OutdentBlock: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want a single move (following siblings untouched)", repo.applyOps)
 	}
 	move := repo.applyOps[0]
 	// Anchored on the old parent, so it lands directly after it and the
@@ -287,6 +289,35 @@ func TestMergeBlocksRefusesMergingIntoItself(t *testing.T) {
 	}
 }
 
+func TestMergeBlocksRefusesATopicRootAsSource(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// A topic root is not a sibling of anything; it cannot be absorbed into
+	// another block. Left unguarded, this would reparent the topic's
+	// children onto target and cascade the topic root itself away — the
+	// whole topic disappearing, born reviewed and unrecoverable through
+	// Reject.
+	if err := svc.MergeBlocks(t.Context(), "first", "root"); !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
+	}
+}
+
+func TestMergeBlocksRefusesATopicRootAsTarget(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// Merging into a topic root would append body text onto the topic's
+	// title.
+	if err := svc.MergeBlocks(t.Context(), "root", "first"); !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
+	}
+}
+
 func TestDeleteBlockEmitsOneDelete(t *testing.T) {
 	svc, repo := outlineService(t)
 
@@ -307,5 +338,18 @@ func TestMoveBlockPassesTheAnchorThrough(t *testing.T) {
 	move := repo.applyOps[0]
 	if move.Kind != OpMove || move.BlockID != "second" || move.Parent != "root" || move.After != "first" {
 		t.Errorf("move op = %+v, want move of second under root after first", move)
+	}
+}
+
+func TestMoveBlockRefusesATopicRoot(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	// Reparenting a topic root under a block would un-root the topic —
+	// that is merging two topics, a different act than a plain move.
+	if err := svc.MoveBlock(t.Context(), "root", "first", ""); !errors.Is(err, ErrInvalidOps) {
+		t.Errorf("error = %v, want ErrInvalidOps", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
 	}
 }
