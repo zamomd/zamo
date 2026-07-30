@@ -907,6 +907,18 @@ class BaseStore {
 		}
 	}
 
+	// The five methods below rebuild the whole forest, and the row holding an open
+	// editor goes with it — the review controls sit outside the editing branch in
+	// TreeNode, so ✓, ✗ and the page-wide pair are clickable on the row being
+	// edited as well as on any other. Each therefore commits first and honours the
+	// result, like every other caller that can unmount the editor (see
+	// commitEdit). Rejecting the edited row itself throws the write away again;
+	// that is one wasted call, and it buys the same rule for all five.
+	//
+	// busy goes up before the commit, as in setScope and askAI: the commit's own
+	// write is already in flight, so the controls grey out for its whole duration
+	// rather than staying clickable until the review call starts.
+
 	// accept marks a block's pending revisions reviewed: a live block keeps its
 	// new content, a ghost's tombstone becomes final and it drops out of the
 	// tree for good.
@@ -915,6 +927,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.AcceptBlock(id);
@@ -936,6 +952,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.RejectBlock(id);
@@ -955,6 +975,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.AcceptPage(id);
@@ -975,6 +999,10 @@ class BaseStore {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		try {
 			await App.RejectPage(id);
@@ -1186,12 +1214,18 @@ class BaseStore {
 	// stamped with historySeq too, like toggleHistory: history-toggle buttons
 	// are disabled while busy so a panel switch cannot race this in practice,
 	// but the guard keeps the two call sites' invariant in one place rather
-	// than relying on that UI lock.
+	// than relying on that UI lock. It re-reads the whole base afterwards, so it
+	// commits an open edit first for the same reason the four review methods
+	// above do.
 	async deleteRevision(blockID: string, revID: string): Promise<void> {
 		if (this.busy) {
 			return;
 		}
 		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
 		this.error = "";
 		const mine = ++this.historySeq;
 		try {

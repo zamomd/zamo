@@ -49,6 +49,12 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 		IndentBlock: vi.fn(async () => {}),
 		OutdentBlock: vi.fn(async () => {}),
 		MergeBlocks: vi.fn(async () => {}),
+		AcceptBlock: vi.fn(async () => {}),
+		RejectBlock: vi.fn(async () => {}),
+		AcceptPage: vi.fn(async () => {}),
+		RejectPage: vi.fn(async () => {}),
+		DeleteRevision: vi.fn(async () => {}),
+		BlockHistory: vi.fn(async () => []),
 	},
 }));
 vi.mock("./changes.svelte", () => ({
@@ -639,6 +645,44 @@ describe("an open edit no longer locks the interface", () => {
 		await base.startLink("ctx");
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
 	});
+
+	// The review controls are rendered outside the editing branch, so ✓, ✗ and
+	// the page-wide pair are clickable on the very row being edited — and all
+	// five rebuild the whole forest, which drops the row the editor lives in.
+	// Without the commit the typing is stranded and the next commitEdit finds no
+	// such node and clears it away silently.
+	it("accepting a change commits first", async () => {
+		await base.accept("done");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(App.AcceptBlock).toHaveBeenCalledWith("done");
+	});
+
+	// Rejecting the row being edited throws the owner's write away again, which
+	// is a wasted call rather than a wrong one — the hazard this guards is
+	// rejecting one row while editing another, and that is the same act.
+	it("rejecting a change commits first", async () => {
+		await base.reject("done");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(App.RejectBlock).toHaveBeenCalledWith("done");
+	});
+
+	it("accepting a page commits first", async () => {
+		await base.acceptPage("go");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(App.AcceptPage).toHaveBeenCalledWith("go");
+	});
+
+	it("rejecting a page commits first", async () => {
+		await base.rejectPage("go");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(App.RejectPage).toHaveBeenCalledWith("go");
+	});
+
+	it("deleting a revision commits first", async () => {
+		await base.deleteRevision("done", "rev");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(App.DeleteRevision).toHaveBeenCalledWith("done", "rev");
+	});
 });
 
 // A failed write keeps the session open (spec §8), and that is pointless if
@@ -710,6 +754,26 @@ describe("a failed commit aborts the gesture", () => {
 		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
 		await base.startLink("ctx");
 		expect(base.linkingID).toBe(null);
+		expect(base.busy).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the change unreviewed when the commit that accepting it triggers fails", async () => {
+		base.busy = false;
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.accept("done");
+		expect(App.AcceptBlock).not.toHaveBeenCalled();
+		expect(base.busy).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+	});
+
+	it("leaves the change unreviewed when the commit that rejecting it triggers fails", async () => {
+		base.busy = false;
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.reject("done");
+		expect(App.RejectBlock).not.toHaveBeenCalled();
 		expect(base.busy).toBe(false);
 		expect(base.editingID).toBe("ctx");
 		expect(base.editText).toBe("after");
