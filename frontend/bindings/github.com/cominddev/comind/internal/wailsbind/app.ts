@@ -73,6 +73,14 @@ export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: 
 }
 
 /**
+ * DeleteBlock removes a block and everything under it. Meant for a childless
+ * empty block the owner deletes.
+ */
+export function DeleteBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(3350413163, id);
+}
+
+/**
  * DeleteRevision passes the call to knowledge.Service.
  */
 export function DeleteRevision(blockID: knowledge$0.ID, revID: knowledge$0.ID): $CancellablePromise<void> {
@@ -126,6 +134,44 @@ export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
+ * IndentBlock is Tab: the block becomes the last child of the sibling above.
+ */
+export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(2582260824, id);
+}
+
+/**
+ * InsertBlockBefore is Enter at the very start of a block: an empty sibling
+ * appears above and the block keeps its id, history and links.
+ */
+export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.ID> {
+    return $Call.ByID(1337418982, id, content);
+}
+
+/**
+ * MergeBlocks is Backspace at the start of a block: target absorbs source's
+ * text and children, source is removed.
+ */
+export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(1686297213, target, source);
+}
+
+/**
+ * MoveBlock reparents a block after the named sibling, or last when after is
+ * empty.
+ */
+export function MoveBlock(id: knowledge$0.ID, parent: knowledge$0.ID, after: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(1003820089, id, parent, after);
+}
+
+/**
+ * OutdentBlock is Shift+Tab: the block becomes its parent's next sibling.
+ */
+export function OutdentBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(3796162431, id);
+}
+
+/**
  * RejectBlock passes the call to knowledge.Service.
  */
 export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
@@ -176,6 +222,14 @@ export function Search(query: string): $CancellablePromise<knowledge$0.Block[] |
  */
 export function Settings(): $CancellablePromise<settings$0.View> {
     return $Call.ByID(4032669524);
+}
+
+/**
+ * SplitBlock is Enter with a caret inside a block: the block keeps head, a new
+ * sibling below takes tail. Returns the new block's id for the caret.
+ */
+export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $CancellablePromise<knowledge$0.ID> {
+    return $Call.ByID(4068486128, id, head, tail);
 }
 
 /**

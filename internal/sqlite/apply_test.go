@@ -184,18 +184,20 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 	}
 
 	// Legitimate move: "other" becomes root's second child. Content survives
-	// unchanged; position is appended after root's existing child (mid, pos 0).
+	// unchanged; position is one stride past root's existing child (mid, pos 0).
 	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "other", Parent: "root"},
 	}); err != nil {
 		t.Fatalf("legit move: %v", err)
 	}
-	if parent, pos, content, ok := blockRow(t, repo, "other"); !ok || parent != "root" || pos != 1 || content != "Other" {
-		t.Errorf("other after move = parent=%q pos=%d content=%q ok=%v, want root/1/Other/true", parent, pos, content, ok)
+	parent, pos, content, ok := blockRow(t, repo, "other")
+	if !ok || parent != "root" || pos != positionStride || content != "Other" {
+		t.Errorf("other after move = parent=%q pos=%d content=%q ok=%v, want root/%d/Other/true",
+			parent, pos, content, ok, positionStride)
 	}
 	revs := revisionsOf(t, repo, "other")
-	if len(revs) != 2 || revs[1].content != "Other" || revs[1].parent != "root" || revs[1].position != 1 {
-		t.Errorf("other revisions = %+v, want a second entry content=Other parent=root position=1", revs)
+	if len(revs) != 2 || revs[1].content != "Other" || revs[1].parent != "root" || revs[1].position != positionStride {
+		t.Errorf("other revisions = %+v, want a second entry content=Other parent=root position=%d", revs, positionStride)
 	}
 
 	// Cycle: moving root under its own grandchild must fail and write nothing.
