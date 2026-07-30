@@ -1,0 +1,51 @@
+<script lang="ts">
+	import { base } from "../stores/base.svelte";
+	import { crumbTrail } from "./tree";
+
+	// The way back out of a zoom-in. Absent when nothing is focused: an
+	// unfocused view is already at the top of its topic, and an empty bar there
+	// would be furniture with nothing to say.
+	//
+	// A trail of null means the focused id is not in the forest — a reload can
+	// drop it — so the bar renders nothing rather than guessing.
+	const trail = $derived(base.focusID === null ? null : crumbTrail(base.forest, base.focusID));
+</script>
+
+{#if trail !== null && trail.length > 0}
+	<nav aria-label="path to the focused block">
+		{#each trail as crumb, i (crumb.id)}
+			{#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
+			<button type="button" onclick={() => (i === 0 ? base.clearFocus() : base.focus(crumb.id))}>
+				{crumb.title}
+			</button>
+		{/each}
+		<span class="sep" aria-hidden="true">›</span>
+	</nav>
+{/if}
+
+<style>
+	nav {
+		flex: none;
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 0.2rem;
+		font-size: var(--size-small);
+		color: var(--text-faint);
+		line-height: var(--row-height);
+	}
+	button {
+		border: none;
+		background: none;
+		padding: 0;
+		font-size: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+	button:hover {
+		color: var(--text);
+	}
+	.sep {
+		opacity: 0.6;
+	}
+</style>
