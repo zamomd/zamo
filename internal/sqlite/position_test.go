@@ -158,31 +158,84 @@ func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}); err != nil {
 		t.Fatal(err)
 	}
-	seedChildren(t, repo, "root", "a", "b")
+	seedChildren(t, repo, "root", "a", "b", "c") // 0, 65536, 131072
 	// Force the pathological state a long run of midpoint inserts would
-	// reach: adjacent positions with no integer between them.
-	if _, err := repo.db.ExecContext(t.Context(),
-		`UPDATE blocks SET position = 1 WHERE id = 'b-id'`); err != nil {
-		t.Fatal(err)
+	// reach: adjacent positions with no integer between them. The anchor
+	// ("b") is not first, so its position changes across the renumber (1 ->
+	// 65536): anchoring on the first child instead would map to position 0
+	// both before and after respacing, and a stale-anchor bug would slip
+	// through unnoticed.
+	for id, pos := range map[string]int{"a-id": 0, "b-id": 1, "c-id": 2} {
+		if _, err := repo.db.ExecContext(t.Context(),
+			`UPDATE blocks SET position = ? WHERE id = ?`, pos, id); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
-			After: "a-id", Content: "squeezed",
+			After: "b-id", Content: "squeezed",
 		}}); err != nil {
 		t.Fatalf("insert into exhausted gap: %v", err)
 	}
 
-	// The children were respaced first, so the midpoint exists again and the
-	// order is a, mid, b.
+	// The children were respaced first (a=0, b=65536, c=131072), so the
+	// midpoint after b exists again and the order is a, b, mid, c.
 	want := []struct {
 		id  string
 		pos int
 	}{
 		{"a-id", 0},
-		{"mid", positionStride / 2},
 		{"b-id", positionStride},
+		{"mid", positionStride + positionStride/2},
+		{"c-id", 2 * positionStride},
+	}
+	for _, w := range want {
+		if _, pos, _, ok := blockRow(t, repo, w.id); !ok || pos != w.pos {
+			t.Errorf("position of %s = %d (present %v), want %d", w.id, pos, ok, w.pos)
+		}
+	}
+}
+
+func TestInsertBeforeIntoExhaustedGapRespaces(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}); err != nil {
+		t.Fatal(err)
+	}
+	seedChildren(t, repo, "root", "a", "b", "c") // 0, 65536, 131072
+	// Force the pathological state a long run of midpoint inserts would
+	// reach: adjacent positions with no integer between them. The anchor
+	// ("c") is not first, so its position changes across the renumber (2 ->
+	// 131072): this is what lets the test tell positionBefore's retry path
+	// apart from a bug that reuses the anchor/prev it read before triggering
+	// the renumber instead of re-reading them.
+	for id, pos := range map[string]int{"a-id": 0, "b-id": 1, "c-id": 2} {
+		if _, err := repo.db.ExecContext(t.Context(),
+			`UPDATE blocks SET position = ? WHERE id = ?`, pos, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+		[]knowledge.Op{{
+			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
+			Before: "c-id", Content: "squeezed",
+		}}); err != nil {
+		t.Fatalf("insert before into exhausted gap: %v", err)
+	}
+
+	// The children were respaced first (a=0, b=65536, c=131072), so the
+	// midpoint before c exists again and the order is a, b, mid, c.
+	want := []struct {
+		id  string
+		pos int
+	}{
+		{"a-id", 0},
+		{"b-id", positionStride},
+		{"mid", positionStride + positionStride/2},
+		{"c-id", 2 * positionStride},
 	}
 	for _, w := range want {
 		if _, pos, _, ok := blockRow(t, repo, w.id); !ok || pos != w.pos {

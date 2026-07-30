@@ -91,8 +91,10 @@ func neighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorID string)
 
 // positionBefore returns the position for a block inserted directly before the
 // sibling anchor: the midpoint between the previous sibling and the anchor, or
-// a stride ahead of the anchor when it is first. Positions may go negative —
-// they are compared, never counted (see read.go's preorder).
+// a stride ahead of the anchor when it is first. When the midpoint does not
+// exist (the gap is smaller than 2) the parent's children are respaced first
+// — see renumber. Positions may go negative — they are compared, never
+// counted (see read.go's preorder).
 func positionBefore(ctx context.Context, tx *sql.Tx, parent any, before string) (int, error) {
 	anchor, prev, err := precedingNeighbourhood(ctx, tx, parent, before)
 	if err != nil {
