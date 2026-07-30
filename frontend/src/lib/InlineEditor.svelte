@@ -83,6 +83,31 @@
 		fit();
 	});
 
+	// visualLines counts the lines the textarea actually renders, which is not
+	// lineCount(value): a paragraph with no newline in it occupies as many as the
+	// width demands. The element never scrolls — overflow is hidden and fit()
+	// syncs the height from scrollHeight — so scrollHeight is the whole content's
+	// height, and the row's line-height divides it.
+	//
+	// null means the line-height is not a length. The computed value is "normal"
+	// when no rule reaches the element, and .editor sets it from --row-height, so
+	// that can only happen with the stylesheet missing altogether — where no
+	// measurement here is worth trusting either. The caller answers null with the
+	// logical test, which is the behaviour this path exists to replace.
+	function visualLines(area: HTMLTextAreaElement): number | null {
+		const style = getComputedStyle(area);
+		const height = Number.parseFloat(style.lineHeight);
+		if (!Number.isFinite(height) || height <= 0) {
+			return null;
+		}
+		// scrollHeight is the content box plus the padding, and .editor's vertical
+		// padding is 0 — but a count that is too high only ever costs a second
+		// press, while one that is too low would leave the block from the middle of
+		// a paragraph, so the padding comes off rather than being assumed away.
+		const inner = area.scrollHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom);
+		return Math.max(1, Math.round(inner / height));
+	}
+
 	function onkeydown(e: KeyboardEvent): void {
 		// An IME composition owns these keys until it commits; intercepting Enter
 		// mid-composition would split a block in the middle of a candidate.
@@ -134,21 +159,60 @@
 				void base.pullNextInto(id, caret);
 				return;
 			case "ArrowUp":
-				// Only leave the block from its first line; inside a wrapped block the
-				// arrow is the textarea's own.
-				if (lineIndexOf(value, caret) !== 0) {
+			case "ArrowDown": {
+				// The arrow leaves the block only from its edge line — the first going
+				// up, the last going down. Anywhere else it is the textarea's own, and
+				// which line the caret is on is a question about the rendered box, not
+				// about the text: a paragraph with no newline in it is one logical line
+				// and any number of visual ones.
+				const direction = e.key === "ArrowUp" ? "up" : "down";
+				const column = caretColumn(value, caret);
+				const visual = visualLines(el);
+				if (visual === null || visual === lineCount(value)) {
+					// Nothing wraps, so a logical line is a visual line and the test is
+					// exact: one press leaves from the edge, none leaves from anywhere
+					// else. This is the common case and answers in the keydown itself.
+					if (lineIndexOf(value, caret) !== (direction === "up" ? 0 : lineCount(value) - 1)) {
+						return;
+					}
+					e.preventDefault();
+					void base.moveCaret(id, direction, column);
 					return;
 				}
-				e.preventDefault();
-				void base.moveCaret(id, "up", caretColumn(value, caret));
+				// It wraps, and nothing in the text says where the visual lines fall.
+				// So do not preventDefault: let the browser move the caret and look
+				// afterwards. A caret that did not move had nowhere to go inside the
+				// block, which is exactly what "on the edge visual line" means.
+				//
+				// The consequence, and it is how an outliner behaves: from a non-zero
+				// column on the top visual line, leaving takes a second press, because
+				// WebKit's first ArrowUp there moves the caret to offset 0 rather than
+				// refusing to move at all.
+				requestAnimationFrame(() => {
+					// Everything that can have happened in between. The element may be
+					// gone (a re-read or a collapse unmounted the row) or no longer the
+					// focused one (the reader clicked away, and moving the caret would
+					// steal the focus back from them); the session may have been handed
+					// to another block; the reader may have typed, or a gesture may have
+					// replaced the text under them. moveCaret's own busy check covers
+					// the last of them, a write that started meanwhile.
+					if (el?.isConnected !== true || document.activeElement !== el) {
+						return;
+					}
+					if (base.editingID !== id || base.editText !== value) {
+						return;
+					}
+					// The caret has to be exactly where it was and still collapsed: a
+					// moved one means the browser navigated inside the block, and a
+					// selection that appeared means Shift is held, which extends the
+					// selection rather than travelling.
+					if (el.selectionStart !== caret || el.selectionEnd !== caret) {
+						return;
+					}
+					void base.moveCaret(id, direction, column);
+				});
 				return;
-			case "ArrowDown":
-				if (lineIndexOf(value, caret) !== lineCount(value) - 1) {
-					return;
-				}
-				e.preventDefault();
-				void base.moveCaret(id, "down", caretColumn(value, caret));
-				return;
+			}
 			case "Escape":
 				e.preventDefault();
 				void base.commitEdit();
