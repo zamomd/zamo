@@ -279,11 +279,17 @@ class BaseStore {
 	// work for a keystroke. reload() stays for the AI flows, mode entry and
 	// error recovery, where all of that really can change.
 	async reloadTopic(topicID: string): Promise<void> {
+		if (this.forest.findIndex((t) => t.block.ID === topicID) < 0) {
+			return;
+		}
+		const blocks = (await App.GetSubtree(topicID)) ?? [];
+		// The forest can be replaced while the read is in flight — an AI flow's
+		// full reload, or another gesture's narrow one — so the slot is located
+		// again here rather than before the await.
 		const i = this.forest.findIndex((t) => t.block.ID === topicID);
 		if (i < 0) {
 			return;
 		}
-		const blocks = (await App.GetSubtree(topicID)) ?? [];
 		const extra = this.ghostsFor(topicID);
 		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
 		if (tree === null) {
