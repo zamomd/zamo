@@ -608,6 +608,17 @@ class BaseStore {
 		return id === this.viewRoot?.block.ID;
 	}
 
+	// A ghost is the second row that is visible but is not a legal target, and
+	// the reason the walks in lib/tree.ts take an exclusion set at all. It is a
+	// tombstone the reader can still see: storage has dropped the block, and it
+	// is rebuilt into the forest only so a pending deletion can be reviewed in
+	// place (see ghosts and ghostsFor). Every gesture that names a row by id —
+	// merge into it, indent under it, put the caret in it — would therefore name
+	// a block storage does not have, so this.ghosts goes to every walk below.
+	// The view's root is refused by name in each gesture because there is exactly
+	// one of it; ghosts are refused inside the walk because there can be any
+	// number of them, anywhere in the order.
+
 	// splitAtCaret is Enter with the caret inside a block: this block keeps the
 	// head, a new sibling directly below takes the tail, and the caret follows the
 	// tail. The two halves are siblings even when the block has children — a split
@@ -669,7 +680,7 @@ class BaseStore {
 	// "does this gesture apply here" itself, so an error from the bridge always
 	// means something actually went wrong.
 	async indent(id: string): Promise<void> {
-		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id) === null) {
+		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id, this.ghosts) === null) {
 			return;
 		}
 		await this.structural(id, () => App.IndentBlock(id));
@@ -695,7 +706,7 @@ class BaseStore {
 	// A collapsed target is expanded first, or the text would disappear into a
 	// block whose content is not on screen.
 	async mergeIntoPrevious(id: string): Promise<void> {
-		const target = prevVisible(this.visibleNodes, id, this.collapsed);
+		const target = prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
 		// The view's root is the page's title row, and it *is* in the visible
 		// order — so it has to be excluded by name as a target, on top of the
 		// isViewRoot check on id itself: without this the first block of a page
@@ -714,7 +725,7 @@ class BaseStore {
 	// below is absorbed into this one, its children move here, and the caret stays
 	// where it is.
 	async pullNextInto(id: string): Promise<void> {
-		const source = nextVisible(this.visibleNodes, id, this.collapsed);
+		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
 		if (this.busy || this.isViewRoot(id) || source === null) {
 			return;
 		}
@@ -727,8 +738,8 @@ class BaseStore {
 	async moveCaret(id: string, direction: "up" | "down", column: number): Promise<void> {
 		const target =
 			direction === "up"
-				? prevVisible(this.visibleNodes, id, this.collapsed)
-				: nextVisible(this.visibleNodes, id, this.collapsed);
+				? prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
+				: nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
 		if (this.busy || target === null) {
 			return;
 		}

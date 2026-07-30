@@ -143,6 +143,11 @@ describe("crumbTrail", () => {
 	});
 });
 
+// none is the empty exclusion set: a forest with no ghosts in it. Named rather
+// than written inline so the ghost cases below stand out as the ones that pass
+// something.
+const none = new Set<string>();
+
 describe("visibleOrder", () => {
 	// go > ctx > done, and sqlite > wal: two topics, one of them two deep.
 	const forest = [
@@ -151,19 +156,19 @@ describe("visibleOrder", () => {
 	];
 
 	it("walks the whole forest in document order when nothing is collapsed", () => {
-		expect(visibleOrder(forest, new Set())).toEqual(["go", "ctx", "done", "sqlite", "wal"]);
+		expect(visibleOrder(forest, new Set(), none)).toEqual(["go", "ctx", "done", "sqlite", "wal"]);
 	});
 
 	it("keeps a collapsed node itself but drops everything under it", () => {
-		expect(visibleOrder(forest, new Set(["ctx"]))).toEqual(["go", "ctx", "sqlite", "wal"]);
+		expect(visibleOrder(forest, new Set(["ctx"]), none)).toEqual(["go", "ctx", "sqlite", "wal"]);
 	});
 
 	it("drops a whole branch when its top is collapsed", () => {
-		expect(visibleOrder(forest, new Set(["go"]))).toEqual(["go", "sqlite", "wal"]);
+		expect(visibleOrder(forest, new Set(["go"]), none)).toEqual(["go", "sqlite", "wal"]);
 	});
 
 	it("is empty for an empty forest", () => {
-		expect(visibleOrder([], new Set())).toEqual([]);
+		expect(visibleOrder([], new Set(), none)).toEqual([]);
 	});
 });
 
@@ -171,35 +176,35 @@ describe("prevVisible and nextVisible", () => {
 	const forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
 
 	it("steps into a child, because a child is what is visible next", () => {
-		expect(nextVisible(forest, "go", new Set())).toBe("ctx");
+		expect(nextVisible(forest, "go", new Set(), none)).toBe("ctx");
 	});
 
 	it("steps out of a branch to the parent's next child", () => {
-		expect(nextVisible(forest, "done", new Set())).toBe("gen");
+		expect(nextVisible(forest, "done", new Set(), none)).toBe("gen");
 	});
 
 	it("returns null at the end of the visible order", () => {
-		expect(nextVisible(forest, "gen", new Set())).toBe(null);
+		expect(nextVisible(forest, "gen", new Set(), none)).toBe(null);
 	});
 
 	it("returns null at the start of the visible order", () => {
-		expect(prevVisible(forest, "go", new Set())).toBe(null);
+		expect(prevVisible(forest, "go", new Set(), none)).toBe(null);
 	});
 
 	it("walks back into the deepest visible descendant, not to the sibling's own row", () => {
 		// gen's predecessor is done, ctx's last child — not ctx itself.
-		expect(prevVisible(forest, "gen", new Set())).toBe("done");
+		expect(prevVisible(forest, "gen", new Set(), none)).toBe("done");
 	});
 
 	// This is what makes Backspace land where the eye says it should: a collapsed
 	// block hides its subtree, so the row above is the collapsed block itself.
 	it("skips a collapsed block's hidden children", () => {
-		expect(prevVisible(forest, "gen", new Set(["ctx"]))).toBe("ctx");
+		expect(prevVisible(forest, "gen", new Set(["ctx"]), none)).toBe("ctx");
 	});
 
 	it("returns null for an id the forest does not have", () => {
-		expect(prevVisible(forest, "nope", new Set())).toBe(null);
-		expect(nextVisible(forest, "nope", new Set())).toBe(null);
+		expect(prevVisible(forest, "nope", new Set(), none)).toBe(null);
+		expect(nextVisible(forest, "nope", new Set(), none)).toBe(null);
 	});
 });
 
@@ -208,18 +213,67 @@ describe("prevSibling", () => {
 
 	it("returns the sibling directly above, ignoring how deep it is", () => {
 		// ctx has a child, but Tab indents gen under ctx, not under done.
-		expect(prevSibling(forest, "gen")).toBe("ctx");
+		expect(prevSibling(forest, "gen", none)).toBe("ctx");
 	});
 
 	it("returns null for a first child, which has nothing to be indented under", () => {
-		expect(prevSibling(forest, "ctx")).toBe(null);
+		expect(prevSibling(forest, "ctx", none)).toBe(null);
 	});
 
 	it("returns null for a topic root", () => {
-		expect(prevSibling(forest, "go")).toBe(null);
+		expect(prevSibling(forest, "go", none)).toBe(null);
 	});
 
 	it("returns null for an id the forest does not have", () => {
-		expect(prevSibling(forest, "nope")).toBe(null);
+		expect(prevSibling(forest, "nope", none)).toBe(null);
+	});
+});
+
+// A ghost is a pending deletion: the reader sees the struck-through row, but
+// storage has no such block, so no gesture may reach it. The walks take the
+// exclusion set for exactly this — see the skip parameter's own comment.
+describe("the exclusion set", () => {
+	// gone is a ghost with a live child: the AI proposed deleting a parent, and
+	// kid is still a real block the reader can see and edit.
+	const forest = [node("go", "", [node("ctx", "go"), node("gone", "go", [node("kid", "gone")]), node("gen", "go")])];
+	const ghosts = new Set(["gone"]);
+
+	it("drops the excluded row but keeps its children, which are on screen and real", () => {
+		expect(visibleOrder(forest, new Set(), ghosts)).toEqual(["go", "ctx", "kid", "gen"]);
+	});
+
+	it("still hides an excluded row's children when it is collapsed", () => {
+		expect(visibleOrder(forest, new Set(["gone"]), ghosts)).toEqual(["go", "ctx", "gen"]);
+	});
+
+	it("walks past an excluded row to the one above it on screen", () => {
+		// kid is the row the reader sees directly above gen; gone's own row is
+		// between them but is not a legal target.
+		expect(prevVisible(forest, "gen", new Set(), ghosts)).toBe("kid");
+	});
+
+	it("walks past an excluded row going down", () => {
+		expect(nextVisible(forest, "ctx", new Set(), ghosts)).toBe("kid");
+	});
+
+	it("never returns an excluded row even when it is the only one between", () => {
+		const flat = [node("go", "", [node("gone", "go"), node("gen", "go")])];
+		expect(prevVisible(flat, "gen", new Set(), new Set(["gone"]))).toBe("go");
+		expect(nextVisible(flat, "go", new Set(), new Set(["gone"]))).toBe("gen");
+	});
+
+	it("skips an excluded sibling when looking for the one to indent under", () => {
+		expect(prevSibling(forest, "gen", ghosts)).toBe("ctx");
+	});
+
+	it("has no sibling to indent under when every sibling above is excluded", () => {
+		const flat = [node("go", "", [node("gone", "go"), node("gen", "go")])];
+		expect(prevSibling(flat, "gen", new Set(["gone"]))).toBe(null);
+	});
+
+	it("still finds an excluded row's children, which have siblings of their own", () => {
+		const deep = [node("go", "", [node("gone", "go", [node("a", "gone"), node("b", "gone")])])];
+		expect(prevSibling(deep, "b", new Set(["gone"]))).toBe("a");
+		expect(prevSibling(deep, "a", new Set(["gone"]))).toBe(null);
 	});
 });

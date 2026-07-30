@@ -139,15 +139,30 @@ export function topicRows(nodes: TreeNodeData[], selected: string | null): Topic
 	}));
 }
 
+// The four walks below take a skip set: rows that render but that no gesture
+// may reach. Today its one member is the ghost — a block with a pending
+// deletion, gone from storage and reconstructed into the forest only so the
+// reader can review the removal (see base.svelte.ts's ghosts). Asking storage
+// to merge into one, or to indent under one, names a row storage does not have,
+// so the id must never leave these walks. A skipped row's *children* stay in the
+// order: they are live blocks the reader can see, and dropping them would make
+// "the row above" mean something other than the row above on screen.
+//
+// The skip set is a rule about the whole visible order, which is why it is a
+// parameter here rather than a pruned copy of the forest at the call site: the
+// forest the tree renders and the order the gestures walk stay one structure.
+
 // visibleOrder flattens the forest to the ids the reader can actually see, in
 // document order. A collapsed node stays — its own row is visible — but its
 // descendants do not, which is what makes "the block above" mean the block above
 // on screen rather than the one above in the data.
-export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>): string[] {
+export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>, skip: Set<string>): string[] {
 	const out: string[] = [];
 	const walk = (list: TreeNodeData[]): void => {
 		for (const node of list) {
-			out.push(node.block.ID);
+			if (!skip.has(node.block.ID)) {
+				out.push(node.block.ID);
+			}
 			if (!collapsed.has(node.block.ID)) {
 				walk(node.children);
 			}
@@ -160,15 +175,25 @@ export function visibleOrder(nodes: TreeNodeData[], collapsed: Set<string>): str
 // prevVisible is the row above id on screen, or null when id is the first
 // visible row — which is the caller's signal that Backspace has nothing to merge
 // into and the arrow has nowhere to go.
-export function prevVisible(nodes: TreeNodeData[], id: string, collapsed: Set<string>): string | null {
-	const order = visibleOrder(nodes, collapsed);
+export function prevVisible(
+	nodes: TreeNodeData[],
+	id: string,
+	collapsed: Set<string>,
+	skip: Set<string>,
+): string | null {
+	const order = visibleOrder(nodes, collapsed, skip);
 	const i = order.indexOf(id);
 	return i > 0 ? order[i - 1] : null;
 }
 
 // nextVisible is the row below id on screen, or null when id is the last one.
-export function nextVisible(nodes: TreeNodeData[], id: string, collapsed: Set<string>): string | null {
-	const order = visibleOrder(nodes, collapsed);
+export function nextVisible(
+	nodes: TreeNodeData[],
+	id: string,
+	collapsed: Set<string>,
+	skip: Set<string>,
+): string | null {
+	const order = visibleOrder(nodes, collapsed, skip);
 	const i = order.indexOf(id);
 	return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
 }
@@ -176,12 +201,18 @@ export function nextVisible(nodes: TreeNodeData[], id: string, collapsed: Set<st
 // prevSibling is the block directly above id under the same parent. Tab asks
 // this rather than prevVisible: the sibling above may be collapsed or deep, and
 // indenting still puts id under that sibling, not under whatever row happens to
-// be visible above.
-export function prevSibling(nodes: TreeNodeData[], id: string): string | null {
+// be visible above. A skipped sibling is passed over rather than ending the
+// search — the block below it indents under the last one storage actually has.
+export function prevSibling(nodes: TreeNodeData[], id: string, skip: Set<string>): string | null {
 	const search = (list: TreeNodeData[]): string | null => {
 		for (let i = 0; i < list.length; i++) {
 			if (list[i].block.ID === id) {
-				return i > 0 ? list[i - 1].block.ID : null;
+				for (let j = i - 1; j >= 0; j--) {
+					if (!skip.has(list[j].block.ID)) {
+						return list[j].block.ID;
+					}
+				}
+				return null;
 			}
 			const hit = search(list[i].children);
 			if (hit !== null) {

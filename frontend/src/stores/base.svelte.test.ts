@@ -87,6 +87,11 @@ beforeEach(() => {
 	base.editingID = null;
 	base.editText = "";
 	base.editCaret = 0;
+	// Neither is reset by the store between acts, and both change what a gesture
+	// is allowed to do, so a test that seeds either would otherwise decide the
+	// outcome of whatever test the shuffle runs next.
+	base.ghosts.clear();
+	base.busy = false;
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 	// Seed the read fixture to match the seeded forest, so a re-read that a test
@@ -930,6 +935,97 @@ describe("Delete at the end", () => {
 		await base.pullNextInto("go");
 		expect(App.MergeBlocks).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
+	});
+});
+
+// A pending deletion renders — struck through, so the reader can review it in
+// place — but storage dropped the block, so naming it in a call is either a
+// not_found from the bridge or, worse for Tab, a silent move under a different
+// sibling than the one the reader saw above the row. Every gesture walks past it.
+describe("a ghost is on screen but no gesture reaches it", () => {
+	// The AI proposed deleting "gone", which sits between two live siblings.
+	function ghostBetween(): void {
+		base.forest = [node("go", "", [node("ctx", "go"), node("gone", "go"), node("gen", "go")])];
+		base.selectedTopicID = "go";
+		base.ghosts.add("gone");
+		changes.blocks = [
+			{
+				TopicID: "go",
+				Head: { BlockID: "gone", ParentID: "go", Position: 1, Content: "gone", Deleted: true },
+			},
+		] as unknown as typeof changes.blocks;
+		// What storage actually holds: no ghost row.
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("gen", "go")];
+	}
+
+	// The ghost is the only row between the page title and gen, so with it in the
+	// order every gesture below has a target that does not exist.
+	function ghostAlone(): void {
+		base.forest = [node("go", "", [node("gone", "go"), node("gen", "go")])];
+		base.selectedTopicID = "go";
+		base.ghosts.add("gone");
+		reloadFixture.subtrees.go = [block("go", ""), block("gen", "go")];
+	}
+
+	it("merges Backspace into the live block above, not into the ghost", async () => {
+		ghostBetween();
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.mergeIntoPrevious("gen");
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "gen");
+		expect(base.editCaret).toBe(3); // the seam, at the end of "ctx"
+	});
+
+	it("makes Backspace a silent no-op when only the ghost stands above", async () => {
+		// Past the ghost, gen's predecessor is the page's own title row, which is
+		// never a merge target — so this is the same silent no-op as the first
+		// block of a page, not a call the bridge would refuse.
+		ghostAlone();
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.mergeIntoPrevious("gen");
+		expect(App.MergeBlocks).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("indents under the live sibling above, not under the ghost", async () => {
+		ghostBetween();
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.indent("gen");
+		expect(App.IndentBlock).toHaveBeenCalledWith("gen");
+	});
+
+	// The dangerous one: IndentBlock recomputes the sibling list from storage,
+	// where the ghost is absent, so a call here either indents under a different
+	// sibling than the reader saw or comes back invalid_ops for a gesture the
+	// frontend asserted was applicable.
+	it("makes Tab a silent no-op when the only sibling above is a ghost", async () => {
+		ghostAlone();
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.indent("gen");
+		expect(App.IndentBlock).not.toHaveBeenCalled();
+		expect(base.error).toBe("");
+	});
+
+	it("pulls the live block below into this one, not the ghost", async () => {
+		ghostBetween();
+		await base.startEdit(block("ctx", "go", "ctx"), 3);
+		await base.pullNextInto("ctx");
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "gen");
+	});
+
+	it("moves the caret past the ghost rather than into it", async () => {
+		ghostBetween();
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		await base.moveCaret("gen", "up", 0);
+		// The ghost row renders no editor at all, so landing on it would lose the
+		// caret and the keyboard with it.
+		expect(base.editingID).toBe("ctx");
+	});
+
+	it("moves down past the ghost as well", async () => {
+		ghostBetween();
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.moveCaret("ctx", "down", 0);
+		expect(base.editingID).toBe("gen");
 	});
 });
 
