@@ -70,9 +70,17 @@ export function sourceOffset(raw: string, renderedOffset: number): number {
 		// source. Without this the walk never converges for a list and every click
 		// in one lands at the end of the block.
 		//
+		// Only while catching up, hence r < target. Past the target the walk has the
+		// opposite job — stepping the source over the delimiters that closed the run
+		// the caret is at the end of — and consuming a rendered newline there ends
+		// the walk (the loop's second clause needs r < rendered.length) with the
+		// caret still inside the markup: offset 5 of "**burst**" would come out as 7,
+		// between "burst" and its own closing stars, so the next keystroke would
+		// extend the emphasis rather than follow it.
+		//
 		// A hard break is untouched: there both sides hold "\n", so they match and
 		// advance together before this rule is reached.
-		if (r < rendered.length && rendered[r] === "\n" && raw[s] !== "\n") {
+		if (r < target && rendered[r] === "\n" && raw[s] !== "\n") {
 			r++;
 			continue;
 		}
