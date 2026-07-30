@@ -13,8 +13,12 @@ class ShellStore {
 	// row, so it commits first — the rail owning all four switches (see above)
 	// is what makes this the one place that has to. A failed write stays on
 	// the tree with the text still in the editor (spec §8) rather than switch
-	// away underneath it.
+	// away underneath it, and a write still in flight is not committed through
+	// at all — see base's commitEdit for why those are different answers.
 	async setMode(m: Mode): Promise<void> {
+		if (base.busy) {
+			return;
+		}
 		if (!(await base.commitEdit())) {
 			return;
 		}

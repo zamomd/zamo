@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from "../stores/base.svelte";
 	import { type Mode, shell } from "../stores/shell.svelte";
 
 	// The glyphs are text, not icons: the window ships one embedded face and a
@@ -12,6 +13,12 @@
 	];
 </script>
 
+<!-- Every glyph leaves the tree, and leaving it commits the open edit, so the
+     rail greys out while a write is in flight like every other control that
+     reaches commitEdit — see base's commitEdit for the difference between a
+     caret being somewhere and a write being in flight. The rail's rest colour
+     is already the faint one, so it is the hover rule dropping out that carries
+     the refusal to the eye. -->
 <nav class="rail" aria-label="view">
 	{#each modes as m (m.id)}
 		<button
@@ -20,6 +27,7 @@
 			title={m.label}
 			aria-label={m.label}
 			aria-pressed={shell.mode === m.id}
+			disabled={base.busy}
 			onclick={() => shell.setMode(m.id)}
 		>
 			{m.glyph}

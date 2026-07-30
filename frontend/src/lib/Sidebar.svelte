@@ -13,6 +13,13 @@
 	// one that changes meaning with a visible cause (the field above it).
 	const rows = $derived(topicRows(base.forest, base.selectedTopicID));
 	const searching = $derived(search.query.trim() !== "");
+
+	// Every row in the list moves the main area, and both routes out of here —
+	// openTopic and jumpToBlock — go through commitEdit, so they grey out while a
+	// write is in flight like every other control that reaches it. See base's
+	// commitEdit. The .row rules below already carry :not(:disabled) on hover,
+	// which is what shows the refusal; the search field above is not disabled,
+	// because typing a query moves nothing.
 </script>
 
 <aside>
@@ -29,7 +36,7 @@
 				<ul>
 					{#each search.results as hit (hit.ID)}
 						<li>
-							<button type="button" class="row hit" onclick={() => jumpToBlock(hit.ID)}>
+							<button type="button" class="row hit" disabled={base.busy} onclick={() => jumpToBlock(hit.ID)}>
 								{plainText(hit.Content)}
 							</button>
 						</li>
@@ -47,6 +54,7 @@
 							class="row topic"
 							class:selected={row.selected}
 							aria-current={row.selected ? "true" : undefined}
+							disabled={base.busy}
 							onclick={() => openTopic(row.id)}
 						>
 							{row.title}
@@ -55,7 +63,12 @@
 							<ul class="sub">
 								{#each row.children as child (child.id)}
 									<li>
-										<button type="button" class="row child" onclick={() => jumpToBlock(child.id)}>
+										<button
+											type="button"
+											class="row child"
+											disabled={base.busy}
+											onclick={() => jumpToBlock(child.id)}
+										>
 											{child.title}
 										</button>
 									</li>

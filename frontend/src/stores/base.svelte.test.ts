@@ -1298,6 +1298,61 @@ describe("a gesture in flight locks the next one out", () => {
 	});
 });
 
+// The other half of the same lock. These five raise no busy of their own —
+// they commit, then move the view — so a click on a breadcrumb, a mode glyph
+// or a sidebar row while a gesture's write is in flight would reach commitEdit
+// with a forest that still holds the pre-write text and write the same session
+// a second time.
+describe("navigation refuses while a write is in flight", () => {
+	beforeEach(async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		base.busy = true;
+	});
+
+	it("does not collapse a node", async () => {
+		await base.toggle("go");
+		expect(base.collapsed.has("go")).toBe(false);
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	it("does not zoom in", async () => {
+		await base.focus("ctx");
+		expect(base.focusID).toBe(null);
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	// The breadcrumb's root crumb, which is the one that has no busy check
+	// anywhere else in its path: it neither writes nor reloads.
+	it("does not zoom out", () => {
+		base.focusID = "ctx";
+		base.clearFocus();
+		expect(base.focusID).toBe("ctx");
+	});
+
+	it("does not switch topic", async () => {
+		await base.selectTopic("sqlite");
+		expect(base.selectedTopicID).toBe("go");
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	it("does not leave the tree for another mode", async () => {
+		shell.mode = "tree";
+		await shell.setMode("graph");
+		expect(shell.mode).toBe("tree");
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	// Proof that the lock is what refused and not the act's own applicability:
+	// the same one goes through, commit and all, the moment the flight ends.
+	it("allows them again once the flight ends", async () => {
+		base.busy = false;
+		await base.toggle("go");
+		expect(base.collapsed.has("go")).toBe(true);
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+	});
+});
+
 describe("the arrows", () => {
 	it("moves up into the block above, keeping the column", async () => {
 		await base.startEdit(block("done", "ctx", "done"), 2);

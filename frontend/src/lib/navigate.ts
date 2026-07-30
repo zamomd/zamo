@@ -12,6 +12,14 @@ import { shell } from "../stores/shell.svelte";
 // nothing else here commits it first — openTopic's own call to selectTopic
 // does that itself, but reveal does not.
 export async function jumpToBlock(id: string): Promise<void> {
+	// setMode turns back while a write is in flight, and its Promise<void> does
+	// not say so — without this the jump would go on to commit behind its back,
+	// through the one door left open by the guards in the store: an explicit
+	// commitEdit of its own. See base's commitEdit for what a commit costs while
+	// a gesture's write has not been re-read yet.
+	if (base.busy) {
+		return;
+	}
 	await shell.setMode("tree");
 	// setMode's own commit already ran inside the await above; a failed one
 	// leaves the previous session open (spec §8), but setMode's Promise<void>

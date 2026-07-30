@@ -398,6 +398,9 @@ class BaseStore {
 	// see commitEdit's own comment for why every caller that can unmount the
 	// editor goes through it.
 	async toggle(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
 		if (!(await this.commitEdit())) {
 			return;
 		}
@@ -412,6 +415,9 @@ class BaseStore {
 	// ignored rather than blanking the pane: the caller is markup that cannot
 	// await a reload, so a stale id is a real case, not a programming error.
 	async focus(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
 		// Zooming in unmounts every row outside the new root, so it commits first
 		// like toggle — see commitEdit's own comment.
 		if (!(await this.commitEdit())) {
@@ -429,12 +435,18 @@ class BaseStore {
 		this.focusID = id;
 	}
 
-	// clearFocus zooms back out to the whole topic. Unguarded, unlike focus:
-	// widening the view only adds rows, so an open editor's row stays mounted
-	// (it re-mounts one level deeper with editText intact), and toggle's guard
-	// above is what keeps a collapsed node from appearing between the topic root
-	// and an open editor in the first place.
+	// clearFocus zooms back out to the whole topic. It commits nothing, unlike
+	// focus: widening the view only adds rows, so an open editor's row stays
+	// mounted (it re-mounts one level deeper with editText intact), and toggle's
+	// guard above is what keeps a collapsed node from appearing between the topic
+	// root and an open editor in the first place. It still turns back while a
+	// write is in flight — see commitEdit's own comment: that re-mount restores
+	// the caret and the text the store holds mid-gesture, and neither is final
+	// until the re-read lands.
 	clearFocus(): void {
+		if (this.busy) {
+			return;
+		}
 		this.focusID = null;
 	}
 
@@ -452,6 +464,9 @@ class BaseStore {
 	// gone, without ever pointing the selection at an id this store cannot
 	// currently show.
 	async selectTopic(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
 		// Switching topic unmounts the whole tree the open editor's row lives in,
 		// so it commits first — see commitEdit's own comment.
 		if (!(await this.commitEdit())) {
@@ -894,6 +909,20 @@ class BaseStore {
 	// §4.5). busy still greys out buttons; nothing refuses because a caret is
 	// somewhere — a failed write is the one thing that still stops a gesture,
 	// and it stops it by aborting the gesture rather than by refusing to start.
+	//
+	// That is the whole distinction that survived: a caret being somewhere
+	// refuses nothing, a write being in flight refuses everything. The acts that
+	// move the view without a write of their own — toggle, focus, clearFocus,
+	// selectTopic and shell.setMode — therefore turn back at busy instead of
+	// committing through it. writeIfChanged compares editText against the forest
+	// and only a re-read refreshes the forest, so a commit landing between a
+	// gesture's write returning and its re-read completing sees the pre-write
+	// content and issues a second EditBlockContent for the same session: two
+	// revisions where the spec promises one, racing the structural op behind it.
+	// The acts that raise busy themselves (setScope, askAI, startLink, the four
+	// review methods, deleteRevision) check it first and then own it, so their
+	// commit runs with nothing else in flight — which is exactly why commitEdit
+	// does not check busy itself: all eight call it while holding it.
 	//
 	// It writes only if the text changed, and drops a block left empty with no
 	// children — press Enter, think better of it, leave, and nothing is left

@@ -11,6 +11,8 @@ const calls = vi.hoisted(() => ({
 	// to commit or the write succeeded, false when the write failed and the
 	// session is still open (spec §8).
 	commitResult: true,
+	committed: false,
+	busy: false,
 }));
 
 vi.mock("../stores/shell.svelte", () => ({
@@ -23,7 +25,15 @@ vi.mock("../stores/shell.svelte", () => ({
 
 vi.mock("../stores/base.svelte", () => ({
 	base: {
-		commitEdit: async () => calls.commitResult,
+		// A getter, not a copy: the mock object is built once, and busy is what
+		// each test sets on the way in.
+		get busy() {
+			return calls.busy;
+		},
+		commitEdit: async () => {
+			calls.committed = true;
+			return calls.commitResult;
+		},
 		reveal: (id: string) => {
 			calls.revealedID = id;
 		},
@@ -40,6 +50,8 @@ beforeEach(() => {
 	calls.revealedID = "";
 	calls.selectedID = "";
 	calls.commitResult = true;
+	calls.committed = false;
+	calls.busy = false;
 });
 
 describe("jumpToBlock", () => {
@@ -62,6 +74,20 @@ describe("jumpToBlock", () => {
 
 		expect(calls.mode).toBe("tree");
 		expect(calls.revealedID).toBe("");
+	});
+
+	// The commit above is this function's own, so the store's busy guards do not
+	// cover it: setMode turns back while a write is in flight and cannot say so
+	// through Promise<void>, and committing behind it would write the open
+	// session a second time (see base's commitEdit).
+	it("does not commit or jump while a write is in flight", async () => {
+		calls.busy = true;
+
+		await jumpToBlock("b1");
+
+		expect(calls.committed).toBe(false);
+		expect(calls.revealedID).toBe("");
+		expect(calls.mode).toBe("");
 	});
 });
 

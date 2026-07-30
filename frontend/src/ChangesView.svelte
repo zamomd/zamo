@@ -167,7 +167,14 @@
 										{b.GroupTitle}
 										{#if b.Head.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
 									</span>
-									<button type="button" title="jump to this block in the base" onclick={() => onjump(b.Head.BlockID)}>show</button>
+									<!-- Disabled with the other two: the jump commits the open edit
+								     on its way out (see navigate.ts), and a control that is
+								     refusing while a write is in flight has to look like it. -->
+								<button
+									type="button"
+									title="jump to this block in the base"
+									disabled={base.busy}
+									onclick={() => onjump(b.Head.BlockID)}>show</button>
 									<button
 										type="button"
 										class="accept"
