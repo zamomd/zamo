@@ -161,3 +161,29 @@ code,
 pre {
 	font-family: var(--font-mono);
 }
+
+/* The scrollbar is furniture, not an actor: one width, always, in a lane of its
+   own. Styling ::-webkit-scrollbar is what takes the webview out of its native
+   overlay mode, where the bar floats over the content (covering a tree row's
+   right-most action), fattens on approach, and repaints itself by system rule
+   instead of by theme. There are deliberately no :hover rules here — their
+   absence is what keeps it still. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--rail) transparent;
+}
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--rail);
+	border-radius: 2px;
+	/* A transparent border plus content-box clipping insets the thumb without
+	   shrinking the hit area, so a 4px-wide bar stays easy to grab. */
+	border: 2px solid transparent;
+	background-clip: content-box;
+}

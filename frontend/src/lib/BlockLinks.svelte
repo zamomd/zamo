@@ -191,6 +191,7 @@
 	.results {
 		max-height: 10rem;
 		overflow-y: auto;
+		scrollbar-gutter: stable;
 		margin-top: 0.25rem;
 		border: 1px solid var(--hairline);
 		border-radius: var(--radius);

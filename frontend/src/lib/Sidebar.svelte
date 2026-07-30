@@ -93,6 +93,7 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		scrollbar-gutter: stable;
 	}
 	ul {
 		list-style: none;
