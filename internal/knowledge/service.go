@@ -225,9 +225,6 @@ func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) err
 // subtree, renders the set, then hands the files to the injected writer. All
 // reads complete before any write, so a read failure aborts with nothing
 // written; how a mid-write failure is handled is the writer's concern.
-//
-// ponytail: one GetSubtree query per topic (N+1). Fine for a personal base;
-// upgrade to a single bulk "all subtrees" read if export ever gets slow.
 func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 	topics, err := s.repo.GetTopics(ctx)
 	if err != nil {
@@ -258,10 +255,6 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 // plain markdown. Edges whose target vanished mid-read are dropped, like
 // LinkedBlocks. Only outgoing edges are rendered, so a link appears once, under
 // its source.
-//
-// ponytail: one GetEdges per block (N+1). Fine for a personal base; batch into
-// a single edges read if export ever gets slow (same corner as the subtree N+1
-// above).
 func (s *Service) exportLinks(ctx context.Context, subtrees [][]Block) (map[ID][]ExportLink, error) {
 	outgoing := make(map[ID][]Edge)
 	targets := make(map[ID]bool)

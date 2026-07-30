@@ -15,8 +15,8 @@ import (
 // to remember it separately. No links — or an unknown id — yields an empty
 // slice, not an error.
 //
-// ponytail: the to_id leg is a table scan (the PK only covers the from_id
-// prefix). Fine for a personal base; add an index on to_id if it ever shows.
+// The to_id side of the OR has no index to use: the primary key covers the
+// from_id prefix only, so that half of the predicate reaches for a scan.
 func (r *Repo) GetEdges(ctx context.Context, id knowledge.ID) ([]knowledge.Edge, error) {
 	const q = `
 SELECT from_id, to_id, relation, reviewed FROM edges

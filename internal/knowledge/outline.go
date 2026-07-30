@@ -86,11 +86,6 @@ func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (ID, 
 //
 // b must not be a topic root: roots live under no parent, and no outline
 // operation is defined on them.
-//
-// ponytail: reads b's parent's whole subtree to find one index — for Tab or
-// Shift+Tab on a child of a large topic, that is the entire topic per
-// keystroke. Fine for a personal base; give this its own narrow query
-// (siblings only, no descendants) if indenting ever gets slow.
 func (s *Service) siblingsOf(ctx context.Context, b Block) ([]Block, int, error) {
 	subtree, err := s.repo.GetSubtree(ctx, b.ParentID)
 	if err != nil {
