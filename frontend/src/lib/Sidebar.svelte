@@ -3,6 +3,7 @@
 	import { changes } from "../stores/changes.svelte";
 	import { search } from "../stores/search.svelte";
 	import { jumpToBlock, openTopic } from "./navigate";
+	import { plainText } from "./plaintext";
 	import SearchBox from "./SearchBox.svelte";
 	import { topicRows } from "./tree";
 
@@ -29,7 +30,7 @@
 					{#each search.results as hit (hit.ID)}
 						<li>
 							<button type="button" class="row hit" onclick={() => jumpToBlock(hit.ID)}>
-								{hit.Content}
+								{plainText(hit.Content)}
 							</button>
 						</li>
 					{/each}
@@ -93,6 +94,7 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		scrollbar-gutter: stable;
 	}
 	ul {
 		list-style: none;

@@ -8,7 +8,7 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findPath, type TreeNodeData, topicOf } from "../lib/tree";
+import { buildTree, findBlock, findNode, findPath, type TreeNodeData, topicOf } from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -50,6 +50,15 @@ class BaseStore {
 	// the changes list can move it (see reveal). null means the base is empty or
 	// has not loaded yet.
 	selectedTopicID = $state<string | null>(null);
+
+	// Zoom-in: the block the main area treats as the page's root, so a deeply
+	// nested branch can be read at full width instead of under six levels of
+	// indent. null means the whole selected topic. A focus belongs to one
+	// topic: every write to selectedTopicID is expected to clear this in the
+	// same act (applySelection, reveal, reload's fallback, askAI's post-
+	// expansion move), so a future selection write that skips it reopens a
+	// bug rather than a documented gap.
+	focusID = $state<string | null>(null);
 
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
@@ -123,6 +132,17 @@ class BaseStore {
 	// that rebuilds the forest cannot leave a stale subtree on screen.
 	selectedTree = $derived(
 		this.selectedTopicID === null ? null : (this.forest.find((t) => t.block.ID === this.selectedTopicID) ?? null),
+	);
+
+	// The subtree the main area renders: the focused block when there is one,
+	// the whole topic otherwise. Derived rather than stored so a reload that
+	// rebuilds the forest cannot leave a stale subtree on screen — the same
+	// reason selectedTree is derived. Falls back to selectedTree rather than
+	// going null when the focused block itself vanishes (an edit or a
+	// concurrent comind mcp write deletes it before the topic changes): an
+	// absent id is ignored, never a blank pane, same principle as focus().
+	viewRoot = $derived(
+		this.focusID === null ? this.selectedTree : (findNode(this.forest, this.focusID) ?? this.selectedTree),
 	);
 
 	constructor() {
@@ -203,6 +223,9 @@ class BaseStore {
 		// topic so the main area is never blank while the base has content.
 		if (this.selectedTopicID === null || !trees.some((t) => t.block.ID === this.selectedTopicID)) {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
+			// The topic just moved out from under the reader; a focus from the old
+			// one would otherwise still resolve inside the new selection's forest.
+			this.focusID = null;
 		}
 		// Links reflect the re-read base: drop the cache, close panels whose
 		// block vanished, and re-load the panels still open.
@@ -245,6 +268,9 @@ class BaseStore {
 			return;
 		}
 		this.pendingReveal = null;
+		// A jump names a block somewhere in the forest, and staying zoomed into
+		// an unrelated subtree would scroll to a row that is not rendered.
+		this.focusID = null;
 		// The main area shows one topic, so a jump into a different one has to
 		// move the selection first or it would scroll to a row that is not
 		// rendered.
@@ -261,12 +287,59 @@ class BaseStore {
 		this.highlightNonce++;
 	}
 
+	// toggle folds a node's children away, or unfolds them again.
+	//
+	// INTERIM GUARD, do not remove: refused while an inline edit is open.
+	// Collapsing an ancestor unmounts the row holding the editor, InlineEditor
+	// has no teardown, and nothing else clears editingID — so the id outlives
+	// its editor and startEdit, setScope, startLink and askAI all silently
+	// become no-ops (CommandBox greys itself out) with no visible cause and no
+	// hint that re-expanding the ancestor is the way back. PR 3's
+	// commit-on-unmount rule is what makes the guard unnecessary; until that
+	// lands, "there is nothing on the other side of this lock" is wrong.
+	// The triangle's disabled attribute in TreeNode.svelte is the visible half.
 	toggle(id: string): void {
+		if (this.editingID !== null) {
+			return;
+		}
 		if (this.collapsed.has(id)) {
 			this.collapsed.delete(id);
 		} else {
 			this.collapsed.add(id);
 		}
+	}
+
+	// focus zooms the main area into one block. An id absent from the forest is
+	// ignored rather than blanking the pane: the caller is markup that cannot
+	// await a reload, so a stale id is a real case, not a programming error.
+	focus(id: string): void {
+		// INTERIM GUARD, do not remove: zooming in unmounts every row outside the
+		// new root, which strands editingID exactly as collapsing an ancestor
+		// does — see toggle, which also names what retires this. It sits in the
+		// store rather than on the dot because a crumb click lands here too and
+		// would otherwise route around a disabled attribute.
+		if (this.editingID !== null) {
+			return;
+		}
+		if (findNode(this.forest, id) === null) {
+			return;
+		}
+		// Zooming in is a request to see inside, so it cannot leave the block
+		// folded: the view's root renders as the page's title row, which carries
+		// no collapse triangle, so a block collapsed before the zoom would arrive
+		// as a lone title on a blank page with nothing to open it — while its own
+		// dot's halo advertised the children it was hiding.
+		this.collapsed.delete(id);
+		this.focusID = id;
+	}
+
+	// clearFocus zooms back out to the whole topic. Unguarded, unlike focus:
+	// widening the view only adds rows, so an open editor's row stays mounted
+	// (it re-mounts one level deeper with editText intact), and toggle's guard
+	// above is what keeps a collapsed node from appearing between the topic root
+	// and an open editor in the first place.
+	clearFocus(): void {
+		this.focusID = null;
 	}
 
 	// selectTopic switches the main area to the given topic. The sidebar is
@@ -324,6 +397,9 @@ class BaseStore {
 		// replay against whatever row now occupies that position after the
 		// switch — see highlightID.
 		this.highlightID = null;
+		// A focus belongs to one topic; a switch away must not leave the view
+		// zoomed into a subtree of a topic nobody is looking at any more.
+		this.focusID = null;
 	}
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
@@ -378,6 +454,11 @@ class BaseStore {
 				const fresh = this.forest.find((t) => !before.has(t.block.ID));
 				if (fresh) {
 					this.selectedTopicID = fresh.block.ID;
+					// This move onto the newcomer bypasses reload's own fallback
+					// above (the prior selection was still valid), so it has to
+					// clear the focus itself or viewRoot would keep resolving
+					// against the topic the reader just left.
+					this.focusID = null;
 				}
 			}
 			this.status = "changes applied, awaiting review";

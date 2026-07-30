@@ -56,6 +56,17 @@
 	   structure entirely on its own. */
 	--hairline-strong: #a8a8ae;
 	--rail: #94949a;
+	/* The ring around a collapsed row's anchor dot. A resting-state mark ("this
+	   block has hidden children"), which is why it is not --hover: that token is
+	   interaction feedback, and at rgba(0,0,0,0.05) over --ground it composites
+	   to #f2f2f2 — 1.12:1, below the 1.29:1 of --hairline that the tiers above
+	   already rejected as not-there. This value is --hairline-strong's, 2.37:1
+	   against --ground: the perimeter tier, one step under --rail's 3.02:1, and
+	   well under the dot's own 7.41:1 so the fill stays the louder of the two
+	   facts. It is a token of its own and not an alias because the two are one
+	   value by coincidence, not by rule — a control's border and a state mark
+	   must be free to be retuned apart. */
+	--halo: #a8a8ae;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
 	/* Same value as --hover today, but a distinct token: this is a resting
@@ -75,6 +86,8 @@
 		--hairline: #232326;
 		--hairline-strong: #54545a;
 		--rail: #5d5d63;
+		/* 2.62:1 against dark's --ground, against the dot's 7.00:1 there. */
+		--halo: #54545a;
 		--accent: #5e8fd0;
 		--hover: rgba(255, 255, 255, 0.06);
 		--surface: rgba(255, 255, 255, 0.06);
@@ -160,4 +173,30 @@ button:disabled {
 code,
 pre {
 	font-family: var(--font-mono);
+}
+
+/* The scrollbar is furniture, not an actor: one width, always, in a lane of its
+   own. Styling ::-webkit-scrollbar is what takes the webview out of its native
+   overlay mode, where the bar floats over the content (covering a tree row's
+   right-most action), fattens on approach, and repaints itself by system rule
+   instead of by theme. There are deliberately no :hover rules here — their
+   absence is what keeps it still. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--rail) transparent;
+}
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--rail);
+	border-radius: 2px;
+	/* A transparent border plus content-box clipping insets the thumb without
+	   shrinking the hit area, so a 4px-wide bar stays easy to grab. */
+	border: 2px solid transparent;
+	background-clip: content-box;
 }

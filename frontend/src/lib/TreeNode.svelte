@@ -9,11 +9,17 @@
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	// One row of the base tree, recursing into its children. All state and
-	// actions come from the base store; node and nested are the only inputs.
-	// nested is set by the recursion itself (never by the top-level caller in
-	// TopicView.svelte), so a topic root's own <li> stays unmarked and rail-less
-	// while every recursed child's <li> carries .nested.
-	let { node, nested = false }: { node: TreeNodeData; nested?: boolean } = $props();
+	// actions come from the base store; node, nested and title are the only
+	// inputs. nested is set by the recursion itself (never by the top-level
+	// caller in TopicView.svelte), so a topic root's own <li> stays unmarked and
+	// rail-less while every recursed child's <li> carries .nested. title marks
+	// the one row that is the view's root rather than a row of the tree: it is
+	// the page's heading, so it carries no dot and no collapse toggle.
+	let {
+		node,
+		nested = false,
+		title = false,
+	}: { node: TreeNodeData; nested?: boolean; title?: boolean } = $props();
 
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
@@ -28,6 +34,14 @@
 	const ghost = $derived(base.ghosts.has(node.block.ID));
 	const topicRoot = $derived(node.block.ParentID === "");
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
+	// Authorship, from the creation stamp applied by storage. Anything that is
+	// not exactly "ai" reads as the owner's: applyEdit does not restamp the
+	// metadata, and projectHead rebuilds a resurrected block with none at all,
+	// so a missing author must not be reported as the machine's work.
+	const byAI = $derived(node.block.Meta?.author === "ai");
+	// The halo says "there is something in here you cannot see", which is only
+	// true while the block is collapsed and actually has children.
+	const hasHidden = $derived(hasChildren && !expanded);
 
 	// Scroll this row into view and flash it when a search jump targets it. The
 	// effect keys on highlightNonce so a repeat jump to the same block re-fires;
@@ -74,23 +88,45 @@
 </script>
 
 <li class:nested>
-	<div bind:this={rowEl} class="row" class:targeted={base.scopeID === node.block.ID} class:flash class:unreviewed class:ghost>
-		<!-- Toggles are locked while an edit is open: collapsing an ancestor would
-		     unmount the editor while editingID lingers, silently dead-ending every
-		     other block (startEdit no-ops when a block is already being edited). -->
-		{#if hasChildren}
+	<div
+		bind:this={rowEl}
+		class="row"
+		class:title
+		class:targeted={base.scopeID === node.block.ID}
+		class:flash
+		class:unreviewed
+		class:ghost
+	>
+		{#if !title}
+			<!-- The dot is the block's anchor: it carries authorship in its fill,
+			     hidden children in its halo, and zoom-in on click. Collapse lives
+			     on the triangle below, which replaces the rail's tick on hover so
+			     two lines never compete for the same 14px. -->
 			<button
 				type="button"
-				class="toggle"
-				aria-expanded={expanded}
-				aria-label={expanded ? "collapse" : "expand"}
-				disabled={base.editingID !== null}
-				onclick={() => base.toggle(node.block.ID)}
-			>
-				{expanded ? "▼" : "▶"}
-			</button>
-		{:else}
-			<span class="toggle leaf" aria-hidden="true"></span>
+				class="dot"
+				class:ai={byAI}
+				class:ring={hasHidden}
+				title="zoom into this block"
+				aria-label="zoom into this block"
+				onclick={() => base.focus(node.block.ID)}
+			></button>
+			{#if hasChildren}
+				<!-- INTERIM: disabled while an inline edit is open anywhere, the
+				     visible half of the guard base.toggle carries — see its comment
+				     for the bug (editingID outliving its editor's unmount) and for
+				     what retires both halves. -->
+				<button
+					type="button"
+					class="toggle"
+					aria-expanded={expanded}
+					aria-label={expanded ? "collapse" : "expand"}
+					disabled={base.editingID !== null}
+					onclick={() => base.toggle(node.block.ID)}
+				>
+					{expanded ? "▾" : "▸"}
+				</button>
+			{/if}
 		{/if}
 
 		{#if ghost}
@@ -124,46 +160,52 @@
 			>
 				{@html renderMarkdown(node.block.Content)}
 			</div>
-			<button
-				type="button"
-				class="target"
-				title="ask the AI to restructure this block"
-				aria-label="target this block for the AI command"
-				aria-pressed={base.scopeID === node.block.ID}
-				disabled={base.busy || base.editingID !== null}
-				onclick={() => base.setScope(node.block)}
-			>
-				⌖
-			</button>
-			<button
-				type="button"
-				class="links-toggle"
-				class:open={linksOpen}
-				title="show this block's links"
-				aria-expanded={linksOpen}
-				aria-label="toggle this block's links"
-				disabled={base.busy}
-				onclick={() => base.toggleLinks(node.block.ID)}
-			>
-				∞
-			</button>
+			<span class="gutter">
+				<button
+					type="button"
+					class="target"
+					title="ask the AI to restructure this block"
+					aria-label="target this block for the AI command"
+					aria-pressed={base.scopeID === node.block.ID}
+					disabled={base.busy || base.editingID !== null}
+					onclick={() => base.setScope(node.block)}
+				>
+					⌖
+				</button>
+				<button
+					type="button"
+					class="links-toggle"
+					class:open={linksOpen}
+					title="show this block's links"
+					aria-expanded={linksOpen}
+					aria-label="toggle this block's links"
+					disabled={base.busy}
+					onclick={() => base.toggleLinks(node.block.ID)}
+				>
+					∞
+				</button>
+			</span>
 		{/if}
 
 		<!-- History is allowed on ghosts too: it is how a pending deletion is
 		     inspected or undone before review, unlike edit/target/links which stay
-		     hidden until the block is restored. -->
-		<button
-			type="button"
-			class="history-toggle"
-			class:open={historyOpen}
-			title="show this block's revision history"
-			aria-expanded={historyOpen}
-			aria-label="toggle this block's revision history"
-			disabled={base.busy}
-			onclick={() => base.toggleHistory(node.block.ID)}
-		>
-			⌚︎
-		</button>
+		     hidden until the block is restored. It therefore needs a gutter of its
+		     own rather than sharing the one above, which lives inside that guard;
+		     two adjacent flex containers lay out as one lane. -->
+		<span class="gutter">
+			<button
+				type="button"
+				class="history-toggle"
+				class:open={historyOpen}
+				title="show this block's revision history"
+				aria-expanded={historyOpen}
+				aria-label="toggle this block's revision history"
+				disabled={base.busy}
+				onclick={() => base.toggleHistory(node.block.ID)}
+			>
+				⌚︎
+			</button>
+		</span>
 
 		{#if unreviewed}
 			<button
@@ -244,8 +286,15 @@
 	ul.children {
 		margin-left: var(--indent);
 	}
-	li.nested {
+	/* The positioning context for both the rails and the two leading glyphs is
+	   the <li>, never .row: the rails are drawn as the li's own pseudo-elements
+	   from its padding edge, while .row starts one full --indent to the right of
+	   them. Anchoring .dot or .toggle to .row would slide both that far past the
+	   tick they are meant to land on. */
+	li {
 		position: relative;
+	}
+	li.nested {
 		padding-left: var(--indent);
 	}
 	/* The vertical segment: full height for a middle sibling, cut at the tick
@@ -282,22 +331,77 @@
 		gap: 0.15rem;
 		min-height: var(--row-height);
 	}
-	.toggle {
-		flex: none;
-		width: var(--indent);
+	/* The dot sits on the join between the rail's tick and the text, centred on
+	   the row's first line — absolutely, from the top of the <li>, so a block
+	   that wraps to four lines keeps its anchor beside the first one. */
+	.dot {
+		position: absolute;
+		left: calc(var(--indent) - 6px);
+		top: calc((var(--row-height) - 5px) / 2);
+		width: 5px;
+		height: 5px;
 		padding: 0;
 		border: none;
-		background: none;
+		border-radius: 50%;
+		background: var(--text-dim);
+		cursor: pointer;
+	}
+	/* Hollow means the AI wrote it. Fill is the channel, so the halo below can
+	   carry collapse without either fact hiding the other. */
+	.dot.ai {
+		background: transparent;
+		border: 1px solid var(--text-dim);
+	}
+	/* The halo has a token of its own rather than borrowing --hover: it is a
+	   resting-state fact about the block, not feedback about the pointer, and
+	   --hover is far too faint to carry it — see --halo in app.css. */
+	.dot.ring {
+		box-shadow: 0 0 0 4px var(--halo);
+	}
+	.dot:hover {
+		background: var(--text);
+	}
+	.dot.ai:hover {
+		background: transparent;
+		border-color: var(--text);
+	}
+	/* The triangle takes the tick's place on hover rather than sitting beside
+	   it: 14px of horizontal rail and a glyph in the same slot read as debris.
+	   Three details make that mask hold, none of them visible in the values:
+	   z-index lifts the button over li.nested::after, which is the li's last
+	   child in tree order and would otherwise paint its 1px rail on top of an
+	   opaque background. It does not help on a ghost row, where .row.ghost's
+	   opacity makes .row a stacking context that confines this z-index — and
+	   makes the mask translucent regardless, so the tick shows through there.
+	   left starts at 1px rather than 0 so li.nested::before, the vertical
+	   sibling connector, is not erased for a whole row height; the price is the
+	   tick's leftmost pixel, which stays visible inside the connector's own 1px
+	   column and is the T- or L-junction the eye expects to see there anyway.
+	   The background is repeated on :hover below because app.css's global
+	   button:hover:not(:disabled) outweighs a single scoped class. */
+	.toggle {
+		position: absolute;
+		left: 1px;
+		top: 0;
+		z-index: 1;
+		width: calc(var(--indent) - 7px);
+		padding: 0;
+		border: none;
+		background: var(--ground);
 		cursor: pointer;
 		color: var(--text-dim);
-		font-size: 9px;
+		font-size: 8px;
 		line-height: var(--row-height);
+		text-align: center;
+		opacity: 0;
 	}
-	.toggle:hover:not(:disabled) {
+	.row:hover .toggle,
+	.toggle:focus-visible {
+		opacity: 1;
+	}
+	.toggle:hover {
+		background: var(--ground);
 		color: var(--text);
-	}
-	.toggle.leaf {
-		cursor: default;
 	}
 	.content {
 		flex: 1;
@@ -316,6 +420,13 @@
 	}
 	.content:not(.busy):hover {
 		background: var(--hover);
+	}
+	/* The view's root is the page's title, not a row of the tree: no dot, no
+	   rails, and the one place type steps outside the 26px grid on purpose —
+	   1.5 cells, which is what the heading it replaces already used. */
+	.row.title .content {
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.5);
 	}
 	.row.targeted {
 		background: var(--hover);
@@ -337,11 +448,19 @@
 			background: transparent;
 		}
 	}
-	/* The AI target is a per-row affordance kept out of the way until the row is
-	   hovered or focused, so the tree stays quiet; the currently-targeted row keeps
-	   it visible. Grey-alpha again, for both themes. */
-	.target {
+	/* The actions reserve their lane whether or not they are visible: fading
+	   them with opacity rather than removing them keeps a long block's text from
+	   reflowing under the pointer.
+	   The fade goes on the buttons, NOT on this wrapper. A child cannot exceed
+	   its parent's opacity, so opacity:0 here would make the targeted row's own
+	   mark and an open panel's icon unreachable — both of which must stay lit
+	   without a hover. */
+	.gutter {
 		flex: none;
+		display: flex;
+		gap: 0.15rem;
+	}
+	.gutter button {
 		border: none;
 		background: none;
 		padding: 0 0.3rem;
@@ -349,25 +468,42 @@
 		color: inherit;
 		opacity: 0;
 	}
-	.row:hover .target,
-	.row:focus-within .target,
-	.row.targeted .target {
+	.row:hover .gutter button,
+	.row:focus-within .gutter button {
 		opacity: 0.6;
 	}
-	.target:hover:not(:disabled),
-	.row.targeted .target {
+	/* Three standing exceptions to the fade: the pointer is on the control, the
+	   row is the AI command's target, or the control's panel is open below.
+	   The targeted arm has to name .gutter and the button element, not just
+	   .target: the hover/focus rule above contributes an element selector that
+	   a plain .row.targeted .target cannot match, and the row holding focus
+	   right after a click on the mark is exactly when it must stay lit. */
+	.gutter button:hover:not(:disabled),
+	.row.targeted .gutter button.target,
+	.gutter button.open {
 		opacity: 1;
 	}
 	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
-	   reach it — style it through :global under .content. Block content is one
-	   short block (a heading, a claim), so headings must not blow up a tree row:
-	   collapse every level to the row's own size and let weight carry emphasis. */
+	   reach it — style it through :global under .content. */
 	.content :global(p) {
 		margin: 0;
 	}
+	/* Block content is one short block — a heading, a claim — so a heading must
+	   not blow up a tree row. h1 and h2 step up one size and h3 half of one;
+	   all three still fit the row's 26px line box, so the rails and the dot stay
+	   on the grid. Deeper levels carry weight only: markdown's remaining levels
+	   are finer distinctions than a block tree needs. */
 	.content :global(h1),
-	.content :global(h2),
-	.content :global(h3),
+	.content :global(h2) {
+		margin: 0;
+		font-size: var(--size-heading);
+		font-weight: 650;
+	}
+	.content :global(h3) {
+		margin: 0;
+		font-size: 15px;
+		font-weight: 650;
+	}
 	.content :global(h4),
 	.content :global(h5),
 	.content :global(h6) {
@@ -413,40 +549,6 @@
 	.content :global(:last-child) {
 		margin-bottom: 0;
 	}
-	.links-toggle {
-		flex: none;
-		border: none;
-		background: none;
-		padding: 0 0.3rem;
-		cursor: pointer;
-		color: inherit;
-		opacity: 0;
-	}
-	.row:hover .links-toggle,
-	.row:focus-within .links-toggle,
-	.links-toggle.open {
-		opacity: 0.6;
-	}
-	.links-toggle:hover:not(:disabled) {
-		opacity: 1;
-	}
-	.history-toggle {
-		flex: none;
-		border: none;
-		background: none;
-		padding: 0 0.3rem;
-		cursor: pointer;
-		color: inherit;
-		opacity: 0;
-	}
-	.row:hover .history-toggle,
-	.row:focus-within .history-toggle,
-	.history-toggle.open {
-		opacity: 0.6;
-	}
-	.history-toggle:hover:not(:disabled) {
-		opacity: 1;
-	}
 	/* Unreviewed rows get a standing rail at full text strength while every
 	   other rail is a hairline: the mark reads at a glance across the tree.
 	   The window's one accent belongs to focus rings, the active tab and
@@ -490,5 +592,22 @@
 	.accept-page,
 	.reject-page {
 		font-size: var(--size-small);
+	}
+	/* Every control on the title row — accept/reject and Accept all/Reject all as
+	   direct children of .row, plus the two gutters' icons — otherwise inherits
+	   the body line-height and pins to the top of that row's taller line box (see
+	   .row.title .content), above the glyphs it belongs to. Matching the line box
+	   rather than centring the row keeps them beside the title's FIRST line when a
+	   long title wraps, which is the rule the dot follows on a tree row.
+	   Last in the file so it does not sit above the lower-specificity rules for
+	   the same buttons; named class by class rather than as .row.title > button so
+	   it cannot reach the dot or the triangle, whose geometry is the row grid's
+	   and not the title's, if either is ever rendered on a title row. */
+	.row.title .accept,
+	.row.title .reject,
+	.row.title .accept-page,
+	.row.title .reject-page,
+	.row.title .gutter button {
+		line-height: calc(var(--row-height) * 1.5);
 	}
 </style>

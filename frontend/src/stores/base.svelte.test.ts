@@ -69,7 +69,12 @@ beforeEach(() => {
 	base.selectedTopicID = "go";
 	base.collapsed.clear();
 	base.highlightID = null;
+	base.focusID = null;
 	base.error = "";
+	// toggle and focus both refuse while an edit is open (see the interim edit
+	// lock below), so a leaked editingID would silently disarm other tests.
+	base.editingID = null;
+	base.editText = "";
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 });
@@ -261,6 +266,127 @@ describe("reload's selection fallback", () => {
 	});
 });
 
+describe("zoom-in", () => {
+	it("makes the focused block the view's root", () => {
+		base.focus("ctx");
+		expect(base.viewRoot?.block.ID).toBe("ctx");
+	});
+
+	it("keeps the focused block's own children", () => {
+		base.focus("ctx");
+		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
+	});
+
+	it("falls back to the whole topic when nothing is focused", () => {
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	it("ignores a block the forest does not have", () => {
+		base.focus("nope");
+		expect(base.focusID).toBe(null);
+	});
+
+	// The view's root renders as the page's title row, which carries no collapse
+	// triangle. A block collapsed before the zoom would therefore arrive as a
+	// lone title on a blank page, with its own dot's halo advertising the
+	// children nothing on screen could unfold.
+	it("unfolds the block it zooms into", () => {
+		base.collapsed.add("ctx");
+		base.focus("ctx");
+		expect(base.collapsed.has("ctx")).toBe(false);
+		// TreeNode gates the children <ul> on exactly these two facts.
+		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
+	});
+
+	it("leaves other rows' fold state alone while zooming", () => {
+		base.collapsed.add("done");
+		base.focus("ctx");
+		expect(base.collapsed.has("done")).toBe(true);
+	});
+
+	it("zooms back out", () => {
+		base.focus("ctx");
+		base.clearFocus();
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	// A focus is a position inside one topic. Leaving that topic must not leave
+	// the view pointed at a subtree of a topic nobody is looking at any more.
+	it("drops the focus when the topic changes", () => {
+		base.focus("ctx");
+		base.selectTopic("sqlite");
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("sqlite");
+	});
+
+	it("drops the focus when a jump reveals a block elsewhere", () => {
+		base.focus("ctx");
+		base.reveal("wal");
+		expect(base.focusID).toBe(null);
+	});
+
+	// reload's own fallback (see "reload's selection fallback" below) moves
+	// selectedTopicID off a topic that vanished; that move has to clear the
+	// focus too, or viewRoot would keep resolving against the topic the
+	// reader is no longer looking at.
+	it("drops the focus when reload's fallback moves off a topic that vanished", async () => {
+		base.focus("ctx");
+		reloadFixture.topics = [block("sqlite", "")];
+		reloadFixture.subtrees = { sqlite: [block("sqlite", "")] };
+
+		await base.reload();
+
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("sqlite");
+	});
+
+	// The focused block itself can vanish (an edit, or a concurrent comind mcp
+	// write) without the topic changing at all. Unlike the cases above, this
+	// leaves focusID stale, but viewRoot must not go blank over it.
+	it("falls back to the topic when the focused block vanishes but the topic survives", async () => {
+		base.focus("ctx");
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.reload();
+
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+});
+
+// INTERIM, retired by PR 3's commit-on-unmount rule — see toggle's comment.
+// Both acts unmount rows, InlineEditor has no teardown, and nothing else clears
+// editingID: an id that outlives its editor turns startEdit, setScope, startLink
+// and askAI into no-ops with no visible cause.
+describe("the interim edit lock", () => {
+	it("refuses to collapse a row while an edit is open", () => {
+		base.editingID = "done";
+		base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(false);
+	});
+
+	it("collapses once no edit is open", () => {
+		base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(true);
+	});
+
+	// The crumbs call focus too, which is why the guard is in the store and not
+	// a disabled attribute on the dot.
+	it("refuses to zoom in while an edit is open", () => {
+		base.editingID = "done";
+		base.focus("ctx");
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	it("zooms in once no edit is open", () => {
+		base.focus("ctx");
+		expect(base.focusID).toBe("ctx");
+	});
+});
+
 describe("askAI's selection", () => {
 	beforeEach(() => {
 		base.command = "";
@@ -280,6 +406,24 @@ describe("askAI's selection", () => {
 		await base.askAI();
 
 		expect(base.selectedTopicID).toBe("rust");
+	});
+
+	// This move onto the newcomer bypasses reload's own fallback (the prior
+	// selection was still valid, so that branch never fires) — it has to
+	// clear the focus itself.
+	it("drops the focus when an untargeted expansion moves onto the newcomer", async () => {
+		base.forest = [node("go", "", [node("ctx", "go")])];
+		base.selectedTopicID = "go";
+		base.scopeID = null;
+		base.command = "rust";
+		base.focus("ctx");
+		reloadFixture.topics = [block("go", ""), block("rust", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] };
+
+		await base.askAI();
+
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("rust");
 	});
 
 	it("leaves the selection alone for a scoped edit", async () => {
