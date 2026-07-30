@@ -724,12 +724,18 @@ class BaseStore {
 	// pullNextInto is Delete at the end: the mirror of Backspace. The block visible
 	// below is absorbed into this one, its children move here, and the caret stays
 	// where it is.
-	async pullNextInto(id: string): Promise<void> {
+	//
+	// The caret is an argument, like splitAtCaret's, rather than read from
+	// editCaret: the reader's own movements inside the textarea are never written
+	// back to the store, so editCaret is where this session opened, not where the
+	// caret is now — which for Delete-at-end is exactly the difference between the
+	// join and the start of the block.
+	async pullNextInto(id: string, caret: number): Promise<void> {
 		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
 		if (this.busy || this.isViewRoot(id) || source === null) {
 			return;
 		}
-		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret: this.editCaret });
+		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret });
 	}
 
 	// moveCaret is ↑ or ↓ leaving the block: the caret goes to the same column of

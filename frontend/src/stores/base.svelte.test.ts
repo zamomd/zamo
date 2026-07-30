@@ -916,23 +916,32 @@ describe("Backspace at the start", () => {
 describe("Delete at the end", () => {
 	it("pulls the next visible block into this one", async () => {
 		await base.startEdit(block("ctx", "go", "ctx"), 3);
-		await base.pullNextInto("ctx");
+		await base.pullNextInto("ctx", 3);
 		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "done");
 		expect(base.editingID).toBe("ctx");
 		// The caret stays where it was — Delete does not move it, unlike Backspace.
 		expect(base.editCaret).toBe(3);
 	});
 
+	// The caret the reader is at is the editor's, not the store's: editCaret is
+	// only ever written by the store, so it says where this session *opened* —
+	// here a click at the start, before the reader arrowed to the end.
+	it("lands the caret where the reader is, not where the editor opened", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		await base.pullNextInto("ctx", 3);
+		expect(base.editCaret).toBe(3);
+	});
+
 	it("is a silent no-op in the last block of the page", async () => {
 		await base.startEdit(block("done", "ctx", "done"), 4);
-		await base.pullNextInto("done");
+		await base.pullNextInto("done", 4);
 		expect(App.MergeBlocks).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
 	});
 
 	it("refuses to pull anything into the page's own title row", async () => {
 		await base.startEdit(block("go", "", "go"), 0);
-		await base.pullNextInto("go");
+		await base.pullNextInto("go", 0);
 		expect(App.MergeBlocks).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
 	});
@@ -1008,7 +1017,7 @@ describe("a ghost is on screen but no gesture reaches it", () => {
 	it("pulls the live block below into this one, not the ghost", async () => {
 		ghostBetween();
 		await base.startEdit(block("ctx", "go", "ctx"), 3);
-		await base.pullNextInto("ctx");
+		await base.pullNextInto("ctx", 3);
 		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "gen");
 	});
 

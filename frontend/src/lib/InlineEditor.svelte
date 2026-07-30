@@ -94,7 +94,7 @@
 					return;
 				}
 				e.preventDefault();
-				void base.pullNextInto(id);
+				void base.pullNextInto(id, caret);
 				return;
 			case "ArrowUp":
 				// Only leave the block from its first line; inside a wrapped block the
