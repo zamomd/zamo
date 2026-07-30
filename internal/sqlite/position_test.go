@@ -198,6 +198,73 @@ func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
 	}
 }
 
+// TestApplyOpsMovesChildBeforeDeletingItsOldParent pins MergeBlocks' shape —
+// edit target, move a child of source onto target, delete source — across
+// the domain/storage seam. A domain test can only assert op kinds against a
+// fake repo; it cannot see applyDelete's real cascade. This one runs the
+// batch through actual SQLite so a future change hoisting the subtree read
+// above the move, or a schema gaining ON DELETE CASCADE, would surface here:
+// the child must survive under target, not vanish along with source.
+func TestApplyOpsMovesChildBeforeDeletingItsOldParent(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "target", Parent: "root", Content: "Target"},
+		{Kind: knowledge.OpAdd, BlockID: "source", Parent: "root", Content: "Source"},
+		{Kind: knowledge.OpAdd, BlockID: "kid", Parent: "source", Content: "Kid"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.ApplyOps(t.Context(), "g-merge", aiMeta("merge"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "target", Content: "Target+Source"},
+		{Kind: knowledge.OpMove, BlockID: "kid", Parent: "target"},
+		{Kind: knowledge.OpDelete, BlockID: "source"},
+	}); err != nil {
+		t.Fatalf("apply merge-shaped batch: %v", err)
+	}
+
+	parent, _, content, ok := blockRow(t, repo, "kid")
+	if !ok {
+		t.Fatal("kid did not survive the batch: applyDelete's cascade removed it")
+	}
+	if parent != "target" || content != "Kid" {
+		t.Errorf("kid = parent=%q content=%q, want target/Kid", parent, content)
+	}
+	if _, _, _, ok := blockRow(t, repo, "source"); ok {
+		t.Error("source still present after its own delete op")
+	}
+}
+
+// TestApplyMoveWithAfterLandsOnTheMidpoint drives an anchored OpMove through
+// applyMove with real SQLite — the shape OutdentBlock ships (reparent plus
+// land directly after a named sibling), which until now no test exercised
+// below the domain layer.
+func TestApplyMoveWithAfterLandsOnTheMidpoint(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("setup"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
+		{Kind: knowledge.OpAdd, BlockID: "mover", Content: "Mover"}, // a lone topic root to reparent in
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChildren(t, repo, "root", "a", "b") // 0, 65536
+
+	if err := repo.ApplyOps(t.Context(), "g-move", aiMeta("move"), []knowledge.Op{
+		{Kind: knowledge.OpMove, BlockID: "mover", Parent: "root", After: "a-id"},
+	}); err != nil {
+		t.Fatalf("anchored move: %v", err)
+	}
+
+	_, pos, _, ok := blockRow(t, repo, "mover")
+	if !ok {
+		t.Fatal("moved block missing")
+	}
+	if want := positionStride / 2; pos != want {
+		t.Errorf("position = %d, want %d (midpoint of 0 and %d)", pos, want, positionStride)
+	}
+}
+
 func TestInsertBeforeIntoExhaustedGapRespaces(t *testing.T) {
 	repo := testRepo(t)
 	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
