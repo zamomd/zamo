@@ -1,23 +1,12 @@
+import { decodeHTML, decodeHTMLStrict } from "entities";
 import { renderMarkdown } from "./markdown";
 
-// Entities produced by markdown-it with HTML disabled.
-const entities: [RegExp, string][] = [
-	[/&lt;/g, "<"],
-	[/&gt;/g, ">"],
-	[/&quot;/g, '"'],
-	[/&#39;/g, "'"],
-	// Ampersand last: decoding it first would let "&amp;lt;" become "<".
-	[/&amp;/g, "&"],
-];
+const entityAtStart = /^&(?:#[xX][\dA-Fa-f]+|#\d+|[A-Za-z][A-Za-z\d]+);/;
 
 // renderedText mirrors the rendered container's textContent. Tag stripping is
 // safe because Markdown input HTML is disabled.
 export function renderedText(raw: string): string {
-	let text = renderMarkdown(raw).replace(/<[^>]*>/g, "");
-	for (const [pattern, char] of entities) {
-		text = text.replace(pattern, char);
-	}
-	return text;
+	return decodeHTML(renderMarkdown(raw).replace(/<[^>]*>/g, ""));
 }
 
 // sourceOffset maps a rendered-text offset to its Markdown source offset.
@@ -29,6 +18,18 @@ export function sourceOffset(raw: string, renderedOffset: number): number {
 	let s = 0;
 	// Continue past the target through adjacent source-only delimiters.
 	while (s < raw.length && (r < target || (r < rendered.length && raw[s] !== rendered[r]))) {
+		const entity = raw.slice(s).match(entityAtStart)?.[0];
+		if (entity !== undefined) {
+			const decoded = decodeHTMLStrict(entity);
+			if (decoded !== entity && rendered.startsWith(decoded, r)) {
+				if (r === target) {
+					break;
+				}
+				r += decoded.length;
+				s += entity.length;
+				continue;
+			}
+		}
 		// An escape and its visible character form one rendered unit.
 		if (raw[s] === "\\" && raw[s + 1] === rendered[r]) {
 			if (r === target) {

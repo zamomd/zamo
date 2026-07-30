@@ -21,6 +21,10 @@ describe("renderedText", () => {
 		expect(renderedText("a & b < c")).toBe("a & b < c\n");
 	});
 
+	it("decodes named and numeric entities like the rendered DOM", () => {
+		expect(renderedText("&copy; &#169;")).toBe("© ©\n");
+	});
+
 	// The shape sourceOffset's rendered-newline rule exists for. markdown-it emits
 	// "<ul>\n<li>…</li>\n<li>…</li>\n</ul>\n": every one of those newlines is a real
 	// text node, so it reaches textContent with nothing behind it in the source,
@@ -69,6 +73,8 @@ describe("sourceOffset", () => {
 		["a caret before a closing escaped punctuation stays before its backslash", String.raw`\*literal\*`, 8, 9],
 		["a caret after a literal backslash clears the escaped pair", String.raw`\\path`, 1, 2],
 		["a hard break maps to the newline it came from", "first\nsecond", 6, 6],
+		["a caret after a named entity clears its source", "&copy; x", 1, 6],
+		["a caret after a numeric entity clears its source", "&#169; x", 1, 6],
 		["offset zero is offset zero for plain text", "burst", 0, 0],
 	];
 	for (const [name, raw, rendered, want] of cases) {
