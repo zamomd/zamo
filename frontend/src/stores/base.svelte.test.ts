@@ -1300,9 +1300,9 @@ describe("a gesture in flight locks the next one out", () => {
 
 // The other half of the same lock. These five raise no busy of their own —
 // they commit, then move the view — so a click on a breadcrumb, a mode glyph
-// or a sidebar row while a gesture's write is in flight would reach commitEdit
-// with a forest that still holds the pre-write text and write the same session
-// a second time.
+// or a sidebar row while a gesture is in flight would reach commitEdit
+// underneath it, close the session the gesture is about to hand to another
+// block, and race its operation against storage.
 describe("navigation refuses while a write is in flight", () => {
 	beforeEach(async () => {
 		await base.startEdit(block("ctx", "go", "before"), 0);
@@ -1386,5 +1386,61 @@ describe("the arrows", () => {
 		base.editText = "after";
 		await base.moveCaret("done", "up", 0);
 		expect(App.EditBlockContent).toHaveBeenCalledWith("done", "after");
+	});
+});
+
+// One editing session leaves exactly one revision. writeIfChanged is the whole
+// mechanism, and it compares editText against the forest — a cache of storage
+// that only a re-read refreshes. Every gesture writes first and re-reads last,
+// so anything failing in between leaves the cache holding the pre-write content
+// while storage holds the new one, and the session's next commit finds a
+// difference that no longer exists.
+describe("a gesture that fails after its write still leaves one revision", () => {
+	beforeEach(() => {
+		// gen is ctx's next sibling, so Tab has a real target and ↑ has somewhere
+		// to go. The re-read fixture deliberately does not know about gen: nothing
+		// below is allowed to depend on a re-read having happened.
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
+		base.selectedTopicID = "go";
+	});
+
+	it("does not write a second time after the indent behind the write fails", async () => {
+		vi.mocked(App.IndentBlock).mockRejectedValueOnce(new Error("invalid ops"));
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		base.editText = "after";
+		await base.indent("gen");
+		// Spec §8: the failed gesture keeps the session, text and all.
+		expect(base.editingID).toBe("gen");
+		expect(base.editText).toBe("after");
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+		await base.commitEdit();
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not write a second time after the merge behind the write fails", async () => {
+		vi.mocked(App.MergeBlocks).mockRejectedValueOnce(new Error("invalid ops"));
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		base.editText = "after";
+		await base.mergeIntoPrevious("gen");
+		expect(base.editingID).toBe("gen");
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+		await base.commitEdit();
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not write a second time after the arrow's re-read fails", async () => {
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		base.editText = "after";
+		reloadFixture.onSubtree = () => {
+			throw new Error("read failed");
+		};
+		await base.moveCaret("gen", "up", 0);
+		reloadFixture.onSubtree = null;
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+		// Back to the block that was written, with the text storage already holds.
+		await base.startEdit(block("gen", "go", "after"), 0);
+		base.editText = "after";
+		await base.commitEdit();
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
 	});
 });

@@ -224,12 +224,11 @@
 	// moved somewhere in the page" from "the window went to the background":
 	// alt-tabbing away must not close the editor out from under the reader.
 	function onblur(): void {
-		// A gesture is in flight and owns the session. writeIfChanged compares
-		// editText against the forest, and the forest is only refreshed by the
-		// re-read the gesture has not reached yet — so a commit landing here sees
-		// the pre-write content, issues a second EditBlockContent for the same
-		// session (two revisions where the spec promises one), and closes a
-		// session the gesture then goes on using.
+		// A gesture is in flight and owns the session: it is about to hand the
+		// caret to a different block, and its operation is still running against
+		// storage. A commit landing here would close the session the gesture then
+		// goes on using, and race that operation with a write, a re-read, or — for
+		// a block the reader has emptied — a delete of the row being merged.
 		//
 		// This is the same reasoning as readonly rather than disabled on the
 		// element below, for the route a blur takes rather than the keyboard's:

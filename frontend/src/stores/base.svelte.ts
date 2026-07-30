@@ -658,14 +658,35 @@ class BaseStore {
 	// revision: one editing session is meant to leave exactly one revision, and
 	// leaving a block without touching it should leave none.
 	//
+	// A write that lands is copied into the forest. That comparison above is the
+	// only thing between one session and two revisions, and it is made against the
+	// forest, which is a cache of storage that nothing but a re-read refreshes —
+	// so every path that writes and then fails before reaching its re-read (a
+	// structural op that throws behind the write, an arrow whose re-read fails)
+	// would otherwise leave the cache asserting a difference storage no longer
+	// has, and the session's next commit would issue a second EditBlockContent.
+	//
+	// The direction is what makes this sound: App.EditBlockContent has returned,
+	// so storage holds this text and the cache is being brought into line with
+	// what actually landed. Writing a block into the forest *ahead* of a write —
+	// a caller's own copy, on the way into an edit — is the opposite act and is
+	// wrong for the opposite reason: it puts a snapshot on screen that no write
+	// stands behind, and hands the comparison the caller instead of storage.
+	//
+	// The text is captured before the await rather than read twice: nothing stops
+	// the reader typing while a commit's write is in flight, and the cache must
+	// record what storage took, not what the editor has since become.
+	//
 	// It throws on failure so a structural gesture can abandon itself with the
 	// text still in hand.
 	private async writeIfChanged(id: string): Promise<boolean> {
 		const stored = findBlock(this.forest, id);
-		if (stored === null || stored.Content === this.editText) {
+		const text = this.editText;
+		if (stored === null || stored.Content === text) {
 			return false;
 		}
-		await App.EditBlockContent(id, this.editText);
+		await App.EditBlockContent(id, text);
+		stored.Content = text;
 		return true;
 	}
 
@@ -914,12 +935,13 @@ class BaseStore {
 	// refuses nothing, a write being in flight refuses everything. The acts that
 	// move the view without a write of their own — toggle, focus, clearFocus,
 	// selectTopic and shell.setMode — therefore turn back at busy instead of
-	// committing through it. writeIfChanged compares editText against the forest
-	// and only a re-read refreshes the forest, so a commit landing between a
-	// gesture's write returning and its re-read completing sees the pre-write
-	// content and issues a second EditBlockContent for the same session: two
-	// revisions where the spec promises one, racing the structural op behind it.
-	// The acts that raise busy themselves (setScope, askAI, startLink, the four
+	// committing through it. A gesture owns the session for the whole of its
+	// flight: it is about to hand the caret to a different block, and its
+	// operation is still running against storage. A commit landing in the middle
+	// would close that session underneath it and race the operation with a write,
+	// with a re-read of the topic the operation is still changing, or — where the
+	// reader has emptied the block — with a delete of the very row the operation
+	// is merging. The acts that raise busy themselves (setScope, askAI, startLink, the four
 	// review methods, deleteRevision) check it first and then own it, so their
 	// commit runs with nothing else in flight — which is exactly why commitEdit
 	// does not check busy itself: all eight call it while holding it.
