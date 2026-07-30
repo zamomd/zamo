@@ -139,10 +139,15 @@ func precedingNeighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorI
 
 // renumber respaces every child of parent at positionStride intervals,
 // keeping their order, so an exhausted gap gets room again. It writes
-// positions without writing revisions: a respaced block's head revision then
-// remembers its old position, so rolling that block back lands it in a
-// neighbouring slot. Accepted deliberately — it needs 16 consecutive inserts
-// into one gap to happen at all, and the result is a reordering, not a loss.
+// positions without writing revisions: every sibling of parent then holds a
+// position its own head revision does not remember, so rolling back any one
+// of them — including a block the user never touched — lands it one slot off.
+// Accepted deliberately. It fires on the 17th consecutive insert anchored
+// into the same gap; because each Enter anchors on the block the caret just
+// landed in, that gap halves with every insert, so "17 consecutive inserts
+// into one gap" is just typing seventeen lines between two existing
+// blocks — an ordinary gesture, not a pathological one — and the result is a
+// reordering, not a loss.
 func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM blocks WHERE parent_id IS ? ORDER BY position`, parent)
