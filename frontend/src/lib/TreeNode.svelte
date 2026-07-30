@@ -122,7 +122,12 @@
 			<!-- The dot is the block's anchor: it carries authorship in its fill,
 			     hidden children in its halo, and zoom-in on click. Collapse lives
 			     on the triangle below, which replaces the rail's tick on hover so
-			     two lines never compete for the same 14px. -->
+			     two lines never compete for the same 14px.
+			     Both are disabled while busy, like every other control on the row:
+			     each goes straight to commitEdit, and each can zoom or fold the
+			     tree out from under a gesture that is still running. They are the
+			     two controls physically closest to the block being edited, which
+			     is what made the omission easy to miss. -->
 			<button
 				type="button"
 				class="dot"
@@ -130,6 +135,7 @@
 				class:ring={hasHidden}
 				title="zoom into this block"
 				aria-label="zoom into this block"
+				disabled={base.busy}
 				onclick={() => base.focus(node.block.ID)}
 			></button>
 			{#if hasChildren}
@@ -138,6 +144,7 @@
 					class="toggle"
 					aria-expanded={expanded}
 					aria-label={expanded ? "collapse" : "expand"}
+					disabled={base.busy}
 					onclick={() => base.toggle(node.block.ID)}
 				>
 					{expanded ? "▾" : "▸"}
@@ -370,10 +377,13 @@
 	.dot.ring {
 		box-shadow: 0 0 0 4px var(--halo);
 	}
-	.dot:hover {
+	/* :not(:disabled) on both, matching the gutter's and accept/reject's hover
+	   rules: the dot greys out with the rest of the row while a write is in
+	   flight, and a control that cannot be pressed must not answer the pointer. */
+	.dot:hover:not(:disabled) {
 		background: var(--text);
 	}
-	.dot.ai:hover {
+	.dot.ai:hover:not(:disabled) {
 		background: transparent;
 		border-color: var(--text);
 	}
@@ -411,7 +421,7 @@
 	.toggle:focus-visible {
 		opacity: 1;
 	}
-	.toggle:hover {
+	.toggle:hover:not(:disabled) {
 		background: var(--ground);
 		color: var(--text);
 	}

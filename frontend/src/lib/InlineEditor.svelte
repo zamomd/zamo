@@ -132,6 +132,21 @@
 	// moved somewhere in the page" from "the window went to the background":
 	// alt-tabbing away must not close the editor out from under the reader.
 	function onblur(): void {
+		// A gesture is in flight and owns the session. writeIfChanged compares
+		// editText against the forest, and the forest is only refreshed by the
+		// re-read the gesture has not reached yet — so a commit landing here sees
+		// the pre-write content, issues a second EditBlockContent for the same
+		// session (two revisions where the spec promises one), and closes a
+		// session the gesture then goes on using.
+		//
+		// This is the same reasoning as readonly rather than disabled on the
+		// element below, for the route a blur takes rather than the keyboard's:
+		// insertAbove, indent and outdent all re-order a keyed {#each} around the
+		// focused textarea, and WebKit has historically fired blur when a focused
+		// element is detached and reinserted.
+		if (base.busy) {
+			return;
+		}
 		if (!document.hasFocus()) {
 			return;
 		}
