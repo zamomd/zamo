@@ -74,7 +74,7 @@
 			if (href) void Browser.OpenURL(href);
 			return;
 		}
-		if (!base.busy) base.startEdit(node.block);
+		if (!base.busy) base.startEdit(node.block, node.block.Content.length);
 	}
 	function editFromKey(e: KeyboardEvent): void {
 		if (e.key !== "Enter" && e.key !== " ") return;
@@ -83,7 +83,7 @@
 		// mirror the anchor guard in editFromClick.
 		if ((e.target as HTMLElement).closest("a")) return;
 		e.preventDefault();
-		if (!base.busy) base.startEdit(node.block);
+		if (!base.busy) base.startEdit(node.block, node.block.Content.length);
 	}
 </script>
 
@@ -137,8 +137,8 @@
 			<InlineEditor
 				bind:value={base.editText}
 				busy={base.busy}
-				onsave={() => base.saveEdit()}
-				oncancel={() => base.cancelEdit()}
+				onsave={() => base.commitEdit()}
+				oncancel={() => base.commitEdit()}
 			/>
 		{:else}
 			<!-- The click-to-edit surface holds rendered markdown (possibly links),

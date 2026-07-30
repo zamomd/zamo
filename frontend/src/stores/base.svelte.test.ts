@@ -48,16 +48,17 @@ vi.mock("./changes.svelte", () => ({
 	changes: { blocks: [], edges: [], count: 0, refresh: vi.fn(async () => {}) },
 }));
 
+import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { findNode, type TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";
 import { changes } from "./changes.svelte";
 
-function block(id: string, parent: string): Block {
+function block(id: string, parent: string, content = id): Block {
 	return {
 		ID: id,
 		ParentID: parent,
 		Position: 0,
-		Content: id,
+		Content: content,
 		Meta: {},
 		CreatedAt: "",
 		UpdatedAt: "",
@@ -83,6 +84,7 @@ beforeEach(() => {
 	// lock below), so a leaked editingID would silently disarm other tests.
 	base.editingID = null;
 	base.editText = "";
+	base.editCaret = 0;
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 	// Seed the read fixture to match the seeded forest, so a re-read that a test
@@ -498,5 +500,91 @@ describe("reloadTopic", () => {
 		const before = base.forest.length;
 		await base.reloadTopic("nope");
 		expect(base.forest.length).toBe(before);
+	});
+});
+
+describe("the edit session", () => {
+	it("opens with the block's stored text and the caret it was given", async () => {
+		await base.startEdit(block("ctx", "go", "the context package"), 4);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("the context package");
+		expect(base.editCaret).toBe(4);
+	});
+
+	it("writes nothing when the text did not change", async () => {
+		await base.startEdit(block("ctx", "go", "unchanged"), 0);
+		base.editText = "unchanged";
+		await base.commitEdit();
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+		expect(base.editingID).toBe(null);
+	});
+
+	it("writes once when the text changed", async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		await base.commitEdit();
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.editingID).toBe(null);
+	});
+
+	// Enter, then second thoughts, then leave: nothing left behind.
+	it("deletes a block left empty when it has no children", async () => {
+		await base.startEdit(block("done", "ctx", "something"), 0);
+		base.editText = "";
+		await base.commitEdit();
+		expect(App.DeleteBlock).toHaveBeenCalledWith("done");
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
+	});
+
+	it("keeps an empty block that has children, because it still carries structure", async () => {
+		await base.startEdit(block("ctx", "go", "something"), 0);
+		base.editText = "";
+		await base.commitEdit();
+		expect(App.DeleteBlock).not.toHaveBeenCalled();
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "");
+	});
+
+	it("never deletes a topic root for being empty", async () => {
+		await base.startEdit(block("sqlite", "", "sqlite"), 0);
+		base.editText = "";
+		await base.commitEdit();
+		expect(App.DeleteBlock).not.toHaveBeenCalled();
+	});
+
+	// Spec §8: losing a paragraph to a bridge failure is not acceptable.
+	it("stays in the edit, with the text and caret intact, when the write fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		base.editCaret = 3;
+		await base.commitEdit();
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+		expect(base.editCaret).toBe(3);
+		expect(base.error).not.toBe("");
+	});
+
+	it("commits the open block before opening another one", async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		await base.startEdit(block("done", "ctx", "done"), 2);
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(2);
+	});
+
+	// The blur handler and the next block's click handler both land here in the
+	// same tick; the second must wait for the first, not be dropped by a guard.
+	it("shares one write between concurrent commits", async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		await Promise.all([base.commitEdit(), base.commitEdit()]);
+		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+	});
+
+	it("does nothing when no edit is open", async () => {
+		await base.commitEdit();
+		expect(App.EditBlockContent).not.toHaveBeenCalled();
 	});
 });

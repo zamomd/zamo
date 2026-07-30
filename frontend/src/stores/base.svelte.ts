@@ -74,6 +74,11 @@ class BaseStore {
 	// bypassing the review queue (review guards against AI, not the owner).
 	editingID = $state<string | null>(null);
 	editText = $state("");
+	// Where to put the caret when the editor mounts. It lives in the store, not
+	// in the component, because the row can unmount under an open edit — a
+	// collapse, a zoom, a re-read — and a structural gesture sets it for the
+	// *next* block before the backend call that will re-render it.
+	editCaret = $state(0);
 
 	// Jump-to-block target for a search result. highlightID names the row to
 	// flash and scroll to; highlightNonce is bumped on every reveal so a second
@@ -511,38 +516,105 @@ class BaseStore {
 		}
 	}
 
-	startEdit(block: Block): void {
-		// Ignore while busy or while another block is already being edited, so
-		// an in-progress edit is never silently discarded by switching blocks.
-		if (this.busy || this.editingID !== null) {
-			return;
+	// startEdit puts one block into edit with the caret at a known offset.
+	// Opening a different block commits the current one first, which is what
+	// makes "click another block" a save rather than a discard.
+	async startEdit(block: Block, caret: number): Promise<void> {
+		if (this.editingID !== null && this.editingID !== block.ID) {
+			await this.commitEdit();
 		}
-		this.editingID = block.ID;
-		this.editText = block.Content;
+		// commitEdit re-read the topic, so the caller's copy of the block may be
+		// one generation old; its content is what the editor round-trips, so the
+		// forest's copy is brought in line with it rather than the other way
+		// around — otherwise writeIfChanged's later comparison would run against
+		// a value the editor never showed.
+		const fresh = findBlock(this.forest, block.ID) ?? block;
+		fresh.Content = block.Content;
+		this.editingID = fresh.ID;
+		this.editText = fresh.Content;
+		this.editCaret = caret;
 	}
 
-	cancelEdit(): void {
+	// clearEdit drops the session without writing. It is the tail of a successful
+	// commit and of a block that no longer exists — never a way to discard the
+	// reader's typing, which is why there is no Cancel any more.
+	clearEdit(): void {
 		this.editingID = null;
 		this.editText = "";
+		this.editCaret = 0;
 	}
 
-	// saveEdit writes the block's new content directly, then re-reads the base.
-	async saveEdit(): Promise<void> {
-		if (this.editingID === null || this.busy) {
+	// writeIfChanged persists editText when it differs from what storage holds,
+	// and reports whether it wrote. Unchanged text produces no write and no
+	// revision: one editing session is meant to leave exactly one revision, and
+	// leaving a block without touching it should leave none.
+	//
+	// It throws on failure so a structural gesture can abandon itself with the
+	// text still in hand.
+	private async writeIfChanged(id: string): Promise<boolean> {
+		const stored = findBlock(this.forest, id);
+		if (stored === null || stored.Content === this.editText) {
+			return false;
+		}
+		await App.EditBlockContent(id, this.editText);
+		return true;
+	}
+
+	// commitEdit is the single exit from an edit: click away, Esc, a gesture that
+	// moves to another block, a mode switch, an AI command. It writes only if the
+	// text changed, and drops a block left empty with no children — press Enter,
+	// think better of it, leave, and nothing is left behind.
+	//
+	// A failed write keeps the session open with the text and caret intact
+	// (spec §8): losing a paragraph to a bridge error is not acceptable.
+	//
+	// Concurrent callers share one in-flight promise rather than the second being
+	// refused: the textarea's blur and the next block's click both land here in
+	// the same tick, and a guard would swallow the click.
+	private committing: Promise<void> | null = null;
+
+	commitEdit(): Promise<void> {
+		if (this.committing !== null) {
+			return this.committing;
+		}
+		this.committing = this.runCommit().finally(() => {
+			this.committing = null;
+		});
+		return this.committing;
+	}
+
+	private async runCommit(): Promise<void> {
+		const id = this.editingID;
+		if (id === null) {
 			return;
 		}
-		this.busy = true;
+		const node = findNode(this.forest, id);
+		if (node === null) {
+			// The block went away under the editor — nothing to write it to.
+			this.clearEdit();
+			return;
+		}
+		const topic = topicOf(this.forest, id);
 		this.error = "";
 		try {
-			await App.EditBlockContent(this.editingID, this.editText);
-			await this.reload();
-			this.status = "saved edit";
-			this.cancelEdit();
+			// An empty block that carries no children carries nothing at all. One
+			// that has children still carries structure, and a topic root is a page:
+			// neither is deleted for being blank.
+			const empty = this.editText.trim() === "";
+			const disposable = empty && node.children.length === 0 && node.block.ParentID !== "";
+			if (disposable) {
+				await App.DeleteBlock(id);
+			} else if (!(await this.writeIfChanged(id))) {
+				this.clearEdit();
+				return;
+			}
+			this.clearEdit();
+			if (topic !== null) {
+				await this.reloadTopic(topic);
+			}
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
-		} finally {
-			this.busy = false;
 		}
 	}
 
