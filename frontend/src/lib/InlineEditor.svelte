@@ -26,14 +26,26 @@
 
 	// Mount with the caret where the gesture that opened this block put it, then
 	// take focus. Both have to happen after the value is in the DOM, which is why
-	// this is an effect and not an attribute.
+	// this is an effect and not an attribute. Depends only on base.editCaret, so
+	// it does not re-run while the reader types — see the effect below for the
+	// case that does need to track ordinary text changes.
 	$effect(() => {
 		if (el === undefined) {
 			return;
 		}
 		el.focus();
 		el.setSelectionRange(base.editCaret, base.editCaret);
-		// biome-ignore lint/suspicious/noFocusedTests: fit() is the height-sync helper above, not a focused test — biome's heuristic matches the bare name regardless of context.
+		fit();
+	});
+
+	// The store can replace the text without the reader touching the keyboard —
+	// a merge lands the joined content here — and a programmatic write fires no
+	// input event, so the height has to track editText as well as typing.
+	// Separate from the caret effect on purpose: folding editText into that one
+	// would re-run focus() and setSelectionRange() on every keystroke and pin
+	// the caret where the session started.
+	$effect(() => {
+		void base.editText;
 		fit();
 	});
 
@@ -118,6 +130,12 @@
 	}
 </script>
 
+<!-- A write is in flight: the gestures already refuse to start a second one,
+     and this stops the keyboard from typing into a block whose text is about
+     to be replaced by the re-read. readonly rather than disabled because a
+     disabled textarea loses focus without getting it back — and, where the
+     engine fires blur on disable, onblur would commit the session out from
+     under the gesture that set busy in the first place. -->
 <textarea
 	bind:this={el}
 	bind:value={base.editText}
@@ -125,7 +143,7 @@
 	aria-label="block content"
 	rows="1"
 	spellcheck="false"
-	disabled={base.busy}
+	readonly={base.busy}
 	oninput={fit}
 	{onkeydown}
 	{onblur}
