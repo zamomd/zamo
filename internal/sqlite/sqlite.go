@@ -228,7 +228,8 @@ func requireAnchor(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op kn
 	return nil
 }
 
-// applyAdd inserts a new block appended under its parent, tagged with the
+// applyAdd inserts a new block, appended under its parent or inserted next to
+// an anchor sibling when op.After or op.Before is set, tagged with the
 // batch's authorship and source as provenance, and writes its creation
 // revision (seq 1).
 func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
@@ -320,10 +321,11 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	return nil
 }
 
-// applyMove reparents a block, appending it after its new siblings, and
-// writes a revision that carries the block's unchanged content alongside the
-// new parent/position. It refuses a move into the block's own subtree (see
-// rejectMoveCycle) before writing.
+// applyMove reparents a block, appending it after its new siblings or
+// inserting it next to an anchor sibling when op.After or op.Before is set,
+// and writes a revision that carries the block's unchanged content alongside
+// the new parent/position. It refuses a move into the block's own subtree
+// (see rejectMoveCycle) before writing.
 func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	if err := requireParent(ctx, tx, op.Kind, op); err != nil {
 		return err
@@ -347,8 +349,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
-	var seq int
-	seq, err = nextSeq(ctx, tx, string(op.BlockID))
+	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))
 	}
