@@ -1092,6 +1092,36 @@ describe("placing the caret", () => {
 	});
 });
 
+// The store holds the caret because the editor does not survive its own row:
+// a zoom-out re-renders the tree from a different root and the textarea is a
+// fresh instance, which restores editCaret. That is only right if editCaret
+// tracks where the caret *is* — the reader's own clicks and arrows included —
+// rather than where the session happened to open.
+describe("the reader's own caret", () => {
+	it("survives a zoom-out instead of snapping back to where the session opened", async () => {
+		await base.focus("ctx");
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		const placed = base.editCaretNonce;
+
+		// What the editor reports as the reader moves inside the textarea.
+		base.syncCaret("done", 3);
+		base.clearFocus();
+
+		expect(base.editCaret).toBe(3);
+		// And no placement was announced along the way: a bump here would re-run
+		// the editor's effect and drag the caret somewhere on every keystroke.
+		expect(base.editCaretNonce).toBe(placed);
+	});
+
+	// A structural gesture hands the session to a different block, and the
+	// outgoing editor can still emit a keyup on its way out.
+	it("ignores a report from an editor whose session has moved on", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 1);
+		base.syncCaret("done", 3);
+		expect(base.editCaret).toBe(1);
+	});
+});
+
 describe("Delete at the end", () => {
 	it("pulls the next visible block into this one", async () => {
 		await base.startEdit(block("ctx", "go", "ctx"), 3);
@@ -1102,9 +1132,10 @@ describe("Delete at the end", () => {
 		expect(base.editCaret).toBe(3);
 	});
 
-	// The caret the reader is at is the editor's, not the store's: editCaret is
-	// only ever written by the store, so it says where this session *opened* —
-	// here a click at the start, before the reader arrowed to the end.
+	// The caret the gesture acts on is the one its keystroke carried, not the
+	// store's copy: syncCaret reports on keyup, so a caret the reader has only
+	// just moved may not have been reported yet. Here the session opened on a
+	// click at the start and the keystroke arrives from the end.
 	it("lands the caret where the reader is, not where the editor opened", async () => {
 		await base.startEdit(block("ctx", "go", "ctx"), 0);
 		await base.pullNextInto("ctx", 3);

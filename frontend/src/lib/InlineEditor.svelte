@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import { base } from "../stores/base.svelte";
 	import { caretColumn, lineCount, lineIndexOf } from "./caret";
 
@@ -28,25 +29,49 @@
 	// take focus. Both have to happen after the value is in the DOM, which is why
 	// this is an effect and not an attribute.
 	//
-	// It tracks editCaretNonce as well as editCaret because a placement is an
-	// event, not a value: a merge lands the caret at the seam, the arrow lands it
-	// in the same column it left, and either can repeat the offset the store
-	// already held — which the effect would not see. The store bumps the nonce on
-	// every placement, so every placement re-runs this.
+	// editCaretNonce is its sole trigger, because a placement is an event, not a
+	// value: a merge lands the caret at the seam, the arrow lands it in the same
+	// column it left, and either can repeat the offset the store already held —
+	// which the effect would not see. The store bumps the nonce on every
+	// placement, so every placement re-runs this.
 	//
-	// It deliberately does not track editText: that would re-run focus() and
-	// setSelectionRange() on every keystroke and pin the caret where the session
-	// started. The store's half of the bargain is that editText is already final
-	// whenever a placement is announced — see base.svelte.ts's editCaret.
+	// The offset itself is read untracked, which is what keeps the nonce sole:
+	// reportCaret below writes editCaret on every movement of the reader's own,
+	// and tracking it would turn each of those into a placement — focus() and
+	// setSelectionRange() on every keystroke, fighting the caret that provoked
+	// them.
+	//
+	// It does not track editText either, for the same reason. The store's half of
+	// the bargain is that editText is already final whenever a placement is
+	// announced — see base.svelte.ts's editCaret.
 	$effect(() => {
 		void base.editCaretNonce;
 		if (el === undefined) {
 			return;
 		}
+		const at = untrack(() => base.editCaret);
 		el.focus();
-		el.setSelectionRange(base.editCaret, base.editCaret);
+		el.setSelectionRange(at, at);
 		fit();
 	});
+
+	// The reader's caret, back into the store, where it outlives this component:
+	// a zoom-out re-renders the tree from a different root, and the fresh editor
+	// restores editCaret (see the effect above). Without this it would restore
+	// the offset the session opened at.
+	//
+	// Four events rather than an element-level selectionchange, which is not
+	// uniformly available: keyup covers the keyboard (arrows within the block,
+	// Home/End, typing), click the pointer, select a drag-selection or a
+	// select-all, and input the movements that come from neither — a paste from
+	// a context menu, a drop. Overlapping is harmless: each report writes the
+	// offset the DOM already has, so a redundant one is a no-op.
+	function reportCaret(): void {
+		if (el === undefined) {
+			return;
+		}
+		base.syncCaret(id, el.selectionStart);
+	}
 
 	// The height tracks the text, and only the text. This covers typing (the
 	// binding writes editText on every input, so the effect re-runs) and the
@@ -173,6 +198,10 @@
 	readonly={base.busy}
 	{onkeydown}
 	{onblur}
+	onkeyup={reportCaret}
+	onclick={reportCaret}
+	onselect={reportCaret}
+	oninput={reportCaret}
 ></textarea>
 
 <style>

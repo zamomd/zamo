@@ -85,11 +85,18 @@ class BaseStore {
 	// bypassing the review queue (review guards against AI, not the owner).
 	editingID = $state<string | null>(null);
 	editText = $state("");
-	// Where to put the caret when the editor mounts. It lives in the store, not
-	// in the component, because the component is destroyed and rebuilt under the
-	// caret it is supposed to keep: a collapse, a zoom or a re-read unmounts the
-	// row, and every structural gesture hands the session to a *different*
-	// block, whose editor is a fresh instance with no memory of its own.
+	// Where the caret is. It lives in the store, not in the component, because
+	// the component is destroyed and rebuilt under the caret it is supposed to
+	// keep: a collapse, a zoom or a re-read unmounts the row, and every
+	// structural gesture hands the session to a *different* block, whose editor
+	// is a fresh instance with no memory of its own.
+	//
+	// Two writers, and the difference between them is the nonce: the store places
+	// the caret (a gesture's landing, an opening click) and announces it, while
+	// the editor reports the reader's own movements through syncCaret and
+	// announces nothing. Both are needed — a mount restores this offset, so an
+	// offset that only ever recorded where the session opened would throw the
+	// reader back to their first click every time the editor remounts.
 	//
 	// editCaretNonce is bumped on every placement so the editor's effect fires
 	// even when the offset repeats — a merge and the arrow both land on offsets
@@ -614,6 +621,23 @@ class BaseStore {
 		this.editCaretNonce++;
 	}
 
+	// syncCaret records where the reader has just moved the caret, reported by
+	// the editor from the DOM. It deliberately does not bump editCaretNonce: a
+	// nonce bump is an announcement the editor acts on, and this travels the
+	// other way — it copies an offset the textarea already shows. That is also
+	// why it cannot fight a placement: the value it writes is whatever the last
+	// setSelectionRange put there.
+	//
+	// The id is the reporting editor's own. A structural gesture hands the
+	// session to a different block, and the outgoing instance can still emit an
+	// event on its way out; that report belongs to a session that is over.
+	syncCaret(id: string, offset: number): void {
+		if (this.editingID !== id) {
+			return;
+		}
+		this.editCaret = offset;
+	}
+
 	// writeIfChanged persists editText when it differs from what storage holds,
 	// and reports whether it wrote. Unchanged text produces no write and no
 	// revision: one editing session is meant to leave exactly one revision, and
@@ -768,10 +792,11 @@ class BaseStore {
 	// where it is.
 	//
 	// The caret is an argument, like splitAtCaret's, rather than read from
-	// editCaret: the reader's own movements inside the textarea are never written
-	// back to the store, so editCaret is where this session opened, not where the
-	// caret is now — which for Delete-at-end is exactly the difference between the
-	// join and the start of the block.
+	// editCaret: the keystroke that triggers this is acting on the offset the DOM
+	// holds at keydown, and syncCaret reports on keyup — so a caret moved by a key
+	// still held down has not been reported yet. Passing it explicitly means the
+	// gesture never depends on a report having landed first, and for Delete-at-end
+	// that is the difference between the join and the start of the block.
 	async pullNextInto(id: string, caret: number): Promise<void> {
 		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
 		if (this.busy || this.isViewRoot(id) || source === null) {
