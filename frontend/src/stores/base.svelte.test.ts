@@ -20,6 +20,10 @@ const reloadFixture = vi.hoisted(() => ({
 	// while a reload is still in flight and see which act wins.
 	topicMapError: null as Error | null,
 	gate: null as Promise<void> | null,
+	// onSubtree observes the store mid-re-read: everything a gesture does after
+	// its GetSubtree is invisible to a test that can only look at the end state,
+	// and the order of those steps is the whole point of the caret's placement.
+	onSubtree: null as ((id: string) => void) | null,
 }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
 	App: {
@@ -32,7 +36,10 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			}
 			return reloadFixture.topics;
 		},
-		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
+		GetSubtree: async (id: string) => {
+			reloadFixture.onSubtree?.(id);
+			return reloadFixture.subtrees[id] ?? [];
+		},
 		ExpandTopic: async () => {},
 		EditWithAI: async () => {},
 		EditBlockContent: vi.fn(async () => {}),
@@ -94,6 +101,7 @@ beforeEach(() => {
 	base.busy = false;
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
+	reloadFixture.onSubtree = null;
 	// Seed the read fixture to match the seeded forest, so a re-read that a test
 	// did not set up is a round trip rather than a topic silently vanishing.
 	reloadFixture.topics = [block("go", ""), block("sqlite", "")];
@@ -910,6 +918,65 @@ describe("Backspace at the start", () => {
 		await base.startEdit(block("done", "ctx", "done"), 0);
 		await base.mergeIntoPrevious("done");
 		expect(base.editText).toBe("ctxdone");
+	});
+});
+
+// The editor places the caret from the store, in an effect that runs when it
+// mounts and whenever a placement is announced. Two things have to hold for the
+// caret to land where the gesture meant it to: the text must already be final
+// when the placement happens (otherwise bind:value assigns el.value afterwards,
+// and the HTML spec moves the caret to the end of a textarea whose value is
+// written), and the announcement must be an edge rather than a value (otherwise
+// a placement that repeats the previous offset is not an announcement at all).
+describe("placing the caret", () => {
+	it("moves the editor only after the re-read, so it never mounts on the old text", async () => {
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go", "ctxdone")];
+		const during: { id: string | null; text: string }[] = [];
+		reloadFixture.onSubtree = () => {
+			during.push({ id: base.editingID, text: base.editText });
+		};
+
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.mergeIntoPrevious("done");
+
+		// Mid-merge the session is still the source block's, with the source's
+		// text: nothing has been placed on the target yet.
+		expect(during).toEqual([{ id: "done", text: "done" }]);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("ctxdone");
+		expect(base.editCaret).toBe(3);
+	});
+
+	it("bumps the nonce when a session opens and when it closes", async () => {
+		const before = base.editCaretNonce;
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		expect(base.editCaretNonce).toBe(before + 1);
+		base.clearEdit();
+		expect(base.editCaretNonce).toBe(before + 2);
+	});
+
+	it("bumps the nonce for a gesture that lands on the offset it was already at", async () => {
+		await base.startEdit(block("ctx", "go", "ctx"), 0);
+		const opened = base.editCaretNonce;
+
+		await base.moveCaret("ctx", "down", 0);
+
+		// Same offset, different block: without the bump the editor's effect has
+		// nothing to re-run on and the caret stays wherever the DOM left it.
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(0);
+		expect(base.editCaretNonce).toBe(opened + 1);
+	});
+
+	it("bumps the nonce for a merge and for a split", async () => {
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		const opened = base.editCaretNonce;
+		await base.mergeIntoPrevious("done");
+		expect(base.editCaretNonce).toBe(opened + 1);
+
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		await base.splitAtCaret("ctx", 1);
+		expect(base.editCaretNonce).toBe(opened + 2);
 	});
 });
 

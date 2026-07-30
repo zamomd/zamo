@@ -86,10 +86,23 @@ class BaseStore {
 	editingID = $state<string | null>(null);
 	editText = $state("");
 	// Where to put the caret when the editor mounts. It lives in the store, not
-	// in the component, because the row can unmount under an open edit — a
-	// collapse, a zoom, a re-read — and a structural gesture sets it for the
-	// *next* block before the backend call that will re-render it.
+	// in the component, because the component is destroyed and rebuilt under the
+	// caret it is supposed to keep: a collapse, a zoom or a re-read unmounts the
+	// row, and every structural gesture hands the session to a *different*
+	// block, whose editor is a fresh instance with no memory of its own.
+	//
+	// editCaretNonce is bumped on every placement so the editor's effect fires
+	// even when the offset repeats — a merge and the arrow both land on offsets
+	// the previous session may already have been at, and an unchanged number is
+	// not an event. Same idiom, and the same reason, as highlightNonce below.
+	//
+	// The invariant both halves serve: when the editor mounts, or when a caret is
+	// placed into a mounted one, editText is already the final text. Assigning
+	// editText afterwards would move the caret to the end regardless of what was
+	// placed — bind:value writes the textarea's value, and the HTML spec puts the
+	// caret at the end of a text control whose value is written.
 	editCaret = $state(0);
+	editCaretNonce = $state(0);
 
 	// Jump-to-block target for a search result. highlightID names the row to
 	// flash and scroll to; highlightNonce is bumped on every reveal so a second
@@ -567,9 +580,12 @@ class BaseStore {
 		// commitEdit re-read the topic, so the caller's copy of the block may be
 		// one generation old; its content is what the editor round-trips.
 		const fresh = findBlock(this.forest, block.ID) ?? block;
-		this.editingID = fresh.ID;
+		// Text first, then the session and the caret: the editor mounts on the
+		// assignment to editingID, and it must find the final text already there.
 		this.editText = fresh.Content;
+		this.editingID = fresh.ID;
 		this.editCaret = caret;
+		this.editCaretNonce++;
 	}
 
 	// clearEdit drops the session without writing. It is the tail of a successful
@@ -579,6 +595,7 @@ class BaseStore {
 		this.editingID = null;
 		this.editText = "";
 		this.editCaret = 0;
+		this.editCaretNonce++;
 	}
 
 	// writeIfChanged persists editText when it differs from what storage holds,
@@ -638,12 +655,16 @@ class BaseStore {
 		this.error = "";
 		try {
 			const newID = await App.SplitBlock(id, text.slice(0, caret), tail);
-			this.editingID = newID;
-			this.editText = tail;
-			this.editCaret = 0;
 			if (topic !== null) {
 				await this.reloadTopic(topic);
 			}
+			// After the re-read, so the row holding the tail exists before the
+			// session moves to it and the editor mounts on the tail already in
+			// place — see editCaret.
+			this.editText = tail;
+			this.editingID = newID;
+			this.editCaret = 0;
+			this.editCaretNonce++;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 		} finally {
@@ -753,14 +774,17 @@ class BaseStore {
 		this.busy = true;
 		this.error = "";
 		try {
-			const wrote = await this.writeIfChanged(id);
-			const text = findBlock(this.forest, target)?.Content ?? "";
-			this.editingID = target;
-			this.editText = text;
-			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
-			if (wrote && topic !== null) {
+			if ((await this.writeIfChanged(id)) && topic !== null) {
 				await this.reloadTopic(topic);
 			}
+			// The target's text is read from the re-read forest and assigned before
+			// the session moves, so the editor never sees the block it is leaving
+			// under the caret it is being given — see editCaret.
+			const text = findBlock(this.forest, target)?.Content ?? "";
+			this.editText = text;
+			this.editingID = target;
+			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
+			this.editCaretNonce++;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 		} finally {
@@ -770,7 +794,13 @@ class BaseStore {
 
 	// structural is the shape every gesture below Enter shares: write the pending
 	// text (the backend methods take ids, not content, so an unwritten edit would
-	// be acted on stale), run the operation, land the caret, re-read the topic.
+	// be acted on stale), run the operation, re-read the topic, land the caret.
+	//
+	// The landing comes last, after the re-read: the block it lands on carries
+	// text the operation itself produced — a merge's joined content — and the
+	// editor has to mount on that text, not on the text of the block the reader
+	// was in when they pressed the key. See editCaret for what goes wrong when
+	// the text arrives second.
 	//
 	// A failure leaves the session exactly as it was — the text is still in the
 	// editor, which is the whole point of not clearing it (spec §8).
@@ -785,15 +815,14 @@ class BaseStore {
 		try {
 			await this.writeIfChanged(id);
 			await op();
-			if (land !== undefined) {
-				this.editingID = land.id;
-				this.editCaret = land.caret;
-			}
 			if (topic !== null) {
 				await this.reloadTopic(topic);
 			}
 			if (land !== undefined) {
 				this.editText = findBlock(this.forest, land.id)?.Content ?? this.editText;
+				this.editingID = land.id;
+				this.editCaret = land.caret;
+				this.editCaretNonce++;
 			}
 		} catch (err: unknown) {
 			this.error = messageFor(err);

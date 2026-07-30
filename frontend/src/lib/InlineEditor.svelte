@@ -8,14 +8,14 @@
 	//
 	// It reads the store directly rather than through props because the caret it
 	// restores has to survive this component unmounting: a collapse, a zoom or a
-	// re-read destroys the row, and a structural gesture deliberately sets the
-	// caret for the *next* block before the row that will hold it even exists.
+	// re-read destroys the row, and a structural gesture hands the session to a
+	// different block, whose editor is a fresh instance of this component.
 	let { id }: { id: string } = $props();
 
 	let el: HTMLTextAreaElement | undefined;
 
 	// Grow to fit the text. field-sizing: content is not dependable in WKWebView,
-	// so the height is synced from scrollHeight on every input and once on mount.
+	// so the height is synced from scrollHeight whenever the text changes.
 	function fit(): void {
 		if (el === undefined) {
 			return;
@@ -26,10 +26,20 @@
 
 	// Mount with the caret where the gesture that opened this block put it, then
 	// take focus. Both have to happen after the value is in the DOM, which is why
-	// this is an effect and not an attribute. Depends only on base.editCaret, so
-	// it does not re-run while the reader types — see the effect below for the
-	// case that does need to track ordinary text changes.
+	// this is an effect and not an attribute.
+	//
+	// It tracks editCaretNonce as well as editCaret because a placement is an
+	// event, not a value: a merge lands the caret at the seam, the arrow lands it
+	// in the same column it left, and either can repeat the offset the store
+	// already held — which the effect would not see. The store bumps the nonce on
+	// every placement, so every placement re-runs this.
+	//
+	// It deliberately does not track editText: that would re-run focus() and
+	// setSelectionRange() on every keystroke and pin the caret where the session
+	// started. The store's half of the bargain is that editText is already final
+	// whenever a placement is announced — see base.svelte.ts's editCaret.
 	$effect(() => {
+		void base.editCaretNonce;
 		if (el === undefined) {
 			return;
 		}
@@ -38,12 +48,11 @@
 		fit();
 	});
 
-	// The store can replace the text without the reader touching the keyboard —
-	// a merge lands the joined content here — and a programmatic write fires no
-	// input event, so the height has to track editText as well as typing.
-	// Separate from the caret effect on purpose: folding editText into that one
-	// would re-run focus() and setSelectionRange() on every keystroke and pin
-	// the caret where the session started.
+	// The height tracks the text, and only the text. This covers typing (the
+	// binding writes editText on every input, so the effect re-runs) and the
+	// store replacing the text wholesale, which fires no input event at all —
+	// which is why oninput is not also wired to fit(): it would be the same call
+	// twice per keystroke, and it would not have covered the second case.
 	$effect(() => {
 		void base.editText;
 		fit();
@@ -144,7 +153,6 @@
 	rows="1"
 	spellcheck="false"
 	readonly={base.busy}
-	oninput={fit}
 	{onkeydown}
 	{onblur}
 ></textarea>
