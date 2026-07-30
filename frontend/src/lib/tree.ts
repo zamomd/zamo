@@ -68,6 +68,42 @@ export function findPath(nodes: TreeNodeData[], id: string): string[] | null {
 	return null;
 }
 
+// findNode walks the forest for a node by id. findBlock answers "what does this
+// block say"; this answers "what hangs under it", which is what zooming into a
+// block needs.
+export function findNode(nodes: TreeNodeData[], id: string): TreeNodeData | null {
+	for (const node of nodes) {
+		if (node.block.ID === id) {
+			return node;
+		}
+		const hit = findNode(node.children, id);
+		if (hit) {
+			return hit;
+		}
+	}
+	return null;
+}
+
+// Crumb is one step of the zoom-in trail: an ancestor the reader can click to
+// come back out to.
+export type Crumb = { id: string; title: string };
+
+// crumbTrail returns id's ancestors, root-first and excluding id itself, with
+// titles already reduced to one line. An empty trail (a topic root) is distinct
+// from null (absent from the forest) for the same reason findPath draws that
+// line: the caller has to tell "already at the top" from "not here".
+export function crumbTrail(nodes: TreeNodeData[], id: string): Crumb[] | null {
+	const path = findPath(nodes, id);
+	if (path === null) {
+		return null;
+	}
+	return path.map((ancestorID) => ({
+		id: ancestorID,
+		// findPath returned this id out of this forest, so the block is present.
+		title: plainText(findBlock(nodes, ancestorID)?.Content ?? ""),
+	}));
+}
+
 // topicOf reports which topic root's tree a block belongs to. The sidebar
 // selects a topic while search and the changes list jump to blocks, so every
 // jump has to answer this before it can decide whether the main area must
