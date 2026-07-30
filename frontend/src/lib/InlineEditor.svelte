@@ -137,10 +137,12 @@
 	   font: inherit rather than a size of its own, so the page title's own row —
 	   which is larger — stays right when it is the block being edited.
 
-	   The global `input, textarea, select` rule in app.css gives every field a
-	   hairline frame and horizontal padding; this rule is (0,2,1) against its
-	   (0,0,1) and the focus rule below is (0,3,1) against (0,1,1), so both win on
-	   the class column and neither depends on source order. */
+	   The class lives on the <textarea> itself, not a wrapper, so Svelte emits
+	   `.editor.svelte-hash` with no element type in it: (0,2,0) against the global
+	   `input, textarea, select` rule's (0,0,1), and the focus rule below emits
+	   `.editor.svelte-hash:focus-visible`, (0,3,0) against (0,1,1). Both still win
+	   on the class column and neither depends on source order — the margin is
+	   wider than a selector with a nested `textarea` would have needed. */
 	.editor {
 		flex: 1;
 		min-width: 0;
