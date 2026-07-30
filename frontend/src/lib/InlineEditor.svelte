@@ -184,22 +184,38 @@
 				// afterwards. A caret that did not move had nowhere to go inside the
 				// block, which is exactly what "on the edge visual line" means.
 				//
-				// The consequence, and it is how an outliner behaves: from a non-zero
-				// column on the top visual line, leaving takes a second press, because
-				// WebKit's first ArrowUp there moves the caret to offset 0 rather than
-				// refusing to move at all.
+				// What that costs, and it is more than the second press it looks like.
+				// From a non-zero column on the edge visual line WebKit's first press
+				// moves the caret to the block's own edge — offset 0 going up, the end
+				// of the text going down — rather than refusing to move, so the frame
+				// below sees it moved and does nothing. The second press then computes
+				// its column from that already-moved offset: 0 upwards, and the last
+				// line's end column downwards. So leaving a wrapped block upward always
+				// lands at column 0 of the block above, and downward at the end-of-line
+				// column — where the non-wrapping fast path above carries the reader's
+				// real column across. The two paths disagree, and this is the price of
+				// the approach the owner ratified, not a defect waiting to be found.
 				requestAnimationFrame(() => {
 					// Everything that can have happened in between. The element may be
 					// gone (a re-read or a collapse unmounted the row) or no longer the
 					// focused one (the reader clicked away, and moving the caret would
 					// steal the focus back from them); the session may have been handed
 					// to another block; the reader may have typed, or a gesture may have
-					// replaced the text under them. moveCaret's own busy check covers
-					// the last of them, a write that started meanwhile.
+					// replaced the text under them. A gesture that started meanwhile is
+					// covered by moveCaret's own busy check.
 					if (el?.isConnected !== true || document.activeElement !== el) {
 						return;
 					}
 					if (base.editingID !== id || base.editText !== value) {
+						return;
+					}
+					// A commit is the one thing busy does not cover: commitEdit neither
+					// raises nor checks it (see base.commitInFlight). Escape pressed
+					// inside this same frame, or a blur, starts a write for this session
+					// that moveCaret would then run a second writeIfChanged against —
+					// two revisions for one session, which is the invariant this whole
+					// path sits underneath.
+					if (base.commitInFlight) {
 						return;
 					}
 					// The caret has to be exactly where it was and still collapsed: a

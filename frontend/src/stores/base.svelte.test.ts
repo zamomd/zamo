@@ -20,6 +20,9 @@ const reloadFixture = vi.hoisted(() => ({
 	// while a reload is still in flight and see which act wins.
 	topicMapError: null as Error | null,
 	gate: null as Promise<void> | null,
+	// The same idea for the write: it holds EditBlockContent open so a test can
+	// look at the store while a commit is genuinely in flight.
+	writeGate: null as Promise<void> | null,
 	// onSubtree observes the store mid-re-read: everything a gesture does after
 	// its GetSubtree is invisible to a test that can only look at the end state,
 	// and the order of those steps is the whole point of the caret's placement.
@@ -42,7 +45,11 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 		},
 		ExpandTopic: async () => {},
 		EditWithAI: async () => {},
-		EditBlockContent: vi.fn(async () => {}),
+		EditBlockContent: vi.fn(async () => {
+			if (reloadFixture.writeGate !== null) {
+				await reloadFixture.writeGate;
+			}
+		}),
 		DeleteBlock: vi.fn(async () => {}),
 		SplitBlock: vi.fn(async () => "new"),
 		InsertBlockBefore: vi.fn(async () => "above"),
@@ -111,6 +118,7 @@ beforeEach(() => {
 	base.revisions = [];
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
+	reloadFixture.writeGate = null;
 	reloadFixture.onSubtree = null;
 	// Seed the read fixture to match the seeded forest, so a re-read that a test
 	// did not set up is a round trip rather than a topic silently vanishing.
@@ -1442,5 +1450,117 @@ describe("a gesture that fails after its write still leaves one revision", () =>
 		base.editText = "after";
 		await base.commitEdit();
 		expect(App.EditBlockContent).toHaveBeenCalledTimes(1);
+	});
+
+	// The same conflation one level up: the operation landed in storage, so the
+	// gesture happened, and only the cache refresh behind it failed. Skipping the
+	// landing would leave the session sitting on the block the merge consumed,
+	// and the arrow doing nothing at all after a write that did go through.
+	it("lands the caret after a merge whose re-read failed", async () => {
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		reloadFixture.onSubtree = () => {
+			throw new Error("read failed");
+		};
+		await base.mergeIntoPrevious("gen");
+		reloadFixture.onSubtree = null;
+		expect(App.MergeBlocks).toHaveBeenCalledWith("done", "gen");
+		expect(base.editingID).toBe("done");
+		expect(base.error).not.toBe("");
+	});
+
+	it("moves the session after an arrow whose re-read failed", async () => {
+		await base.startEdit(block("gen", "go", "gen"), 0);
+		base.editText = "after";
+		reloadFixture.onSubtree = () => {
+			throw new Error("read failed");
+		};
+		await base.moveCaret("gen", "up", 0);
+		reloadFixture.onSubtree = null;
+		expect(base.editingID).toBe("done");
+		expect(base.error).not.toBe("");
+	});
+});
+
+// A commit's verdict is about the write, not about the re-read that follows it.
+// The two shared one catch, so a DeleteBlock that succeeded and a reloadTopic
+// that then threw came back false — with clearEdit already run, so the session
+// the failure contract promises to preserve was gone, every caller aborted as
+// though the write had never happened, and the tree went on showing a block
+// storage no longer had.
+describe("a commit reports its write, not its re-read", () => {
+	function readFails(): void {
+		reloadFixture.onSubtree = () => {
+			throw new Error("read failed");
+		};
+	}
+
+	it("returns false and keeps the session when the write itself fails", async () => {
+		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		base.editCaret = 3;
+		expect(await base.commitEdit()).toBe(false);
+		expect(base.editingID).toBe("ctx");
+		expect(base.editText).toBe("after");
+		expect(base.editCaret).toBe(3);
+	});
+
+	it("returns true when the write landed and only the re-read failed", async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		readFails();
+		const closed = await base.commitEdit();
+		reloadFixture.onSubtree = null;
+		expect(closed).toBe(true);
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.editingID).toBe(null);
+		// Surfaced as what it is — a stale view — rather than disguised as a
+		// commit that did not happen.
+		expect(base.error).not.toBe("");
+	});
+
+	// The worst of the two: after a successful DeleteBlock the false verdict told
+	// the reader the commit failed while the block was already gone from storage.
+	it("returns true when the delete landed and only the re-read failed", async () => {
+		await base.startEdit(block("done", "ctx", "something"), 0);
+		base.editText = "";
+		readFails();
+		const closed = await base.commitEdit();
+		reloadFixture.onSubtree = null;
+		expect(closed).toBe(true);
+		expect(App.DeleteBlock).toHaveBeenCalledWith("done");
+		expect(base.editingID).toBe(null);
+		expect(base.error).not.toBe("");
+	});
+
+	// The deferred arrow path decides a frame after the keystroke and has to be
+	// able to see a commit that started inside that frame. busy cannot tell it:
+	// commitEdit neither raises nor checks busy.
+	it("is visible from outside the store while it runs", async () => {
+		let release = (): void => {};
+		reloadFixture.writeGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		expect(base.commitInFlight).toBe(false);
+		const closed = base.commitEdit();
+		expect(base.commitInFlight).toBe(true);
+		release();
+		expect(await closed).toBe(true);
+		expect(base.commitInFlight).toBe(false);
+	});
+
+	// What the false verdict cost every caller: the act they committed for was
+	// abandoned even though the write had landed and the session was already
+	// closed, so the reader's click did nothing at all.
+	it("collapses the node when only the commit's re-read failed", async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+		readFails();
+		await base.toggle("go");
+		reloadFixture.onSubtree = null;
+		expect(base.collapsed.has("go")).toBe(true);
+		expect(base.editingID).toBe(null);
 	});
 });

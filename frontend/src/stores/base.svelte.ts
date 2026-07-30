@@ -359,6 +359,30 @@ class BaseStore {
 		this.forest[i] = tree;
 	}
 
+	// refresh re-reads one topic after an act that has already landed in storage,
+	// and reports a failure through this.error instead of throwing.
+	//
+	// That is the whole of it: by the time this runs the act's verdict is settled,
+	// and a failing re-read must not be allowed to look like the act failing. The
+	// two are opposite events — the act's failure means storage is untouched and
+	// the session is kept so the reader can try again, while a failed re-read
+	// means storage took the change and only this cache is behind. Turning the
+	// second into the first tells the reader a write did not happen when it did,
+	// and abandons the caret landing or the caller's own gesture on top of it.
+	//
+	// A null topic is the block whose topic could not be resolved — nothing to
+	// re-read, and not an error.
+	private async refresh(topic: string | null): Promise<void> {
+		if (topic === null) {
+			return;
+		}
+		try {
+			await this.reloadTopic(topic);
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		}
+	}
+
 	// reveal un-collapses a block's ancestors and arms its flash. It only ever
 	// expands, never collapses, so unlike toggle it is safe with an inline edit
 	// open: it cannot unmount a live editor. A block absent from the forest is
@@ -721,6 +745,13 @@ class BaseStore {
 	// SplitBlock carries both halves in its arguments, so there is nothing to
 	// write first: the editor's text goes straight into the call.
 	//
+	// The re-read shares the operation's catch here, unlike structural and
+	// moveCaret, which separate them: the block this lands the caret on is the one
+	// SplitBlock has just created, so a forest whose refresh failed cannot contain
+	// it, and moving the session there would point the editor at a row nothing
+	// renders. Staying on the un-split text is the recoverable outcome, and the
+	// next successful re-read shows the split.
+	//
 	// end is where a selection stops. The run [caret, end) is what the split
 	// replaces, so Enter over a selection drops it the way it does in any other
 	// text field instead of leaving a copy in each half. Without a selection it is
@@ -856,8 +887,17 @@ class BaseStore {
 		this.busy = true;
 		this.error = "";
 		try {
-			if ((await this.writeIfChanged(id)) && topic !== null) {
-				await this.reloadTopic(topic);
+			// Only the write can throw here — refresh reports its own failure rather
+			// than raising it — and a write that did not land is the one thing that
+			// stops the arrow: the text is left in the editor for the reader to try
+			// again with (spec §8), which is pointless if the caret has moved off it.
+			try {
+				if (await this.writeIfChanged(id)) {
+					await this.refresh(topic);
+				}
+			} catch (err: unknown) {
+				this.error = messageFor(err);
+				return;
 			}
 			// The target's text is read from the re-read forest and assigned before
 			// the session moves, so the editor never sees the block it is leaving
@@ -867,8 +907,6 @@ class BaseStore {
 			this.editingID = target;
 			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
 			this.editCaretNonce++;
-		} catch (err: unknown) {
-			this.error = messageFor(err);
 		} finally {
 			this.busy = false;
 		}
@@ -884,8 +922,15 @@ class BaseStore {
 	// was in when they pressed the key. See editCaret for what goes wrong when
 	// the text arrives second.
 	//
-	// A failure leaves the session exactly as it was — the text is still in the
-	// editor, which is the whole point of not clearing it (spec §8).
+	// The write and the operation are what the gesture is: a failure in either
+	// means it did not happen, and leaves the session exactly as it was — the text
+	// is still in the editor, which is the whole point of not clearing it (spec
+	// §8). The re-read behind them is not part of that verdict and is separated
+	// from it here so the two cannot be confused: once the operation has landed in
+	// storage the gesture has happened, and the caret goes where it was meant to
+	// go even if the cache it reads out of is a failed re-read behind (see
+	// refresh) — the alternative strands the session on the block a merge has
+	// already consumed.
 	private async structural(
 		id: string,
 		op: () => Promise<unknown>,
@@ -895,25 +940,40 @@ class BaseStore {
 		this.busy = true;
 		this.error = "";
 		try {
-			await this.writeIfChanged(id);
-			await op();
-			if (topic !== null) {
-				await this.reloadTopic(topic);
+			try {
+				await this.writeIfChanged(id);
+				await op();
+			} catch (err: unknown) {
+				this.error = messageFor(err);
+				return;
 			}
+			await this.refresh(topic);
 			if (land !== undefined) {
 				this.editText = findBlock(this.forest, land.id)?.Content ?? this.editText;
 				this.editingID = land.id;
 				this.editCaret = land.caret;
 				this.editCaretNonce++;
 			}
-		} catch (err: unknown) {
-			this.error = messageFor(err);
 		} finally {
 			this.busy = false;
 		}
 	}
 
-	private committing: Promise<boolean> | null = null;
+	// The commit in flight, shared by concurrent callers (see commitEdit). It is
+	// $state so commitInFlight below reads it reactively wherever it is asked.
+	private committing = $state<Promise<boolean> | null>(null);
+
+	// commitInFlight says whether a commit is running. busy cannot answer that:
+	// commitEdit neither raises nor checks it — the eight acts that raise busy
+	// call commitEdit while holding it — so a commit started on its own, by
+	// Escape or by a blur, is invisible to everything outside this class.
+	//
+	// The deferred arrow path in InlineEditor is what needs it: that path decides
+	// a frame after the keystroke, and a commit started inside that frame would
+	// otherwise leave two writeIfChanged calls running against one session.
+	get commitInFlight(): boolean {
+		return this.committing !== null;
+	}
 
 	// commitEdit resolves to whether the session is closed: true when it
 	// committed or had nothing to commit, false when the write failed and the
@@ -941,10 +1001,11 @@ class BaseStore {
 	// would close that session underneath it and race the operation with a write,
 	// with a re-read of the topic the operation is still changing, or — where the
 	// reader has emptied the block — with a delete of the very row the operation
-	// is merging. The acts that raise busy themselves (setScope, askAI, startLink, the four
-	// review methods, deleteRevision) check it first and then own it, so their
-	// commit runs with nothing else in flight — which is exactly why commitEdit
-	// does not check busy itself: all eight call it while holding it.
+	// is merging. The acts that raise busy themselves (setScope, askAI,
+	// startLink, the four review methods, deleteRevision) check it first and then
+	// own it, so their commit runs with nothing else in flight — which is exactly
+	// why commitEdit does not check busy itself: all eight call it while holding
+	// it.
 	//
 	// It writes only if the text changed, and drops a block left empty with no
 	// children — press Enter, think better of it, leave, and nothing is left
@@ -965,8 +1026,18 @@ class BaseStore {
 
 	// runCommit resolves true on every path that leaves no open session —
 	// nothing to do, the block vanished, deleted, written, or unchanged — and
-	// false only from the catch below, where the text and caret are left
+	// false only when the write itself failed, where the text and caret are left
 	// exactly as the reader typed them (spec §8).
+	//
+	// The verdict is about the write and nothing else, which is why the try below
+	// closes the moment the write is settled and the re-read sits outside it. They
+	// used to share one catch, and a re-read that failed after a successful write
+	// returned false with clearEdit already run: the caller aborted as though
+	// storage had refused the change, while the session it was refusing on behalf
+	// of no longer existed. After a delete it was worse still — the block was gone
+	// from storage and the reader was told the commit had failed, looking at a row
+	// the stale forest was still rendering. A failed re-read is reported as itself
+	// through this.error; see refresh.
 	private async runCommit(): Promise<boolean> {
 		const id = this.editingID;
 		if (id === null) {
@@ -989,19 +1060,18 @@ class BaseStore {
 			if (disposable) {
 				await App.DeleteBlock(id);
 			} else if (!(await this.writeIfChanged(id))) {
+				// Nothing was written, so there is nothing to re-read for.
 				this.clearEdit();
 				return true;
 			}
-			this.clearEdit();
-			if (topic !== null) {
-				await this.reloadTopic(topic);
-			}
-			return true;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
 			return false;
 		}
+		this.clearEdit();
+		await this.refresh(topic);
+		return true;
 	}
 
 	// The five methods below rebuild the whole forest, and the row holding an open
