@@ -213,11 +213,9 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if op.Parent != "" {
 		parent = string(op.Parent)
 	}
-	var pos int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(position)+1, 0) FROM blocks WHERE parent_id IS ?`,
-		parent).Scan(&pos); err != nil {
-		return fmt.Errorf("apply add %s: next position: %w", op.BlockID, translate(err))
+	pos, err := nextPosition(ctx, tx, parent)
+	if err != nil {
+		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
 	}
 	stamp := knowledge.Metadata{"author": string(b.meta.Author), "source": string(b.meta.Source)}
 	if op.Origin != "" {
@@ -312,13 +310,12 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if op.Parent != "" {
 		parent = string(op.Parent)
 	}
-	var pos int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(position)+1, 0) FROM blocks WHERE parent_id IS ?`,
-		parent).Scan(&pos); err != nil {
-		return fmt.Errorf("apply move %s: next position: %w", op.BlockID, translate(err))
+	pos, err := nextPosition(ctx, tx, parent)
+	if err != nil {
+		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
-	seq, err := nextSeq(ctx, tx, string(op.BlockID))
+	var seq int
+	seq, err = nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))
 	}
