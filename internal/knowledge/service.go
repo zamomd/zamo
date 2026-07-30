@@ -85,8 +85,7 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 // EditBlockContent applies the owner's manual edit through the same write
 // path; an owner revision is born reviewed.
 func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
-	_, err := s.ApplyOps(ctx,
-		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "manual edit"},
+	_, err := s.ApplyOps(ctx, ownerMeta(),
 		[]Op{{Kind: OpEdit, BlockID: id, Content: content}})
 	return err
 }
