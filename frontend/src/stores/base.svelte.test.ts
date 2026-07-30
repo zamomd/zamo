@@ -35,14 +35,22 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 		GetSubtree: async (id: string) => reloadFixture.subtrees[id] ?? [],
 		ExpandTopic: async () => {},
 		EditWithAI: async () => {},
+		EditBlockContent: vi.fn(async () => {}),
+		DeleteBlock: vi.fn(async () => {}),
+		SplitBlock: vi.fn(async () => "new"),
+		InsertBlockBefore: vi.fn(async () => "above"),
+		IndentBlock: vi.fn(async () => {}),
+		OutdentBlock: vi.fn(async () => {}),
+		MergeBlocks: vi.fn(async () => {}),
 	},
 }));
 vi.mock("./changes.svelte", () => ({
-	changes: { blocks: [], edges: [], count: 0, refresh: async () => {} },
+	changes: { blocks: [], edges: [], count: 0, refresh: vi.fn(async () => {}) },
 }));
 
-import type { TreeNodeData } from "../lib/tree";
+import { findNode, type TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";
+import { changes } from "./changes.svelte";
 
 function block(id: string, parent: string): Block {
 	return {
@@ -77,6 +85,15 @@ beforeEach(() => {
 	base.editText = "";
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
+	// Seed the read fixture to match the seeded forest, so a re-read that a test
+	// did not set up is a round trip rather than a topic silently vanishing.
+	reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+	reloadFixture.subtrees = {
+		go: [block("go", ""), block("ctx", "go"), block("done", "ctx")],
+		sqlite: [block("sqlite", ""), block("wal", "sqlite")],
+	};
+	vi.clearAllMocks();
+	changes.blocks = [];
 });
 
 describe("selectTopic", () => {
@@ -437,5 +454,49 @@ describe("askAI's selection", () => {
 		await base.askAI();
 
 		expect(base.selectedTopicID).toBe("go");
+	});
+});
+
+describe("reloadTopic", () => {
+	it("replaces one topic's tree and leaves the others untouched", async () => {
+		// Rewrite go's subtree only; sqlite must come back identical, and by
+		// identity, not merely by shape — an unrelated topic must not be rebuilt.
+		const before = base.forest.find((t) => t.block.ID === "sqlite");
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("fresh", "go")];
+		await base.reloadTopic("go");
+		expect(findNode(base.forest, "fresh")?.block.ID).toBe("fresh");
+		expect(base.forest.find((t) => t.block.ID === "sqlite")).toBe(before);
+	});
+
+	it("does not refresh the review queue, because an owner write cannot change it", async () => {
+		await base.reloadTopic("go");
+		expect(changes.refresh).not.toHaveBeenCalled();
+	});
+
+	// The trap: GetSubtree omits a block with a pending deletion, so without the
+	// splice an owner's edit would make every ghost on the page disappear.
+	it("keeps the topic's ghosts, rebuilt from the queue already in memory", async () => {
+		changes.blocks = [
+			{
+				TopicID: "go",
+				Head: {
+					BlockID: "gone",
+					ParentID: "go",
+					Position: 1,
+					Content: "deleted by the AI",
+					Deleted: true,
+				},
+			},
+		] as unknown as typeof changes.blocks;
+		base.ghosts.add("gone");
+		await base.reloadTopic("go");
+		expect(findNode(base.forest, "gone")?.block.Content).toBe("deleted by the AI");
+		expect(base.ghosts.has("gone")).toBe(true);
+	});
+
+	it("ignores a topic that is not in the forest", async () => {
+		const before = base.forest.length;
+		await base.reloadTopic("nope");
+		expect(base.forest.length).toBe(before);
 	});
 });

@@ -165,26 +165,21 @@ class BaseStore {
 		});
 	}
 
-	// reload reads every topic root and its full subtree, rebuilding the
-	// forest, and merges in any pending deletion as a ghost row so it renders
-	// in place rather than vanishing before it is reviewed.
-	async reload(): Promise<void> {
-		const topics = (await App.TopicMap()) ?? [];
-		const roots = topics.filter((b) => b.ParentID === "");
-
-		// Ghosts: a pending delete drops the block from GetSubtree, so it is
-		// reconstructed from its unreviewed head revision and grouped by the
-		// topic it belongs to, ready to splice into that topic's block list
-		// before buildTree.
-		await changes.refresh();
-		this.ghosts.clear();
-		const ghostsByTopic = new Map<string, Block[]>();
+	// ghostsFor rebuilds one topic's pending deletions as rows. A deleted block
+	// drops out of GetSubtree, so it is reconstructed from its unreviewed head
+	// revision and spliced back in before buildTree — otherwise a pending
+	// deletion would vanish from the page before anyone reviewed it.
+	//
+	// It reads the queue already in memory rather than re-fetching it: only an AI
+	// write changes that queue, and this path serves owner writes, which are born
+	// reviewed.
+	private ghostsFor(topicID: string): Block[] {
+		const out: Block[] = [];
 		for (const u of changes.blocks) {
-			if (!u.Head.Deleted) {
+			if (!u.Head.Deleted || u.TopicID !== topicID) {
 				continue;
 			}
-			this.ghosts.add(u.Head.BlockID);
-			const ghost: Block = {
+			out.push({
 				ID: u.Head.BlockID,
 				ParentID: u.Head.ParentID,
 				Position: u.Head.Position,
@@ -193,26 +188,46 @@ class BaseStore {
 				CreatedAt: "",
 				UpdatedAt: "",
 				Unreviewed: true,
-			};
-			const list = ghostsByTopic.get(u.TopicID) ?? [];
-			list.push(ghost);
-			ghostsByTopic.set(u.TopicID, list);
+			});
+		}
+		return out;
+	}
+
+	// reload reads every topic root and its full subtree, rebuilding the
+	// forest, and merges in any pending deletion as a ghost row so it renders
+	// in place rather than vanishing before it is reviewed.
+	async reload(): Promise<void> {
+		const topics = (await App.TopicMap()) ?? [];
+		const roots = topics.filter((b) => b.ParentID === "");
+
+		// changes.blocks backs ghostsFor below; refresh it once per whole-base
+		// reload rather than once per topic. this.ghosts and the set of topics
+		// that need a ghost-only root (see below) are collected in the same pass.
+		await changes.refresh();
+		this.ghosts.clear();
+		const ghostTopics = new Set<string>();
+		for (const u of changes.blocks) {
+			if (!u.Head.Deleted) {
+				continue;
+			}
+			this.ghosts.add(u.Head.BlockID);
+			ghostTopics.add(u.TopicID);
 		}
 
 		const trees: TreeNodeData[] = [];
 		for (const r of roots) {
 			const blocks = (await App.GetSubtree(r.ID)) ?? [];
-			const extra = ghostsByTopic.get(r.ID) ?? [];
-			ghostsByTopic.delete(r.ID);
+			const extra = this.ghostsFor(r.ID);
+			ghostTopics.delete(r.ID);
 			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
 			if (tree) {
 				trees.push(tree);
 			}
 		}
-		// Whatever is left is a ghost topic root itself: its whole page was
+		// Whatever topic remains is a ghost topic root itself: its whole page was
 		// deleted, so it has no live subtree to attach to and forms its own tree.
-		for (const list of ghostsByTopic.values()) {
-			const tree = buildTree(list);
+		for (const topicID of ghostTopics) {
+			const tree = buildTree(this.ghostsFor(topicID));
 			if (tree) {
 				trees.push(tree);
 			}
@@ -251,6 +266,32 @@ class BaseStore {
 			this.pendingReveal = null;
 			this.reveal(id);
 		}
+	}
+
+	// reloadTopic re-reads one topic and swaps its tree in place. An owner write
+	// touches one topic and cannot change the review queue, so the full reload's
+	// TopicMap + a GetSubtree per topic + changes.refresh is the wrong amount of
+	// work for a keystroke. reload() stays for the AI flows, mode entry and
+	// error recovery, where all of that really can change.
+	async reloadTopic(topicID: string): Promise<void> {
+		const i = this.forest.findIndex((t) => t.block.ID === topicID);
+		if (i < 0) {
+			return;
+		}
+		const blocks = (await App.GetSubtree(topicID)) ?? [];
+		const extra = this.ghostsFor(topicID);
+		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+		if (tree === null) {
+			// The topic itself is gone — nothing to render from, so fall back the
+			// same way reload does rather than leaving a hole in the forest.
+			this.forest.splice(i, 1);
+			if (this.selectedTopicID === topicID) {
+				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
+				this.focusID = null;
+			}
+			return;
+		}
+		this.forest[i] = tree;
 	}
 
 	// reveal un-collapses a block's ancestors and arms its flash. It only ever
