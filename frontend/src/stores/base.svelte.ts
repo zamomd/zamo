@@ -54,8 +54,10 @@ class BaseStore {
 	// Zoom-in: the block the main area treats as the page's root, so a deeply
 	// nested branch can be read at full width instead of under six levels of
 	// indent. null means the whole selected topic. A focus belongs to one
-	// topic, so anything that moves the selection clears it (see
-	// applySelection and reveal).
+	// topic: every write to selectedTopicID is expected to clear this in the
+	// same act (applySelection, reveal, reload's fallback, askAI's post-
+	// expansion move), so a future selection write that skips it reopens a
+	// bug rather than a documented gap.
 	focusID = $state<string | null>(null);
 
 	// collapsed holds the ids of nodes whose children are hidden. The base
@@ -135,8 +137,13 @@ class BaseStore {
 	// The subtree the main area renders: the focused block when there is one,
 	// the whole topic otherwise. Derived rather than stored so a reload that
 	// rebuilds the forest cannot leave a stale subtree on screen — the same
-	// reason selectedTree is derived.
-	viewRoot = $derived(this.focusID === null ? this.selectedTree : findNode(this.forest, this.focusID));
+	// reason selectedTree is derived. Falls back to selectedTree rather than
+	// going null when the focused block itself vanishes (an edit or a
+	// concurrent comind mcp write deletes it before the topic changes): an
+	// absent id is ignored, never a blank pane, same principle as focus().
+	viewRoot = $derived(
+		this.focusID === null ? this.selectedTree : (findNode(this.forest, this.focusID) ?? this.selectedTree),
+	);
 
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
@@ -216,6 +223,9 @@ class BaseStore {
 		// topic so the main area is never blank while the base has content.
 		if (this.selectedTopicID === null || !trees.some((t) => t.block.ID === this.selectedTopicID)) {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
+			// The topic just moved out from under the reader; a focus from the old
+			// one would otherwise still resolve inside the new selection's forest.
+			this.focusID = null;
 		}
 		// Links reflect the re-read base: drop the cache, close panels whose
 		// block vanished, and re-load the panels still open.
@@ -411,6 +421,11 @@ class BaseStore {
 				const fresh = this.forest.find((t) => !before.has(t.block.ID));
 				if (fresh) {
 					this.selectedTopicID = fresh.block.ID;
+					// This move onto the newcomer bypasses reload's own fallback
+					// above (the prior selection was still valid), so it has to
+					// clear the focus itself or viewRoot would keep resolving
+					// against the topic the reader just left.
+					this.focusID = null;
 				}
 			}
 			this.status = "changes applied, awaiting review";

@@ -304,6 +304,34 @@ describe("zoom-in", () => {
 		base.reveal("wal");
 		expect(base.focusID).toBe(null);
 	});
+
+	// reload's own fallback (see "reload's selection fallback" below) moves
+	// selectedTopicID off a topic that vanished; that move has to clear the
+	// focus too, or viewRoot would keep resolving against the topic the
+	// reader is no longer looking at.
+	it("drops the focus when reload's fallback moves off a topic that vanished", async () => {
+		base.focus("ctx");
+		reloadFixture.topics = [block("sqlite", "")];
+		reloadFixture.subtrees = { sqlite: [block("sqlite", "")] };
+
+		await base.reload();
+
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("sqlite");
+	});
+
+	// The focused block itself can vanish (an edit, or a concurrent comind mcp
+	// write) without the topic changing at all. Unlike the cases above, this
+	// leaves focusID stale, but viewRoot must not go blank over it.
+	it("falls back to the topic when the focused block vanishes but the topic survives", async () => {
+		base.focus("ctx");
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
+
+		await base.reload();
+
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
 });
 
 describe("askAI's selection", () => {
@@ -325,6 +353,24 @@ describe("askAI's selection", () => {
 		await base.askAI();
 
 		expect(base.selectedTopicID).toBe("rust");
+	});
+
+	// This move onto the newcomer bypasses reload's own fallback (the prior
+	// selection was still valid, so that branch never fires) — it has to
+	// clear the focus itself.
+	it("drops the focus when an untargeted expansion moves onto the newcomer", async () => {
+		base.forest = [node("go", "", [node("ctx", "go")])];
+		base.selectedTopicID = "go";
+		base.scopeID = null;
+		base.command = "rust";
+		base.focus("ctx");
+		reloadFixture.topics = [block("go", ""), block("rust", "")];
+		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] };
+
+		await base.askAI();
+
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("rust");
 	});
 
 	it("leaves the selection alone for a scoped edit", async () => {
