@@ -42,7 +42,16 @@
 		color: inherit;
 		cursor: pointer;
 	}
-	button:hover {
+	/* A crumb opted out of button chrome at rest and has to stay out on hover
+	   too, or app.css's global button:hover:not(:disabled) paints a chip behind
+	   text with no padding. Declaring background here is not enough on its own:
+	   that global weighs (0,2,1), a bare scoped button:hover emits as
+	   button.svelte-x:hover and weighs exactly the same, and this component's CSS
+	   lands BEFORE app.css in the bundle, so the tie would go to the global. The
+	   nav qualifier is what carries it — nav.svelte-x button:where(.svelte-x):hover
+	   is (0,2,2), one element more. */
+	nav button:hover {
+		background: none;
 		color: var(--text);
 	}
 	.sep {

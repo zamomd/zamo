@@ -54,8 +54,22 @@ describe("topicRows", () => {
 		expect(rows.map((r) => r.id)).toEqual(["go", "sqlite"]);
 	});
 
-	it("uses the block content as the title", () => {
+	it("derives the title from the block's content", () => {
 		expect(topicRows(forest, null)[0].title).toBe("go");
+	});
+
+	// The sidebar is a one-line index, so both levels go through the same
+	// stripper the crumbs use. The forest above cannot show this: block() sets
+	// Content to the id, which has no markdown in it to strip.
+	it("strips markdown from both the topic and its children", () => {
+		const child: TreeNodeData = { block: { ...block("kid", "root"), Content: "**token** buckets" }, children: [] };
+		const styled: TreeNodeData = {
+			block: { ...block("root", ""), Content: "# Rate limiting" },
+			children: [child],
+		};
+		const rows = topicRows([styled], "root");
+		expect(rows[0].title).toBe("Rate limiting");
+		expect(rows[0].children.map((c) => c.title)).toEqual(["token buckets"]);
 	});
 
 	it("expands only the selected topic", () => {

@@ -56,6 +56,14 @@
 	   structure entirely on its own. */
 	--hairline-strong: #a8a8ae;
 	--rail: #94949a;
+	/* The ring around a collapsed row's anchor dot. A resting-state mark ("this
+	   block has hidden children"), which is why it is not --hover: that token is
+	   interaction feedback, and at rgba(0,0,0,0.05) over --ground it composites
+	   to #f2f2f2 — 1.12:1, below the 1.29:1 of --hairline that the tiers above
+	   already rejected as not-there. This value carries 2.37:1 against --ground,
+	   between --hairline-strong and --rail: present at rest, still well under the
+	   dot's own 7.41:1 so the fill stays the louder of the two facts. */
+	--halo: #a8a8ae;
 	--accent: #2f6fd0;
 	--hover: rgba(0, 0, 0, 0.05);
 	/* Same value as --hover today, but a distinct token: this is a resting
@@ -75,6 +83,8 @@
 		--hairline: #232326;
 		--hairline-strong: #54545a;
 		--rail: #5d5d63;
+		/* 2.62:1 against dark's --ground, against the dot's 7.00:1 there. */
+		--halo: #54545a;
 		--accent: #5e8fd0;
 		--hover: rgba(255, 255, 255, 0.06);
 		--surface: rgba(255, 255, 255, 0.06);

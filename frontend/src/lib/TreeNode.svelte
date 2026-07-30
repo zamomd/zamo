@@ -112,11 +112,16 @@
 				onclick={() => base.focus(node.block.ID)}
 			></button>
 			{#if hasChildren}
+				<!-- INTERIM: disabled while an inline edit is open anywhere, the
+				     visible half of the guard base.toggle carries — see its comment
+				     for the bug (editingID outliving its editor's unmount) and for
+				     what retires both halves. -->
 				<button
 					type="button"
 					class="toggle"
 					aria-expanded={expanded}
 					aria-label={expanded ? "collapse" : "expand"}
+					disabled={base.editingID !== null}
 					onclick={() => base.toggle(node.block.ID)}
 				>
 					{expanded ? "▾" : "▸"}
@@ -347,8 +352,11 @@
 		background: transparent;
 		border: 1px solid var(--text-dim);
 	}
+	/* The halo has a token of its own rather than borrowing --hover: it is a
+	   resting-state fact about the block, not feedback about the pointer, and
+	   --hover is far too faint to carry it — see --halo in app.css. */
 	.dot.ring {
-		box-shadow: 0 0 0 4px var(--hover);
+		box-shadow: 0 0 0 4px var(--halo);
 	}
 	.dot:hover {
 		background: var(--text);
@@ -584,5 +592,22 @@
 	.accept-page,
 	.reject-page {
 		font-size: var(--size-small);
+	}
+	/* Every control on the title row — accept/reject and Accept all/Reject all as
+	   direct children of .row, plus the two gutters' icons — otherwise inherits
+	   the body line-height and pins to the top of that row's taller line box (see
+	   .row.title .content), above the glyphs it belongs to. Matching the line box
+	   rather than centring the row keeps them beside the title's FIRST line when a
+	   long title wraps, which is the rule the dot follows on a tree row.
+	   Last in the file so it does not sit above the lower-specificity rules for
+	   the same buttons; named class by class rather than as .row.title > button so
+	   it cannot reach the dot or the triangle, whose geometry is the row grid's
+	   and not the title's, if either is ever rendered on a title row. */
+	.row.title .accept,
+	.row.title .reject,
+	.row.title .accept-page,
+	.row.title .reject-page,
+	.row.title .gutter button {
+		line-height: calc(var(--row-height) * 1.5);
 	}
 </style>

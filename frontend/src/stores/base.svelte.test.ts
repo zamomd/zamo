@@ -71,6 +71,10 @@ beforeEach(() => {
 	base.highlightID = null;
 	base.focusID = null;
 	base.error = "";
+	// toggle and focus both refuse while an edit is open (see the interim edit
+	// lock below), so a leaked editingID would silently disarm other tests.
+	base.editingID = null;
+	base.editText = "";
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 });
@@ -283,6 +287,24 @@ describe("zoom-in", () => {
 		expect(base.focusID).toBe(null);
 	});
 
+	// The view's root renders as the page's title row, which carries no collapse
+	// triangle. A block collapsed before the zoom would therefore arrive as a
+	// lone title on a blank page, with its own dot's halo advertising the
+	// children nothing on screen could unfold.
+	it("unfolds the block it zooms into", () => {
+		base.collapsed.add("ctx");
+		base.focus("ctx");
+		expect(base.collapsed.has("ctx")).toBe(false);
+		// TreeNode gates the children <ul> on exactly these two facts.
+		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
+	});
+
+	it("leaves other rows' fold state alone while zooming", () => {
+		base.collapsed.add("done");
+		base.focus("ctx");
+		expect(base.collapsed.has("done")).toBe(true);
+	});
+
 	it("zooms back out", () => {
 		base.focus("ctx");
 		base.clearFocus();
@@ -331,6 +353,37 @@ describe("zoom-in", () => {
 		await base.reload();
 
 		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+});
+
+// INTERIM, retired by PR 3's commit-on-unmount rule — see toggle's comment.
+// Both acts unmount rows, InlineEditor has no teardown, and nothing else clears
+// editingID: an id that outlives its editor turns startEdit, setScope, startLink
+// and askAI into no-ops with no visible cause.
+describe("the interim edit lock", () => {
+	it("refuses to collapse a row while an edit is open", () => {
+		base.editingID = "done";
+		base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(false);
+	});
+
+	it("collapses once no edit is open", () => {
+		base.toggle("ctx");
+		expect(base.collapsed.has("ctx")).toBe(true);
+	});
+
+	// The crumbs call focus too, which is why the guard is in the store and not
+	// a disabled attribute on the dot.
+	it("refuses to zoom in while an edit is open", () => {
+		base.editingID = "done";
+		base.focus("ctx");
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	it("zooms in once no edit is open", () => {
+		base.focus("ctx");
+		expect(base.focusID).toBe("ctx");
 	});
 });
 

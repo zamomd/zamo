@@ -15,6 +15,9 @@ fences. Each operation is one of:
 - {"op": "move", "block_id": "<id>", "parent": "<id or temp_id>"}
 - {"op": "delete", "block_id": "<id>"}
 
+- "content" is one short markdown block: a claim, a definition, or a title
+  phrase. Do NOT use markdown headings (#, ##): nesting already carries the
+  hierarchy, and a heading inside a block competes with it.
 - Use "block_id" for an existing block from the list above.
 - Give each new block a "temp_id" so later operations can reference it.
 - "parent" empty means the topic root, for an add or a move alike.
