@@ -11,7 +11,7 @@ const calls = vi.hoisted(() => ({
 
 vi.mock("../stores/shell.svelte", () => ({
 	shell: {
-		setMode: (m: string) => {
+		setMode: async (m: string) => {
 			calls.mode = m;
 		},
 	},
@@ -37,8 +37,8 @@ beforeEach(() => {
 });
 
 describe("jumpToBlock", () => {
-	it("switches to tree mode and reveals the block", () => {
-		jumpToBlock("b1");
+	it("switches to tree mode and reveals the block", async () => {
+		await jumpToBlock("b1");
 
 		expect(calls.mode).toBe("tree");
 		expect(calls.revealedID).toBe("b1");

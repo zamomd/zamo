@@ -85,12 +85,7 @@
 			</ul>
 		{/if}
 	{:else}
-		<button
-			type="button"
-			class="add"
-			disabled={base.busy || base.editingID !== null}
-			onclick={() => base.startLink(block.ID)}
-		>
+		<button type="button" class="add" disabled={base.busy} onclick={() => base.startLink(block.ID)}>
 			+ link
 		</button>
 	{/if}

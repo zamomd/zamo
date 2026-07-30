@@ -52,6 +52,7 @@ import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbi
 import { findNode, type TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";
 import { changes } from "./changes.svelte";
+import { shell } from "./shell.svelte";
 
 function block(id: string, parent: string, content = id): Block {
 	return {
@@ -80,8 +81,9 @@ beforeEach(() => {
 	base.highlightID = null;
 	base.focusID = null;
 	base.error = "";
-	// toggle and focus both refuse while an edit is open (see the interim edit
-	// lock below), so a leaked editingID would silently disarm other tests.
+	// toggle, focus and the rest of the tree's actions now commit an open edit
+	// rather than refuse, so a leaked editingID would silently write a stale
+	// editText into an unrelated test's block instead of merely disarming it.
 	base.editingID = null;
 	base.editText = "";
 	base.editCaret = 0;
@@ -99,19 +101,19 @@ beforeEach(() => {
 });
 
 describe("selectTopic", () => {
-	it("switches the main area to another topic", () => {
-		base.selectTopic("sqlite");
+	it("switches the main area to another topic", async () => {
+		await base.selectTopic("sqlite");
 		expect(base.selectedTopicID).toBe("sqlite");
 	});
 
-	it("exposes that topic's tree", () => {
-		base.selectTopic("sqlite");
+	it("exposes that topic's tree", async () => {
+		await base.selectTopic("sqlite");
 		expect(base.selectedTree?.block.ID).toBe("sqlite");
 	});
 
-	it("clears a stale jump flash from the previous topic", () => {
+	it("clears a stale jump flash from the previous topic", async () => {
 		base.highlightID = "done";
-		base.selectTopic("sqlite");
+		await base.selectTopic("sqlite");
 		expect(base.highlightID).toBe(null);
 	});
 
@@ -286,13 +288,13 @@ describe("reload's selection fallback", () => {
 });
 
 describe("zoom-in", () => {
-	it("makes the focused block the view's root", () => {
-		base.focus("ctx");
+	it("makes the focused block the view's root", async () => {
+		await base.focus("ctx");
 		expect(base.viewRoot?.block.ID).toBe("ctx");
 	});
 
-	it("keeps the focused block's own children", () => {
-		base.focus("ctx");
+	it("keeps the focused block's own children", async () => {
+		await base.focus("ctx");
 		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
 	});
 
@@ -301,8 +303,8 @@ describe("zoom-in", () => {
 		expect(base.viewRoot?.block.ID).toBe("go");
 	});
 
-	it("ignores a block the forest does not have", () => {
-		base.focus("nope");
+	it("ignores a block the forest does not have", async () => {
+		await base.focus("nope");
 		expect(base.focusID).toBe(null);
 	});
 
@@ -310,22 +312,22 @@ describe("zoom-in", () => {
 	// triangle. A block collapsed before the zoom would therefore arrive as a
 	// lone title on a blank page, with its own dot's halo advertising the
 	// children nothing on screen could unfold.
-	it("unfolds the block it zooms into", () => {
+	it("unfolds the block it zooms into", async () => {
 		base.collapsed.add("ctx");
-		base.focus("ctx");
+		await base.focus("ctx");
 		expect(base.collapsed.has("ctx")).toBe(false);
 		// TreeNode gates the children <ul> on exactly these two facts.
 		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
 	});
 
-	it("leaves other rows' fold state alone while zooming", () => {
+	it("leaves other rows' fold state alone while zooming", async () => {
 		base.collapsed.add("done");
-		base.focus("ctx");
+		await base.focus("ctx");
 		expect(base.collapsed.has("done")).toBe(true);
 	});
 
-	it("zooms back out", () => {
-		base.focus("ctx");
+	it("zooms back out", async () => {
+		await base.focus("ctx");
 		base.clearFocus();
 		expect(base.focusID).toBe(null);
 		expect(base.viewRoot?.block.ID).toBe("go");
@@ -333,15 +335,15 @@ describe("zoom-in", () => {
 
 	// A focus is a position inside one topic. Leaving that topic must not leave
 	// the view pointed at a subtree of a topic nobody is looking at any more.
-	it("drops the focus when the topic changes", () => {
-		base.focus("ctx");
-		base.selectTopic("sqlite");
+	it("drops the focus when the topic changes", async () => {
+		await base.focus("ctx");
+		await base.selectTopic("sqlite");
 		expect(base.focusID).toBe(null);
 		expect(base.viewRoot?.block.ID).toBe("sqlite");
 	});
 
-	it("drops the focus when a jump reveals a block elsewhere", () => {
-		base.focus("ctx");
+	it("drops the focus when a jump reveals a block elsewhere", async () => {
+		await base.focus("ctx");
 		base.reveal("wal");
 		expect(base.focusID).toBe(null);
 	});
@@ -351,7 +353,7 @@ describe("zoom-in", () => {
 	// focus too, or viewRoot would keep resolving against the topic the
 	// reader is no longer looking at.
 	it("drops the focus when reload's fallback moves off a topic that vanished", async () => {
-		base.focus("ctx");
+		await base.focus("ctx");
 		reloadFixture.topics = [block("sqlite", "")];
 		reloadFixture.subtrees = { sqlite: [block("sqlite", "")] };
 
@@ -365,44 +367,13 @@ describe("zoom-in", () => {
 	// write) without the topic changing at all. Unlike the cases above, this
 	// leaves focusID stale, but viewRoot must not go blank over it.
 	it("falls back to the topic when the focused block vanishes but the topic survives", async () => {
-		base.focus("ctx");
+		await base.focus("ctx");
 		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
 		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] };
 
 		await base.reload();
 
 		expect(base.viewRoot?.block.ID).toBe("go");
-	});
-});
-
-// INTERIM, retired by PR 3's commit-on-unmount rule — see toggle's comment.
-// Both acts unmount rows, InlineEditor has no teardown, and nothing else clears
-// editingID: an id that outlives its editor turns startEdit, setScope, startLink
-// and askAI into no-ops with no visible cause.
-describe("the interim edit lock", () => {
-	it("refuses to collapse a row while an edit is open", () => {
-		base.editingID = "done";
-		base.toggle("ctx");
-		expect(base.collapsed.has("ctx")).toBe(false);
-	});
-
-	it("collapses once no edit is open", () => {
-		base.toggle("ctx");
-		expect(base.collapsed.has("ctx")).toBe(true);
-	});
-
-	// The crumbs call focus too, which is why the guard is in the store and not
-	// a disabled attribute on the dot.
-	it("refuses to zoom in while an edit is open", () => {
-		base.editingID = "done";
-		base.focus("ctx");
-		expect(base.focusID).toBe(null);
-		expect(base.viewRoot?.block.ID).toBe("go");
-	});
-
-	it("zooms in once no edit is open", () => {
-		base.focus("ctx");
-		expect(base.focusID).toBe("ctx");
 	});
 });
 
@@ -435,7 +406,7 @@ describe("askAI's selection", () => {
 		base.selectedTopicID = "go";
 		base.scopeID = null;
 		base.command = "rust";
-		base.focus("ctx");
+		await base.focus("ctx");
 		reloadFixture.topics = [block("go", ""), block("rust", "")];
 		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] };
 
@@ -587,4 +558,55 @@ describe("the edit session", () => {
 		await base.commitEdit();
 		expect(App.EditBlockContent).not.toHaveBeenCalled();
 	});
+});
+
+describe("an open edit no longer locks the interface", () => {
+	beforeEach(async () => {
+		await base.startEdit(block("ctx", "go", "before"), 0);
+		base.editText = "after";
+	});
+
+	it("collapsing an ancestor commits first, then collapses", async () => {
+		await base.toggle("go");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.collapsed.has("go")).toBe(true);
+		expect(base.editingID).toBe(null);
+	});
+
+	it("zooming in commits first, then zooms", async () => {
+		await base.focus("ctx");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.focusID).toBe("ctx");
+	});
+
+	it("switching topic commits first", async () => {
+		await base.selectTopic("sqlite");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.selectedTopicID).toBe("sqlite");
+	});
+
+	it("targeting a block for the AI commits first", async () => {
+		await base.setScope(block("done", "ctx", "done"));
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+		expect(base.scopeID).toBe("done");
+	});
+
+	it("sending an AI command commits first", async () => {
+		base.command = "tighten this";
+		await base.askAI();
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+	});
+
+	it("starting a link commits first", async () => {
+		await base.startLink("ctx");
+		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+	});
+});
+
+it("leaving the tree for another mode commits the open edit", async () => {
+	await base.startEdit(block("ctx", "go", "before"), 0);
+	base.editText = "after";
+	await shell.setMode("graph");
+	expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
+	expect(shell.mode).toBe("graph");
 });

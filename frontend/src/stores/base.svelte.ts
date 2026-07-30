@@ -333,21 +333,12 @@ class BaseStore {
 		this.highlightNonce++;
 	}
 
-	// toggle folds a node's children away, or unfolds them again.
-	//
-	// INTERIM GUARD, do not remove: refused while an inline edit is open.
-	// Collapsing an ancestor unmounts the row holding the editor, InlineEditor
-	// has no teardown, and nothing else clears editingID — so the id outlives
-	// its editor and startEdit, setScope, startLink and askAI all silently
-	// become no-ops (CommandBox greys itself out) with no visible cause and no
-	// hint that re-expanding the ancestor is the way back. PR 3's
-	// commit-on-unmount rule is what makes the guard unnecessary; until that
-	// lands, "there is nothing on the other side of this lock" is wrong.
-	// The triangle's disabled attribute in TreeNode.svelte is the visible half.
-	toggle(id: string): void {
-		if (this.editingID !== null) {
-			return;
-		}
+	// toggle folds a node's children away, or unfolds them again. Collapsing an
+	// ancestor can unmount the row holding an open editor, so it commits first —
+	// see commitEdit's own comment for why every caller that can unmount the
+	// editor goes through it.
+	async toggle(id: string): Promise<void> {
+		await this.commitEdit();
 		if (this.collapsed.has(id)) {
 			this.collapsed.delete(id);
 		} else {
@@ -358,15 +349,10 @@ class BaseStore {
 	// focus zooms the main area into one block. An id absent from the forest is
 	// ignored rather than blanking the pane: the caller is markup that cannot
 	// await a reload, so a stale id is a real case, not a programming error.
-	focus(id: string): void {
-		// INTERIM GUARD, do not remove: zooming in unmounts every row outside the
-		// new root, which strands editingID exactly as collapsing an ancestor
-		// does — see toggle, which also names what retires this. It sits in the
-		// store rather than on the dot because a crumb click lands here too and
-		// would otherwise route around a disabled attribute.
-		if (this.editingID !== null) {
-			return;
-		}
+	async focus(id: string): Promise<void> {
+		// Zooming in unmounts every row outside the new root, so it commits first
+		// like toggle — see commitEdit's own comment.
+		await this.commitEdit();
 		if (findNode(this.forest, id) === null) {
 			return;
 		}
@@ -402,6 +388,9 @@ class BaseStore {
 	// gone, without ever pointing the selection at an id this store cannot
 	// currently show.
 	async selectTopic(id: string): Promise<void> {
+		// Switching topic unmounts the whole tree the open editor's row lives in,
+		// so it commits first — see commitEdit's own comment.
+		await this.commitEdit();
 		const mine = ++this.selectSeq;
 		if (this.forest.some((t) => t.block.ID === id)) {
 			this.applySelection(id);
@@ -450,11 +439,13 @@ class BaseStore {
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
 	// what the button's aria-pressed state promises.
-	setScope(block: Block): void {
-		// Ignore while busy or mid inline-edit, mirroring the tree's other actions.
-		if (this.busy || this.editingID !== null) {
+	async setScope(block: Block): Promise<void> {
+		// Ignore while busy, mirroring the tree's other actions; an open edit
+		// commits instead of blocking — see commitEdit's own comment.
+		if (this.busy) {
 			return;
 		}
+		await this.commitEdit();
 		this.scopeID = this.scopeID === block.ID ? null : block.ID;
 	}
 
@@ -471,12 +462,12 @@ class BaseStore {
 	// leaving the view on the old one would give them nothing to look at.
 	async askAI(): Promise<void> {
 		const text = this.command.trim();
-		// Locked mid inline-edit like every other tree action: reload moves the
-		// forest under an open editor, so submitting here would silently drop
-		// an open edit.
-		if (text === "" || this.busy || this.editingID !== null) {
+		if (text === "" || this.busy) {
 			return;
 		}
+		// reload moves the forest under an open editor, so an open edit commits
+		// first — see commitEdit's own comment.
+		await this.commitEdit();
 		this.busy = true;
 		this.error = "";
 		try {
@@ -560,6 +551,14 @@ class BaseStore {
 		return true;
 	}
 
+	// Every caller that can unmount the editor commits through here first —
+	// collapsing an ancestor, zooming in, switching topic, targeting a block,
+	// sending an AI command, opening the link picker. That is the whole of what
+	// used to be a modal lock: while the editor was a box with Save and Cancel it
+	// was right to refuse those actions, and it stopped being right the moment
+	// editing became the default state (spec §4.5). busy still greys out buttons;
+	// nothing refuses because a caret is somewhere.
+	//
 	// commitEdit is the single exit from an edit: click away, Esc, a gesture that
 	// moves to another block, a mode switch, an AI command. It writes only if the
 	// text changed, and drops a block left empty with no children — press Enter,
@@ -726,11 +725,13 @@ class BaseStore {
 		}
 	}
 
-	startLink(id: string): void {
-		// Locked while busy or mid inline-edit, like the tree's other actions.
-		if (this.busy || this.editingID !== null) {
+	async startLink(id: string): Promise<void> {
+		// Locked while busy, like the tree's other actions; an open edit commits
+		// instead of blocking — see commitEdit's own comment.
+		if (this.busy) {
 			return;
 		}
+		await this.commitEdit();
 		this.linkingID = id;
 		this.linkQuery = "";
 		this.linkResults = [];

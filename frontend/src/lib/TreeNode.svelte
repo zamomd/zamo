@@ -112,16 +112,11 @@
 				onclick={() => base.focus(node.block.ID)}
 			></button>
 			{#if hasChildren}
-				<!-- INTERIM: disabled while an inline edit is open anywhere, the
-				     visible half of the guard base.toggle carries — see its comment
-				     for the bug (editingID outliving its editor's unmount) and for
-				     what retires both halves. -->
 				<button
 					type="button"
 					class="toggle"
 					aria-expanded={expanded}
 					aria-label={expanded ? "collapse" : "expand"}
-					disabled={base.editingID !== null}
 					onclick={() => base.toggle(node.block.ID)}
 				>
 					{expanded ? "▾" : "▸"}
@@ -167,7 +162,7 @@
 					title="ask the AI to restructure this block"
 					aria-label="target this block for the AI command"
 					aria-pressed={base.scopeID === node.block.ID}
-					disabled={base.busy || base.editingID !== null}
+					disabled={base.busy}
 					onclick={() => base.setScope(node.block)}
 				>
 					⌖

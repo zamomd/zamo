@@ -27,14 +27,9 @@
 			aria-label="AI command"
 			placeholder={base.scopeID === null ? "ask ai to expand a new topic" : "ask ai how to restructure this"}
 			bind:value={base.command}
-			disabled={base.busy || base.editingID !== null}
+			disabled={base.busy}
 		/>
-		<button
-			type="submit"
-			disabled={base.busy || base.editingID !== null || base.command.trim() === ""}
-		>
-			send
-		</button>
+		<button type="submit" disabled={base.busy || base.command.trim() === ""}>send</button>
 	</div>
 </form>
 
