@@ -2,6 +2,7 @@
 	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
 	import BlockLinks from "./BlockLinks.svelte";
+	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
@@ -48,6 +49,12 @@
 	// flash is toggled off then back on across a frame so the CSS animation
 	// restarts rather than sitting at its finished state.
 	let rowEl: HTMLElement | undefined;
+	// $state, unlike rowEl above: rowEl is only ever read inside the $effect
+	// below, where a plain let is enough because the effect's own re-run keeps
+	// it current. contentEl is read from editFromClick, an event handler outside
+	// any tracked scope, and svelte-check's non_reactive_update check cannot
+	// prove that read sees bind:this's assignment without $state.
+	let contentEl: HTMLElement | undefined = $state();
 	let flash = $state(false);
 	$effect(() => {
 		void base.highlightNonce; // subscribe: bumped on every reveal
@@ -74,7 +81,19 @@
 			if (href) void Browser.OpenURL(href);
 			return;
 		}
-		if (!base.busy) base.startEdit(node.block, node.block.Content.length);
+		if (base.busy) {
+			return;
+		}
+		// The click lands on rendered markdown but the editor edits the source, and
+		// the offsets differ — `**burst**` is nine characters written and five read.
+		// A click that cannot be mapped puts the caret at the end of the block,
+		// which is the documented safe default: a caret in the wrong place is a
+		// nuisance, mangled text would not be.
+		const raw = node.block.Content;
+		const rendered =
+			contentEl === undefined ? null : renderedOffsetFromPoint(contentEl, e.clientX, e.clientY);
+		const caret = rendered === null ? raw.length : sourceOffset(raw, rendered);
+		void base.startEdit(node.block, caret);
 	}
 	function editFromKey(e: KeyboardEvent): void {
 		if (e.key !== "Enter" && e.key !== " ") return;
@@ -83,7 +102,9 @@
 		// mirror the anchor guard in editFromClick.
 		if ((e.target as HTMLElement).closest("a")) return;
 		e.preventDefault();
-		if (!base.busy) base.startEdit(node.block, node.block.Content.length);
+		if (!base.busy) {
+			void base.startEdit(node.block, node.block.Content.length);
+		}
 	}
 </script>
 
@@ -140,11 +161,12 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<!-- biome-ignore lint/a11y/useSemanticElements: a <button> cannot contain the anchors/blocks rendered markdown emits -->
 			<div
+				bind:this={contentEl}
 				class="content"
 				class:busy={base.busy}
 				role="button"
 				tabindex={base.busy ? -1 : 0}
-				title="click to edit"
+				title="click to put the caret here"
 				onclick={editFromClick}
 				onkeydown={editFromKey}
 			>
@@ -415,6 +437,14 @@
 	   rails, and the one place type steps outside the 26px grid on purpose —
 	   1.5 cells, which is what the heading it replaces already used. */
 	.row.title .content {
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.5);
+	}
+	/* The editor is a sibling of .content, so the title row's larger type has to
+	   be stated for it as well or clicking the page title would shrink the text
+	   to body size at the moment of the click — the one thing the editor's metric
+	   exists to prevent. */
+	.row.title :global(.editor) {
 		font-size: var(--size-title);
 		line-height: calc(var(--row-height) * 1.5);
 	}
