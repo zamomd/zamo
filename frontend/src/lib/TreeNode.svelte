@@ -129,12 +129,7 @@
 			     there is nothing left to edit or link until it is restored. -->
 			<span class="content ghost-content">{@html renderMarkdown(node.block.Content)}</span>
 		{:else if editing}
-			<InlineEditor
-				bind:value={base.editText}
-				busy={base.busy}
-				onsave={() => base.commitEdit()}
-				oncancel={() => base.commitEdit()}
-			/>
+			<InlineEditor id={node.block.ID} />
 		{:else}
 			<!-- The click-to-edit surface holds rendered markdown (possibly links),
 			     which a real <button> cannot legally contain, so it is a div with

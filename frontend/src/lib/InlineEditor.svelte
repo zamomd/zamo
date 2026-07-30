@@ -1,38 +1,166 @@
 <script lang="ts">
-	// The inline block editor: a controlled textarea with save/cancel. The
-	// caller owns the text and the busy flag; this only renders and reports.
-	let {
-		value = $bindable(),
-		busy,
-		onsave,
-		oncancel,
-	}: {
-		value: string;
-		busy: boolean;
-		onsave: () => void;
-		oncancel: () => void;
-	} = $props();
+	import { base } from "../stores/base.svelte";
+	import { caretColumn, lineCount, lineIndexOf } from "./caret";
+
+	// The block editor: a textarea dressed to be invisible. It sits exactly where
+	// the rendered line was, so clicking into a block does not move the text — the
+	// one requirement that makes this feel like a document rather than a form.
+	//
+	// It reads the store directly rather than through props because the caret it
+	// restores has to survive this component unmounting: a collapse, a zoom or a
+	// re-read destroys the row, and a structural gesture deliberately sets the
+	// caret for the *next* block before the row that will hold it even exists.
+	let { id }: { id: string } = $props();
+
+	let el: HTMLTextAreaElement | undefined;
+
+	// Grow to fit the text. field-sizing: content is not dependable in WKWebView,
+	// so the height is synced from scrollHeight on every input and once on mount.
+	function fit(): void {
+		if (el === undefined) {
+			return;
+		}
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	}
+
+	// Mount with the caret where the gesture that opened this block put it, then
+	// take focus. Both have to happen after the value is in the DOM, which is why
+	// this is an effect and not an attribute.
+	$effect(() => {
+		if (el === undefined) {
+			return;
+		}
+		el.focus();
+		el.setSelectionRange(base.editCaret, base.editCaret);
+		// biome-ignore lint/suspicious/noFocusedTests: fit() is the height-sync helper above, not a focused test — biome's heuristic matches the bare name regardless of context.
+		fit();
+	});
+
+	function onkeydown(e: KeyboardEvent): void {
+		// An IME composition owns these keys until it commits; intercepting Enter
+		// mid-composition would split a block in the middle of a candidate.
+		if (e.isComposing || el === undefined) {
+			return;
+		}
+		const value = base.editText;
+		const caret = el.selectionStart;
+		const selecting = el.selectionStart !== el.selectionEnd;
+
+		switch (e.key) {
+			case "Enter":
+				// Shift+Enter is a line break inside the block: the textarea's own
+				// behaviour, so it is deliberately not intercepted.
+				if (e.shiftKey) {
+					return;
+				}
+				e.preventDefault();
+				// Enter at the very start of non-empty text inserts above instead of
+				// splitting, so the text keeps its block id and with it its history.
+				// An empty block has no text to protect and follows the split rule.
+				if (caret === 0 && value !== "") {
+					void base.insertAbove(id);
+				} else {
+					void base.splitAtCaret(id, caret);
+				}
+				return;
+			case "Tab":
+				e.preventDefault();
+				void (e.shiftKey ? base.outdent(id) : base.indent(id));
+				return;
+			case "Backspace":
+				// Only at the very start, and only without a selection — otherwise
+				// this is an ordinary delete and the textarea should handle it.
+				if (caret !== 0 || selecting) {
+					return;
+				}
+				e.preventDefault();
+				void base.mergeIntoPrevious(id);
+				return;
+			case "Delete":
+				if (caret !== value.length || selecting) {
+					return;
+				}
+				e.preventDefault();
+				void base.pullNextInto(id);
+				return;
+			case "ArrowUp":
+				// Only leave the block from its first line; inside a wrapped block the
+				// arrow is the textarea's own.
+				if (lineIndexOf(value, caret) !== 0) {
+					return;
+				}
+				e.preventDefault();
+				void base.moveCaret(id, "up", caretColumn(value, caret));
+				return;
+			case "ArrowDown":
+				if (lineIndexOf(value, caret) !== lineCount(value) - 1) {
+					return;
+				}
+				e.preventDefault();
+				void base.moveCaret(id, "down", caretColumn(value, caret));
+				return;
+			case "Escape":
+				e.preventDefault();
+				void base.commitEdit();
+				return;
+		}
+	}
+
+	// Clicking anywhere else commits. document.hasFocus() distinguishes "focus
+	// moved somewhere in the page" from "the window went to the background":
+	// alt-tabbing away must not close the editor out from under the reader.
+	function onblur(): void {
+		if (!document.hasFocus()) {
+			return;
+		}
+		void base.commitEdit();
+	}
 </script>
 
-<div class="editor">
-	<textarea aria-label="block content" bind:value disabled={busy}></textarea>
-	<button type="button" onclick={onsave} disabled={busy || value.trim() === ""}>Save</button>
-	<button type="button" onclick={oncancel} disabled={busy}>Cancel</button>
-</div>
+<textarea
+	bind:this={el}
+	bind:value={base.editText}
+	class="editor"
+	aria-label="block content"
+	rows="1"
+	spellcheck="false"
+	disabled={base.busy}
+	oninput={fit}
+	{onkeydown}
+	{onblur}
+></textarea>
 
 <style>
+	/* The metric is the whole point: the editor has to occupy exactly the box the
+	   rendered line occupied, or the text jumps at the moment of the click.
+	   font: inherit rather than a size of its own, so the page title's own row —
+	   which is larger — stays right when it is the block being edited.
+
+	   The global `input, textarea, select` rule in app.css gives every field a
+	   hairline frame and horizontal padding; this rule is (0,2,1) against its
+	   (0,0,1) and the focus rule below is (0,3,1) against (0,1,1), so both win on
+	   the class column and neither depends on source order. */
 	.editor {
-		display: flex;
 		flex: 1;
-		flex-wrap: wrap;
-		gap: 0.3rem;
-	}
-	.editor textarea {
-		flex: 1;
-		min-width: 12rem;
-		min-height: calc(var(--row-height) * 3);
-		padding: var(--unit);
+		min-width: 0;
+		display: block;
+		margin: 0;
+		padding: 0 var(--unit) 0 0;
+		border: none;
+		border-radius: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
 		line-height: var(--row-height);
-		resize: vertical;
+		/* The height is driven from scrollHeight, so the element must never keep a
+		   scrollbar of its own or the measurement chases itself. */
+		overflow: hidden;
+		resize: none;
+	}
+	.editor:focus-visible {
+		outline: none;
+		border: none;
+		box-shadow: none;
 	}
 </style>
