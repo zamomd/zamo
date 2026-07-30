@@ -126,3 +126,67 @@ func TestInsertAfterForeignSiblingIsRefused(t *testing.T) {
 		t.Error("refused batch still wrote the block")
 	}
 }
+
+func TestInsertBeforeFirstSiblingGoesAhead(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}); err != nil {
+		t.Fatal(err)
+	}
+	seedChildren(t, repo, "root", "a", "b") // 0, 65536
+
+	// Enter at the very start of the first child: the new block must sort
+	// ahead of it, and there is no predecessor to take a midpoint against.
+	if err := repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+		[]knowledge.Op{{
+			Kind: knowledge.OpAdd, BlockID: "head", Parent: "root",
+			Before: "a-id", Content: "before a",
+		}}); err != nil {
+		t.Fatalf("insert before first: %v", err)
+	}
+	if _, pos, _, _ := blockRow(t, repo, "head"); pos != -positionStride {
+		t.Errorf("position = %d, want %d", pos, -positionStride)
+	}
+	if _, pos, _, _ := blockRow(t, repo, "a-id"); pos != 0 {
+		t.Errorf("first child moved to %d, want 0 (untouched)", pos)
+	}
+}
+
+func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
+	repo := testRepo(t)
+	if err := repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}); err != nil {
+		t.Fatal(err)
+	}
+	seedChildren(t, repo, "root", "a", "b")
+	// Force the pathological state a long run of midpoint inserts would
+	// reach: adjacent positions with no integer between them.
+	if _, err := repo.db.ExecContext(t.Context(),
+		`UPDATE blocks SET position = 1 WHERE id = 'b-id'`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+		[]knowledge.Op{{
+			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
+			After: "a-id", Content: "squeezed",
+		}}); err != nil {
+		t.Fatalf("insert into exhausted gap: %v", err)
+	}
+
+	// The children were respaced first, so the midpoint exists again and the
+	// order is a, mid, b.
+	want := []struct {
+		id  string
+		pos int
+	}{
+		{"a-id", 0},
+		{"mid", positionStride / 2},
+		{"b-id", positionStride},
+	}
+	for _, w := range want {
+		if _, pos, _, ok := blockRow(t, repo, w.id); !ok || pos != w.pos {
+			t.Errorf("position of %s = %d (present %v), want %d", w.id, pos, ok, w.pos)
+		}
+	}
+}

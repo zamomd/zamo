@@ -35,6 +35,8 @@ func resolvePosition(ctx context.Context, tx *sql.Tx, parent any, op knowledge.O
 	switch {
 	case op.After != "":
 		return positionAfter(ctx, tx, parent, op.After)
+	case op.Before != "":
+		return positionBefore(ctx, tx, parent, op.Before)
 	default:
 		return nextPosition(ctx, tx, parent)
 	}
@@ -85,6 +87,52 @@ func neighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorID string)
 		return anchor, nil, nil
 	}
 	return anchor, new(int(next.Int64)), nil
+}
+
+// positionBefore returns the position for a block inserted directly before the
+// sibling anchor: the midpoint between the previous sibling and the anchor, or
+// a stride ahead of the anchor when it is first. Positions may go negative —
+// they are compared, never counted (see read.go's preorder).
+func positionBefore(ctx context.Context, tx *sql.Tx, parent any, before string) (int, error) {
+	anchor, prev, err := precedingNeighbourhood(ctx, tx, parent, before)
+	if err != nil {
+		return 0, err
+	}
+	if prev == nil {
+		return anchor - positionStride, nil
+	}
+	if anchor-*prev < 2 {
+		if err := renumber(ctx, tx, parent); err != nil {
+			return 0, err
+		}
+		if anchor, prev, err = precedingNeighbourhood(ctx, tx, parent, before); err != nil {
+			return 0, err
+		}
+		if prev == nil {
+			return anchor - positionStride, nil
+		}
+	}
+	return *prev + (anchor-*prev)/2, nil
+}
+
+// precedingNeighbourhood returns the anchor's position and the position of the
+// sibling right before it, nil when the anchor is first.
+func precedingNeighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorID string) (int, *int, error) {
+	var anchor int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT position FROM blocks WHERE id = ?`, anchorID).Scan(&anchor); err != nil {
+		return 0, nil, fmt.Errorf("anchor %s position: %w", anchorID, translate(err))
+	}
+	var prev sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MAX(position) FROM blocks WHERE parent_id IS ? AND position < ?`,
+		parent, anchor).Scan(&prev); err != nil {
+		return 0, nil, fmt.Errorf("sibling before %s: %w", anchorID, translate(err))
+	}
+	if !prev.Valid {
+		return anchor, nil, nil
+	}
+	return anchor, new(int(prev.Int64)), nil
 }
 
 // renumber respaces every child of parent at positionStride intervals,
