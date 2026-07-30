@@ -69,6 +69,7 @@ beforeEach(() => {
 	base.selectedTopicID = "go";
 	base.collapsed.clear();
 	base.highlightID = null;
+	base.focusID = null;
 	base.error = "";
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
@@ -258,6 +259,50 @@ describe("reload's selection fallback", () => {
 		await base.reload();
 
 		expect(base.selectedTopicID).toBe(null);
+	});
+});
+
+describe("zoom-in", () => {
+	it("makes the focused block the view's root", () => {
+		base.focus("ctx");
+		expect(base.viewRoot?.block.ID).toBe("ctx");
+	});
+
+	it("keeps the focused block's own children", () => {
+		base.focus("ctx");
+		expect(base.viewRoot?.children.map((c) => c.block.ID)).toEqual(["done"]);
+	});
+
+	it("falls back to the whole topic when nothing is focused", () => {
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	it("ignores a block the forest does not have", () => {
+		base.focus("nope");
+		expect(base.focusID).toBe(null);
+	});
+
+	it("zooms back out", () => {
+		base.focus("ctx");
+		base.clearFocus();
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+
+	// A focus is a position inside one topic. Leaving that topic must not leave
+	// the view pointed at a subtree of a topic nobody is looking at any more.
+	it("drops the focus when the topic changes", () => {
+		base.focus("ctx");
+		base.selectTopic("sqlite");
+		expect(base.focusID).toBe(null);
+		expect(base.viewRoot?.block.ID).toBe("sqlite");
+	});
+
+	it("drops the focus when a jump reveals a block elsewhere", () => {
+		base.focus("ctx");
+		base.reveal("wal");
+		expect(base.focusID).toBe(null);
 	});
 });
 

@@ -8,7 +8,7 @@ import {
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
-import { buildTree, findBlock, findPath, type TreeNodeData, topicOf } from "../lib/tree";
+import { buildTree, findBlock, findNode, findPath, type TreeNodeData, topicOf } from "../lib/tree";
 import { changes } from "./changes.svelte";
 
 // How long typing settles before a link-target query is sent, so search-as-
@@ -50,6 +50,13 @@ class BaseStore {
 	// the changes list can move it (see reveal). null means the base is empty or
 	// has not loaded yet.
 	selectedTopicID = $state<string | null>(null);
+
+	// Zoom-in: the block the main area treats as the page's root, so a deeply
+	// nested branch can be read at full width instead of under six levels of
+	// indent. null means the whole selected topic. A focus belongs to one
+	// topic, so anything that moves the selection clears it (see
+	// applySelection and reveal).
+	focusID = $state<string | null>(null);
 
 	// collapsed holds the ids of nodes whose children are hidden. The base
 	// opens fully expanded; the reader folds away what they are not looking at.
@@ -124,6 +131,12 @@ class BaseStore {
 	selectedTree = $derived(
 		this.selectedTopicID === null ? null : (this.forest.find((t) => t.block.ID === this.selectedTopicID) ?? null),
 	);
+
+	// The subtree the main area renders: the focused block when there is one,
+	// the whole topic otherwise. Derived rather than stored so a reload that
+	// rebuilds the forest cannot leave a stale subtree on screen — the same
+	// reason selectedTree is derived.
+	viewRoot = $derived(this.focusID === null ? this.selectedTree : findNode(this.forest, this.focusID));
 
 	constructor() {
 		// Live generation progress: while a command is in flight (busy), reflect
@@ -245,6 +258,9 @@ class BaseStore {
 			return;
 		}
 		this.pendingReveal = null;
+		// A jump names a block somewhere in the forest, and staying zoomed into
+		// an unrelated subtree would scroll to a row that is not rendered.
+		this.focusID = null;
 		// The main area shows one topic, so a jump into a different one has to
 		// move the selection first or it would scroll to a row that is not
 		// rendered.
@@ -267,6 +283,20 @@ class BaseStore {
 		} else {
 			this.collapsed.add(id);
 		}
+	}
+
+	// focus zooms the main area into one block. An id absent from the forest is
+	// ignored rather than blanking the pane: the caller is markup that cannot
+	// await a reload, so a stale id is a real case, not a programming error.
+	focus(id: string): void {
+		if (findNode(this.forest, id) === null) {
+			return;
+		}
+		this.focusID = id;
+	}
+
+	clearFocus(): void {
+		this.focusID = null;
 	}
 
 	// selectTopic switches the main area to the given topic. The sidebar is
@@ -324,6 +354,9 @@ class BaseStore {
 		// replay against whatever row now occupies that position after the
 		// switch — see highlightID.
 		this.highlightID = null;
+		// A focus belongs to one topic; a switch away must not leave the view
+		// zoomed into a subtree of a topic nobody is looking at any more.
+		this.focusID = null;
 	}
 
 	// setScope toggles: targeting the already-targeted row clears it, which is
