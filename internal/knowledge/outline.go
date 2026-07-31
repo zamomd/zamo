@@ -40,6 +40,31 @@ func (s *Service) blockByID(ctx context.Context, id ID) (Block, error) {
 	return b, nil
 }
 
+// nonRootBlock reads a block and refuses a topic root, which the outline
+// gestures below are not defined on. verb and refusal spell the refusal in the
+// caller's own terms: "<verb> <id>: <refusal>".
+func (s *Service) nonRootBlock(ctx context.Context, id ID, verb, refusal string) (Block, error) {
+	b, err := s.blockByID(ctx, id)
+	if err != nil {
+		return Block{}, err
+	}
+	if b.IsTopic() {
+		return Block{}, fmt.Errorf("%s %s: %s: %w", verb, id, refusal, ErrInvalidOps)
+	}
+	return b, nil
+}
+
+// applyOutline runs one owner-authored batch and reports the group to undo it
+// by. For the gestures that create no block; the two that do report its id
+// themselves.
+func (s *Service) applyOutline(ctx context.Context, ops ...Op) (OutlineChange, error) {
+	applied, err := s.ApplyOps(ctx, ownerMeta(), ops)
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
+}
+
 // SplitBlock is Enter with a caret inside a block: the block keeps head, and a
 // new sibling directly below it takes tail.
 //
@@ -47,12 +72,9 @@ func (s *Service) blockByID(ctx context.Context, id ID) (Block, error) {
 // produces two equal parts, and the tail must not land a level deeper than the
 // head.
 func (s *Service) SplitBlock(ctx context.Context, id ID, head, tail string) (OutlineChange, error) {
-	b, err := s.blockByID(ctx, id)
+	b, err := s.nonRootBlock(ctx, id, "split", "a topic root has no siblings")
 	if err != nil {
 		return OutlineChange{}, err
-	}
-	if b.IsTopic() {
-		return OutlineChange{}, fmt.Errorf("split %s: a topic root has no siblings: %w", id, ErrInvalidOps)
 	}
 	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpEdit, BlockID: id, Content: head},
@@ -69,12 +91,9 @@ func (s *Service) SplitBlock(ctx context.Context, id ID, head, tail string) (Out
 // keeps its id and with it its revision history, its review state and its
 // links.
 func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (OutlineChange, error) {
-	b, err := s.blockByID(ctx, id)
+	b, err := s.nonRootBlock(ctx, id, "insert before", "a topic root has no siblings")
 	if err != nil {
 		return OutlineChange{}, err
-	}
-	if b.IsTopic() {
-		return OutlineChange{}, fmt.Errorf("insert before %s: a topic root has no siblings: %w", id, ErrInvalidOps)
 	}
 	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpAdd, TempID: "head", Parent: string(b.ParentID), Before: string(id), Content: content},
@@ -117,12 +136,9 @@ func (s *Service) siblingsOf(ctx context.Context, b Block) ([]Block, int, error)
 // nothing to be indented under, and that is a refusal, not a silent no-op —
 // the caller decides whether to show it.
 func (s *Service) IndentBlock(ctx context.Context, id ID) (OutlineChange, error) {
-	b, err := s.blockByID(ctx, id)
+	b, err := s.nonRootBlock(ctx, id, "indent", "a topic root cannot be indented")
 	if err != nil {
 		return OutlineChange{}, err
-	}
-	if b.IsTopic() {
-		return OutlineChange{}, fmt.Errorf("indent %s: a topic root cannot be indented: %w", id, ErrInvalidOps)
 	}
 	siblings, i, err := s.siblingsOf(ctx, b)
 	if err != nil {
@@ -131,13 +147,7 @@ func (s *Service) IndentBlock(ctx context.Context, id ID) (OutlineChange, error)
 	if i == 0 {
 		return OutlineChange{}, fmt.Errorf("indent %s: no previous sibling: %w", id, ErrInvalidOps)
 	}
-	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
-		{Kind: OpMove, BlockID: id, Parent: string(siblings[i-1].ID)},
-	})
-	if err != nil {
-		return OutlineChange{}, err
-	}
-	return OutlineChange{GroupID: applied.GroupID}, nil
+	return s.applyOutline(ctx, Op{Kind: OpMove, BlockID: id, Parent: string(siblings[i-1].ID)})
 }
 
 // OutdentBlock is Shift+Tab: the block becomes its parent's next sibling,
@@ -147,12 +157,9 @@ func (s *Service) IndentBlock(ctx context.Context, id ID) (OutlineChange, error)
 // A child of a topic root is refused: outdenting it would turn it into a
 // second topic, which is a different act entirely.
 func (s *Service) OutdentBlock(ctx context.Context, id ID) (OutlineChange, error) {
-	b, err := s.blockByID(ctx, id)
+	b, err := s.nonRootBlock(ctx, id, "outdent", "a topic root cannot be outdented")
 	if err != nil {
 		return OutlineChange{}, err
-	}
-	if b.IsTopic() {
-		return OutlineChange{}, fmt.Errorf("outdent %s: a topic root cannot be outdented: %w", id, ErrInvalidOps)
 	}
 	parent, err := s.blockByID(ctx, b.ParentID)
 	if err != nil {
@@ -161,13 +168,8 @@ func (s *Service) OutdentBlock(ctx context.Context, id ID) (OutlineChange, error
 	if parent.IsTopic() {
 		return OutlineChange{}, fmt.Errorf("outdent %s: would create a second topic: %w", id, ErrInvalidOps)
 	}
-	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
-		{Kind: OpMove, BlockID: id, Parent: string(parent.ParentID), After: string(parent.ID)},
-	})
-	if err != nil {
-		return OutlineChange{}, err
-	}
-	return OutlineChange{GroupID: applied.GroupID}, nil
+	return s.applyOutline(ctx,
+		Op{Kind: OpMove, BlockID: id, Parent: string(parent.ParentID), After: string(parent.ID)})
 }
 
 // MergeBlocks is Backspace at the start of a block: target absorbs source's
@@ -184,6 +186,8 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) (OutlineCh
 	if target == source {
 		return OutlineChange{}, fmt.Errorf("merge %s into itself: %w", target, ErrInvalidOps)
 	}
+	// Not nonRootBlock: both blocks are read before either is judged, so a
+	// missing target is reported ahead of a source that is merely a root.
 	dst, err := s.blockByID(ctx, target)
 	if err != nil {
 		return OutlineChange{}, err
@@ -223,11 +227,7 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) (OutlineCh
 // and collapsing a topic is a legitimate act. The caller decides when that is
 // appropriate.
 func (s *Service) DeleteBlock(ctx context.Context, id ID) (OutlineChange, error) {
-	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
-	if err != nil {
-		return OutlineChange{}, err
-	}
-	return OutlineChange{GroupID: applied.GroupID}, nil
+	return s.applyOutline(ctx, Op{Kind: OpDelete, BlockID: id})
 }
 
 // MoveBlock reparents a block, landing it after the named sibling or at the
@@ -238,18 +238,8 @@ func (s *Service) DeleteBlock(ctx context.Context, id ID) (OutlineChange, error)
 // under a block would un-root it, which is really merging two topics — a
 // different act than this method's job.
 func (s *Service) MoveBlock(ctx context.Context, id, parent, after ID) (OutlineChange, error) {
-	b, err := s.blockByID(ctx, id)
-	if err != nil {
+	if _, err := s.nonRootBlock(ctx, id, "move", "a topic root cannot be moved"); err != nil {
 		return OutlineChange{}, err
 	}
-	if b.IsTopic() {
-		return OutlineChange{}, fmt.Errorf("move %s: a topic root cannot be moved: %w", id, ErrInvalidOps)
-	}
-	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
-		{Kind: OpMove, BlockID: id, Parent: string(parent), After: string(after)},
-	})
-	if err != nil {
-		return OutlineChange{}, err
-	}
-	return OutlineChange{GroupID: applied.GroupID}, nil
+	return s.applyOutline(ctx, Op{Kind: OpMove, BlockID: id, Parent: string(parent), After: string(after)})
 }
