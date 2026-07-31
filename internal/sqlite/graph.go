@@ -7,11 +7,11 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// topicRoots pairs every block with the topic root it descends from. Both graph
-// queries start here. UNION, not UNION ALL: on a database whose parent_id
-// somehow became cyclic, UNION discards the repeated row once a block is
-// already in roots, so the walk terminates instead of looping forever — the
-// same guard GetSubtree uses.
+// topicRoots pairs every block with the topic root it descends from; topicNodes
+// builds on it. UNION, not UNION ALL: on a database whose parent_id somehow
+// became cyclic, UNION discards the repeated row once a block is already in
+// roots, so the walk terminates instead of looping forever — the same guard
+// GetSubtree uses.
 const topicRoots = `
 WITH RECURSIVE roots(id, root) AS (
     SELECT id, id FROM blocks WHERE parent_id IS NULL
@@ -19,11 +19,8 @@ WITH RECURSIVE roots(id, root) AS (
     SELECT b.id, r.root FROM blocks b JOIN roots r ON b.parent_id = r.id
 )`
 
-// GetTopicGraph implements knowledge.Repository: the topic-level map. Two
-// queries rather than one join — a block count per topic and an edge set have
-// different grains, and multiplying them together in SQL only to divide them
-// back out in Go would be the more fragile shape. The price is that the two
-// reads are unsynchronized, which pruneDanglingEdges pays.
+// GetTopicGraph implements knowledge.Repository: the topic-level map, every
+// topic paired with the edges between them.
 func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
 	topics, err := r.topicNodes(ctx)
 	if err != nil {
@@ -37,11 +34,8 @@ func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) 
 }
 
 // pruneDanglingEdges drops any edge whose endpoint is not among topics, which
-// is how TopicGraph's invariant is kept: a write landing between the two reads
-// — comind mcp deleting a topic after the node read and before the edge read —
-// otherwise yields an edge naming a topic that is not there. A read
-// transaction would close the window instead, but the DSN sets
-// _txlock=immediate (see Open), so it would take a write lock to draw a map.
+// is how TopicGraph's invariant — every edge's endpoints are present in
+// Topics — is kept.
 func pruneDanglingEdges(topics []knowledge.TopicNode, edges []knowledge.TopicEdge) []knowledge.TopicEdge {
 	present := make(map[knowledge.ID]bool, len(topics))
 	for _, t := range topics {
@@ -86,10 +80,8 @@ ORDER BY r.root`
 	return out, nil
 }
 
-// topicEdges lifts block-level connections to the topic level. There is
-// currently no such connection to lift — semantic links, its only source,
-// are gone — so it always reports none; GetTopicGraph and pruneDanglingEdges
-// stay in place for whatever read replaces that source.
+// topicEdges returns the edges between topics. There is currently no source
+// for a topic-to-topic connection, so it always reports none.
 func (r *Repo) topicEdges(ctx context.Context) ([]knowledge.TopicEdge, error) {
 	return nil, nil
 }

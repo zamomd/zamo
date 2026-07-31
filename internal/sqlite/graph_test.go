@@ -32,6 +32,22 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 			t.Errorf("topic %d = %+v, want %+v", i, got.Topics[i], want[i])
 		}
 	}
+}
+
+// TestTopicEdgesIsEmptyForNow pins the current contract: topicEdges has no
+// data source, so GetTopicGraph never returns edges, even between topics
+// that otherwise appear in the graph.
+func TestTopicEdgesIsEmptyForNow(t *testing.T) {
+	ctx := t.Context()
+	db := openTestDB(t)
+
+	insertBlock(ctx, t, db, "a", "", 0, "Topic A")
+	insertBlock(ctx, t, db, "b", "", 1, "Topic B")
+
+	got, err := r(db).GetTopicGraph(ctx)
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
 	if len(got.Edges) != 0 {
 		t.Errorf("edges = %v, want none", got.Edges)
 	}
