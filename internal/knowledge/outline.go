@@ -19,6 +19,13 @@ func ownerMeta() WriteMeta {
 	return WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: ownerTitle}
 }
 
+// OutlineChange identifies an outline operation for undo and caret placement.
+// BlockID is empty when the operation does not create a block.
+type OutlineChange struct {
+	GroupID ID
+	BlockID ID
+}
+
 // blockByID reads one block, reporting ErrNotFound rather than an empty value
 // so every caller below can refuse before it builds a batch.
 func (s *Service) blockByID(ctx context.Context, id ID) (Block, error) {
@@ -34,49 +41,48 @@ func (s *Service) blockByID(ctx context.Context, id ID) (Block, error) {
 }
 
 // SplitBlock is Enter with a caret inside a block: the block keeps head, and a
-// new sibling directly below it takes tail. It returns the new block's id so
-// the caller can move the caret there.
+// new sibling directly below it takes tail.
 //
 // The two halves are siblings even when the block has children: a split
 // produces two equal parts, and the tail must not land a level deeper than the
 // head.
-func (s *Service) SplitBlock(ctx context.Context, id ID, head, tail string) (ID, error) {
+func (s *Service) SplitBlock(ctx context.Context, id ID, head, tail string) (OutlineChange, error) {
 	b, err := s.blockByID(ctx, id)
 	if err != nil {
-		return "", err
+		return OutlineChange{}, err
 	}
 	if b.IsTopic() {
-		return "", fmt.Errorf("split %s: a topic root has no siblings: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("split %s: a topic root has no siblings: %w", id, ErrInvalidOps)
 	}
 	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpEdit, BlockID: id, Content: head},
 		{Kind: OpAdd, TempID: "tail", Parent: string(b.ParentID), After: string(id), Content: tail},
 	})
 	if err != nil {
-		return "", err
+		return OutlineChange{}, err
 	}
-	return applied.IDs["tail"], nil
+	return OutlineChange{GroupID: applied.GroupID, BlockID: applied.IDs["tail"]}, nil
 }
 
 // InsertBefore is Enter with the caret at the very start of a non-empty block:
 // an empty sibling appears above and the block itself is not touched, so it
 // keeps its id and with it its revision history, its review state and its
 // links.
-func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (ID, error) {
+func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (OutlineChange, error) {
 	b, err := s.blockByID(ctx, id)
 	if err != nil {
-		return "", err
+		return OutlineChange{}, err
 	}
 	if b.IsTopic() {
-		return "", fmt.Errorf("insert before %s: a topic root has no siblings: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("insert before %s: a topic root has no siblings: %w", id, ErrInvalidOps)
 	}
 	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpAdd, TempID: "head", Parent: string(b.ParentID), Before: string(id), Content: content},
 	})
 	if err != nil {
-		return "", err
+		return OutlineChange{}, err
 	}
-	return applied.IDs["head"], nil
+	return OutlineChange{GroupID: applied.GroupID, BlockID: applied.IDs["head"]}, nil
 }
 
 // siblingsOf returns the ordered children of b's parent together with b's
@@ -110,25 +116,28 @@ func (s *Service) siblingsOf(ctx context.Context, b Block) ([]Block, int, error)
 // it, carrying its own children along. The first child of any parent has
 // nothing to be indented under, and that is a refusal, not a silent no-op —
 // the caller decides whether to show it.
-func (s *Service) IndentBlock(ctx context.Context, id ID) error {
+func (s *Service) IndentBlock(ctx context.Context, id ID) (OutlineChange, error) {
 	b, err := s.blockByID(ctx, id)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if b.IsTopic() {
-		return fmt.Errorf("indent %s: a topic root cannot be indented: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("indent %s: a topic root cannot be indented: %w", id, ErrInvalidOps)
 	}
 	siblings, i, err := s.siblingsOf(ctx, b)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if i == 0 {
-		return fmt.Errorf("indent %s: no previous sibling: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("indent %s: no previous sibling: %w", id, ErrInvalidOps)
 	}
-	_, err = s.ApplyOps(ctx, ownerMeta(), []Op{
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: id, Parent: string(siblings[i-1].ID)},
 	})
-	return err
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
 }
 
 // OutdentBlock is Shift+Tab: the block becomes its parent's next sibling,
@@ -137,25 +146,28 @@ func (s *Service) IndentBlock(ctx context.Context, id ID) error {
 //
 // A child of a topic root is refused: outdenting it would turn it into a
 // second topic, which is a different act entirely.
-func (s *Service) OutdentBlock(ctx context.Context, id ID) error {
+func (s *Service) OutdentBlock(ctx context.Context, id ID) (OutlineChange, error) {
 	b, err := s.blockByID(ctx, id)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if b.IsTopic() {
-		return fmt.Errorf("outdent %s: a topic root cannot be outdented: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("outdent %s: a topic root cannot be outdented: %w", id, ErrInvalidOps)
 	}
 	parent, err := s.blockByID(ctx, b.ParentID)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if parent.IsTopic() {
-		return fmt.Errorf("outdent %s: would create a second topic: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("outdent %s: would create a second topic: %w", id, ErrInvalidOps)
 	}
-	_, err = s.ApplyOps(ctx, ownerMeta(), []Op{
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: id, Parent: string(parent.ParentID), After: string(parent.ID)},
 	})
-	return err
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
 }
 
 // MergeBlocks is Backspace at the start of a block: target absorbs source's
@@ -168,27 +180,27 @@ func (s *Service) OutdentBlock(ctx context.Context, id ID) error {
 // runs. prepareOps preserves this order because every id in the batch is
 // real: with no temp references every op has indegree zero, and
 // orderParentsFirst is a stable Kahn traversal, so it emits them as given.
-func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
+func (s *Service) MergeBlocks(ctx context.Context, target, source ID) (OutlineChange, error) {
 	if target == source {
-		return fmt.Errorf("merge %s into itself: %w", target, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("merge %s into itself: %w", target, ErrInvalidOps)
 	}
 	dst, err := s.blockByID(ctx, target)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	src, err := s.blockByID(ctx, source)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if src.IsTopic() {
-		return fmt.Errorf("merge %s: a topic root has no siblings: %w", source, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("merge %s: a topic root has no siblings: %w", source, ErrInvalidOps)
 	}
 	if dst.IsTopic() {
-		return fmt.Errorf("merge into %s: a topic root cannot absorb text: %w", target, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("merge into %s: a topic root cannot absorb text: %w", target, ErrInvalidOps)
 	}
 	subtree, err := s.repo.GetSubtree(ctx, source)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	ops := make([]Op, 0, len(subtree)+2)
 	ops = append(ops, Op{Kind: OpEdit, BlockID: target, Content: dst.Content + src.Content})
@@ -198,8 +210,11 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
 		}
 	}
 	ops = append(ops, Op{Kind: OpDelete, BlockID: source})
-	_, err = s.ApplyOps(ctx, ownerMeta(), ops)
-	return err
+	applied, err := s.ApplyOps(ctx, ownerMeta(), ops)
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
 }
 
 // DeleteBlock removes the block and everything beneath it, through storage's
@@ -207,9 +222,12 @@ func (s *Service) MergeBlocks(ctx context.Context, target, source ID) error {
 // guard here: unlike indent or split, delete is not meaningless on a root,
 // and collapsing a topic is a legitimate act. The caller decides when that is
 // appropriate.
-func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
-	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
-	return err
+func (s *Service) DeleteBlock(ctx context.Context, id ID) (OutlineChange, error) {
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpDelete, BlockID: id}})
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
 }
 
 // MoveBlock reparents a block, landing it after the named sibling or at the
@@ -219,16 +237,19 @@ func (s *Service) DeleteBlock(ctx context.Context, id ID) error {
 // A topic root is refused as the block being moved: reparenting a topic
 // under a block would un-root it, which is really merging two topics — a
 // different act than this method's job.
-func (s *Service) MoveBlock(ctx context.Context, id, parent, after ID) error {
+func (s *Service) MoveBlock(ctx context.Context, id, parent, after ID) (OutlineChange, error) {
 	b, err := s.blockByID(ctx, id)
 	if err != nil {
-		return err
+		return OutlineChange{}, err
 	}
 	if b.IsTopic() {
-		return fmt.Errorf("move %s: a topic root cannot be moved: %w", id, ErrInvalidOps)
+		return OutlineChange{}, fmt.Errorf("move %s: a topic root cannot be moved: %w", id, ErrInvalidOps)
 	}
-	_, err = s.ApplyOps(ctx, ownerMeta(), []Op{
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: id, Parent: string(parent), After: string(after)},
 	})
-	return err
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID}, nil
 }

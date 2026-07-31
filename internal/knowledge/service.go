@@ -133,6 +133,11 @@ func (s *Service) DeleteRevision(ctx context.Context, blockID, revID ID) error {
 	return s.repo.DeleteRevision(ctx, blockID, revID)
 }
 
+// UndoGroup rolls back an entire revision group.
+func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
+	return s.repo.UndoGroup(ctx, groupID)
+}
+
 // AcceptEdge marks a pending edge as reviewed.
 func (s *Service) AcceptEdge(ctx context.Context, from, to ID, rel Relation) error {
 	return s.repo.MarkEdgeReviewed(ctx, from, to, rel)

@@ -76,7 +76,7 @@ export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: 
  * DeleteBlock removes a block and everything under it. Meant for a childless
  * empty block the owner deletes.
  */
-export function DeleteBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+export function DeleteBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(3350413163, id);
 }
 
@@ -136,7 +136,7 @@ export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$
 /**
  * IndentBlock is Tab: the block becomes the last child of the sibling above.
  */
-export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(2582260824, id);
 }
 
@@ -144,7 +144,7 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<void> {
  * InsertBlockBefore is Enter at the very start of a block: an empty sibling
  * appears above and the block keeps its id, history and links.
  */
-export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.ID> {
+export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1337418982, id, content);
 }
 
@@ -152,7 +152,7 @@ export function InsertBlockBefore(id: knowledge$0.ID, content: string): $Cancell
  * MergeBlocks is Backspace at the start of a block: target absorbs source's
  * text and children, source is removed.
  */
-export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $CancellablePromise<void> {
+export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1686297213, target, source);
 }
 
@@ -160,14 +160,14 @@ export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $Ca
  * MoveBlock reparents a block after the named sibling, or last when after is
  * empty.
  */
-export function MoveBlock(id: knowledge$0.ID, parent: knowledge$0.ID, after: knowledge$0.ID): $CancellablePromise<void> {
+export function MoveBlock(id: knowledge$0.ID, parent: knowledge$0.ID, after: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1003820089, id, parent, after);
 }
 
 /**
  * OutdentBlock is Shift+Tab: the block becomes its parent's next sibling.
  */
-export function OutdentBlock(id: knowledge$0.ID): $CancellablePromise<void> {
+export function OutdentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(3796162431, id);
 }
 
@@ -226,9 +226,9 @@ export function Settings(): $CancellablePromise<settings$0.View> {
 
 /**
  * SplitBlock is Enter with a caret inside a block: the block keeps head, a new
- * sibling below takes tail. Returns the new block's id for the caret.
+ * sibling below takes tail.
  */
-export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $CancellablePromise<knowledge$0.ID> {
+export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(4068486128, id, head, tail);
 }
 
@@ -244,6 +244,13 @@ export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(2904437206);
+}
+
+/**
+ * UndoGroup rolls back an outline operation by its revision group.
+ */
+export function UndoGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
+    return $Call.ByID(2076062586, groupID);
 }
 
 /**

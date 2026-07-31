@@ -14,6 +14,7 @@ export type {
     ID,
     LinkedBlock,
     Metadata,
+    OutlineChange,
     Revision,
     TopicEdge,
     TopicGraph,

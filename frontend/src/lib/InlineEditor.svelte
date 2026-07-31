@@ -63,6 +63,23 @@
 		const value = base.editText;
 		const caret = el.selectionStart;
 		const selecting = el.selectionStart !== el.selectionEnd;
+		// Leave uncommitted text to the textarea's native undo history.
+		if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
+			const redo = e.shiftKey;
+			if (redo ? base.canRedo() : base.canUndo()) {
+				e.preventDefault();
+				void (redo ? base.redo() : base.undo());
+			}
+			return;
+		}
+		// Ctrl+Y is redo on Windows and Linux, but Cmd+Y is not redo on macOS.
+		if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "y") {
+			if (base.canRedo()) {
+				e.preventDefault();
+				void base.redo();
+			}
+			return;
+		}
 
 		switch (e.key) {
 			case "Enter":

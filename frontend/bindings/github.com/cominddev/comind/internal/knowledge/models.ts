@@ -102,6 +102,15 @@ export interface LinkedBlock {
 export type Metadata = { [_ in string]?: any } | null;
 
 /**
+ * OutlineChange identifies an outline operation for undo and caret placement.
+ * BlockID is empty when the operation does not create a block.
+ */
+export interface OutlineChange {
+    "GroupID": ID;
+    "BlockID": ID;
+}
+
+/**
  * Relation is the type of a non-hierarchical link between blocks.
  * The hierarchy (contains/part-of) is not stored as links: it lives
  * in Block.ParentID (one source of truth per fact).

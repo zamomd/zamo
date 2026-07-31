@@ -323,6 +323,86 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 	return nil
 }
 
+// undoableBlockIDs returns the affected blocks when a group can be removed
+// without crossing newer revisions or edge changes.
+func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
+	var buried bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM block_revisions r
+			WHERE r.group_id = ? AND EXISTS(
+				SELECT 1 FROM block_revisions later
+				WHERE later.block_id = r.block_id AND later.seq > r.seq
+				  AND (later.group_id IS NULL OR later.group_id <> ?)))`,
+		groupID, groupID).Scan(&buried); err != nil {
+		return nil, translate(err)
+	}
+	if buried {
+		return nil, fmt.Errorf("group %s: written over since: %w", groupID, knowledge.ErrInvalidRollback)
+	}
+	var edges bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM edges WHERE group_id = ?)`, groupID).Scan(&edges); err != nil {
+		return nil, translate(err)
+	}
+	if edges {
+		return nil, fmt.Errorf("group %s: edges have no revisions to roll back: %w",
+			groupID, knowledge.ErrInvalidRollback)
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT block_id FROM block_revisions WHERE group_id = ?`, groupID)
+	if err != nil {
+		return nil, translate(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, translate(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, translate(err)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrNotFound)
+	}
+	return ids, nil
+}
+
+// UndoGroup removes a revision group and rebuilds its block projections.
+func (r *Repo) UndoGroup(ctx context.Context, groupID knowledge.ID) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
+	}
+	defer tx.Rollback()
+
+	ids, err := undoableBlockIDs(ctx, tx, string(groupID))
+	if err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM block_revisions WHERE group_id = ?`, string(groupID)); err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
+	}
+	if err := projectFixpoint(ctx, tx, ids); err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM revision_groups WHERE id = ?`, string(groupID)); err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
+	}
+	return nil
+}
+
 // projectFixpoint calls projectHead for every id, retrying across passes:
 // a block that fails with ErrInvalidRollback (its dependency — a child or
 // a parent, depending on the shape being rejected — hasn't been resolved

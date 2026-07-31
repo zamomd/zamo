@@ -21,6 +21,10 @@ type Repository interface {
 	// RejectBlock deletes the block's contiguous unreviewed head
 	// revisions and rebuilds the projection.
 	RejectBlock(ctx context.Context, blockID ID) error
+	// UndoGroup rolls back an entire revision group.
+	// It reports ErrInvalidRollback for partial rollbacks and ErrNotFound
+	// when the group does not exist.
+	UndoGroup(ctx context.Context, groupID ID) error
 	RejectPage(ctx context.Context, topicID ID) error
 	MarkBlockReviewed(ctx context.Context, blockID ID) error
 	MarkGroupReviewed(ctx context.Context, groupID ID) error

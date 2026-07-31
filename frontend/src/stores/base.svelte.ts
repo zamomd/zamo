@@ -3,6 +3,7 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
 	type Block,
 	type LinkedBlock,
+	type OutlineChange,
 	Relation,
 	type Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
@@ -36,6 +37,23 @@ const generationPhaseLabels: Record<string, string> = {
 	requesting: "sending the request…",
 	awaiting: "the model is working…",
 	parsing: "applying the response…",
+};
+
+type Gesture =
+	| { kind: "split"; id: string; caret: number; end: number }
+	| { kind: "insertAbove"; id: string }
+	| { kind: "indent"; id: string }
+	| { kind: "outdent"; id: string }
+	| { kind: "mergeIntoPrevious"; id: string }
+	| { kind: "pullNextInto"; id: string; caret: number }
+	| { kind: "discard"; id: string };
+
+type Command = {
+	groupID: string;
+	topicID: string;
+	land: { id: string; caret: number };
+	gesture: Gesture;
+	createdID: string;
 };
 
 // BaseStore is the knowledge base's view-model: browse the tree and drive the
@@ -89,6 +107,10 @@ class BaseStore {
 	// placement events from caret movements reported by the editor.
 	editCaret = $state(0);
 	editCaretNonce = $state(0);
+
+	// Persisted outline edits do not share the textarea's native history.
+	private undoStack = $state<Command[]>([]);
+	private redoStack = $state<Command[]>([]);
 
 	// Jump-to-block target for a search result. highlightID names the row to
 	// flash and scroll to; highlightNonce is bumped on every reveal so a second
@@ -244,6 +266,7 @@ class BaseStore {
 			}
 		}
 		this.forest = trees;
+		this.clearUndoHistory();
 		// A reload can drop the selected topic (its page was accepted away) or
 		// arrive with nothing selected on first load. Fall back to the first
 		// topic so the main area is never blank while the base has content.
@@ -559,7 +582,7 @@ class BaseStore {
 		this.editCaretNonce++;
 	}
 
-	// clearEdit closes a session after it is committed or its block disappears.
+	// clearEdit closes the current edit session without clearing outline history.
 	clearEdit(): void {
 		this.editingID = null;
 		this.editText = "";
@@ -603,16 +626,18 @@ class BaseStore {
 		}
 		const topic = topicOf(this.forest, id);
 		const text = this.editText;
+		const head = text.slice(0, caret);
 		const tail = text.slice(end);
 		this.busy = true;
 		this.error = "";
 		try {
-			const newID = await App.SplitBlock(id, text.slice(0, caret), tail);
+			const change = await App.SplitBlock(id, head, tail);
+			this.record(change, topic, { id, caret }, { kind: "split", id, caret, end });
 			if (topic !== null) {
 				await this.reloadTopic(topic);
 			}
 			this.editText = tail;
-			this.editingID = newID;
+			this.editingID = change.BlockID;
 			this.editCaret = 0;
 			this.editCaretNonce++;
 		} catch (err: unknown) {
@@ -620,6 +645,145 @@ class BaseStore {
 		} finally {
 			this.busy = false;
 		}
+	}
+
+	private record(
+		change: OutlineChange,
+		topic: string | null,
+		land: { id: string; caret: number },
+		gesture: Gesture,
+	): void {
+		this.undoStack.push({
+			groupID: change.GroupID,
+			topicID: topic ?? "",
+			land,
+			gesture,
+			createdID: change.BlockID,
+		});
+		this.redoStack = [];
+	}
+
+	private editIsClean(): boolean {
+		return this.editingID === null || findBlock(this.forest, this.editingID)?.Content === this.editText;
+	}
+
+	canUndo(): boolean {
+		return !this.busy && this.undoStack.length > 0 && this.editIsClean();
+	}
+
+	canRedo(): boolean {
+		return !this.busy && this.redoStack.length > 0 && this.editIsClean();
+	}
+
+	async undo(): Promise<void> {
+		const command = this.undoStack.at(-1);
+		if (command === undefined || !this.canUndo()) {
+			return;
+		}
+		this.busy = true;
+		this.error = "";
+		try {
+			try {
+				await App.UndoGroup(command.groupID);
+			} catch (err: unknown) {
+				this.error = messageFor(err);
+				return;
+			}
+			this.undoStack.pop();
+			this.redoStack.push(command);
+			await this.refresh(command.topicID);
+			this.land(command.land);
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	async redo(): Promise<void> {
+		const command = this.redoStack.at(-1);
+		if (command === undefined || !this.canRedo()) {
+			return;
+		}
+		const branch = this.redoStack.slice(0, -1);
+		const depth = this.undoStack.length;
+		await this.perform(command.gesture);
+		const made = this.undoStack.at(-1);
+		if (this.undoStack.length === depth || made === undefined) {
+			return;
+		}
+		this.redoStack = branch;
+		if (command.createdID !== "" && made.createdID !== command.createdID) {
+			this.rename(command.createdID, made.createdID);
+		}
+	}
+
+	// rename remaps references to a block recreated by redo.
+	private rename(from: string, to: string): void {
+		for (const command of this.redoStack) {
+			if (command.land.id === from) {
+				command.land.id = to;
+			}
+			if (command.gesture.id === from) {
+				command.gesture.id = to;
+			}
+		}
+	}
+
+	private async perform(gesture: Gesture): Promise<void> {
+		switch (gesture.kind) {
+			case "split":
+				await this.splitAtCaret(gesture.id, gesture.caret, gesture.end);
+				return;
+			case "insertAbove":
+				await this.insertAbove(gesture.id);
+				return;
+			case "indent":
+				await this.indent(gesture.id);
+				return;
+			case "outdent":
+				await this.outdent(gesture.id);
+				return;
+			case "mergeIntoPrevious":
+				await this.mergeIntoPrevious(gesture.id);
+				return;
+			case "pullNextInto":
+				await this.pullNextInto(gesture.id, gesture.caret);
+				return;
+			case "discard":
+				await this.discard(gesture.id);
+				return;
+		}
+	}
+
+	// discard repeats deletion of an empty block during redo.
+	private async discard(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		const topic = topicOf(this.forest, id);
+		this.busy = true;
+		this.error = "";
+		try {
+			const change = await App.DeleteBlock(id);
+			this.record(change, topic, { id, caret: 0 }, { kind: "discard", id });
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			return;
+		} finally {
+			this.busy = false;
+		}
+		await this.refresh(topic);
+	}
+
+	private land(at: { id: string; caret: number }): void {
+		this.editText = findBlock(this.forest, at.id)?.Content ?? this.editText;
+		this.editingID = at.id;
+		this.editCaret = at.caret;
+		this.editCaretNonce++;
+	}
+
+	clearUndoHistory(): void {
+		this.undoStack = [];
+		this.redoStack = [];
 	}
 
 	// insertAbove preserves the current block identity and edit session.
@@ -631,7 +795,8 @@ class BaseStore {
 		this.busy = true;
 		this.error = "";
 		try {
-			await App.InsertBlockBefore(id, "");
+			const change = await App.InsertBlockBefore(id, "");
+			this.record(change, topic, { id, caret: 0 }, { kind: "insertAbove", id });
 			if (topic !== null) {
 				await this.reloadTopic(topic);
 			}
@@ -647,7 +812,10 @@ class BaseStore {
 		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id, this.ghosts) === null) {
 			return;
 		}
-		await this.structural(id, () => App.IndentBlock(id));
+		await this.structural(id, () => App.IndentBlock(id), undefined, {
+			caret: this.editCaret,
+			gesture: { kind: "indent", id },
+		});
 	}
 
 	// outdent moves a block after its parent without moving its former siblings.
@@ -657,7 +825,10 @@ class BaseStore {
 		if (this.busy || this.isViewRoot(id) || node === null || root === null || node.block.ParentID === root.block.ID) {
 			return;
 		}
-		await this.structural(id, () => App.OutdentBlock(id));
+		await this.structural(id, () => App.OutdentBlock(id), undefined, {
+			caret: this.editCaret,
+			gesture: { kind: "outdent", id },
+		});
 	}
 
 	// mergeIntoPrevious joins the block into its previous visible live block.
@@ -668,7 +839,15 @@ class BaseStore {
 		}
 		this.collapsed.delete(target);
 		const seam = findBlock(this.forest, target)?.Content.length ?? 0;
-		await this.structural(id, () => App.MergeBlocks(target, id), { id: target, caret: seam });
+		await this.structural(
+			id,
+			() => App.MergeBlocks(target, id),
+			{ id: target, caret: seam },
+			{
+				caret: 0,
+				gesture: { kind: "mergeIntoPrevious", id },
+			},
+		);
 	}
 
 	// pullNextInto joins the next visible live block into this one.
@@ -677,7 +856,15 @@ class BaseStore {
 		if (this.busy || this.isViewRoot(id) || source === null) {
 			return;
 		}
-		await this.structural(id, () => App.MergeBlocks(id, source), { id, caret });
+		await this.structural(
+			id,
+			() => App.MergeBlocks(id, source),
+			{ id, caret },
+			{
+				caret,
+				gesture: { kind: "pullNextInto", id, caret },
+			},
+		);
 	}
 
 	// moveCaret enters the adjacent block at the nearest matching column.
@@ -711,31 +898,31 @@ class BaseStore {
 		}
 	}
 
-	// structural writes pending text before applying an ID-based tree operation.
-	// Operation failure keeps the edit session; refresh failure does not undo a
-	// successful operation.
+	// structural persists pending text before applying an ID-based tree edit.
 	private async structural(
 		id: string,
-		op: () => Promise<unknown>,
+		op: () => Promise<OutlineChange>,
 		land?: { id: string; caret: number },
+		undo?: { caret: number; gesture: Gesture },
 	): Promise<void> {
 		const topic = topicOf(this.forest, id);
 		this.busy = true;
 		this.error = "";
 		try {
+			let change: OutlineChange;
 			try {
 				await this.writeIfChanged(id);
-				await op();
+				change = await op();
 			} catch (err: unknown) {
 				this.error = messageFor(err);
 				return;
 			}
+			if (undo !== undefined) {
+				this.record(change, topic, { id, caret: undo.caret }, undo.gesture);
+			}
 			await this.refresh(topic);
 			if (land !== undefined) {
-				this.editText = findBlock(this.forest, land.id)?.Content ?? this.editText;
-				this.editingID = land.id;
-				this.editCaret = land.caret;
-				this.editCaretNonce++;
+				this.land(land);
 			}
 		} finally {
 			this.busy = false;
@@ -780,7 +967,9 @@ class BaseStore {
 			const empty = this.editText.trim() === "";
 			const disposable = empty && node.children.length === 0 && node.block.ParentID !== "";
 			if (disposable) {
-				await App.DeleteBlock(id);
+				// The deletion supersedes the block's creation group.
+				const change = await App.DeleteBlock(id);
+				this.record(change, topic, { id, caret: 0 }, { kind: "discard", id });
 			} else if (!(await this.writeIfChanged(id))) {
 				this.clearEdit();
 				return true;

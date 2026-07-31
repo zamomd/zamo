@@ -28,6 +28,7 @@ const reloadFixture = vi.hoisted(() => ({
 	// and the order of those steps is the whole point of the caret's placement.
 	onSubtree: null as ((id: string) => void) | null,
 }));
+const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
 	App: {
 		TopicMap: async () => {
@@ -50,12 +51,13 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 				await reloadFixture.writeGate;
 			}
 		}),
-		DeleteBlock: vi.fn(async () => {}),
-		SplitBlock: vi.fn(async () => "new"),
-		InsertBlockBefore: vi.fn(async () => "above"),
-		IndentBlock: vi.fn(async () => {}),
-		OutdentBlock: vi.fn(async () => {}),
-		MergeBlocks: vi.fn(async () => {}),
+		DeleteBlock: vi.fn(async () => change("grp")),
+		SplitBlock: vi.fn(async () => change("grp", "new")),
+		InsertBlockBefore: vi.fn(async () => change("grp", "above")),
+		IndentBlock: vi.fn(async () => change("grp")),
+		OutdentBlock: vi.fn(async () => change("grp")),
+		MergeBlocks: vi.fn(async () => change("grp")),
+		UndoGroup: vi.fn(async () => {}),
 		AcceptBlock: vi.fn(async () => {}),
 		RejectBlock: vi.fn(async () => {}),
 		AcceptPage: vi.fn(async () => {}),
@@ -104,9 +106,8 @@ beforeEach(() => {
 	// toggle, focus and the rest of the tree's actions now commit an open edit
 	// rather than refuse, so a leaked editingID would silently write a stale
 	// editText into an unrelated test's block instead of merely disarming it.
-	base.editingID = null;
-	base.editText = "";
-	base.editCaret = 0;
+	base.clearEdit();
+	base.clearUndoHistory();
 	// Neither is reset by the store between acts, and both change what a gesture
 	// is allowed to do, so a test that seeds either would otherwise decide the
 	// outcome of whatever test the shuffle runs next.
@@ -870,7 +871,7 @@ it("leaves the mode alone when the commit that switching modes triggers fails", 
 
 describe("Enter", () => {
 	it("splits at the caret, keeping the head and moving the caret into the tail", async () => {
-		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("grp", "new"));
 		// startEdit reads the forest, not the argument (see "the edit session"
 		// above), so the fixture carries the text under test rather than the
 		// default seeded forest's "done" placeholder.
@@ -886,7 +887,7 @@ describe("Enter", () => {
 	// The ID carries history, review state and links; Enter at the start must not
 	// move the text onto a new one.
 	it("inserts an empty block above when the caret is at the start of non-empty text", async () => {
-		vi.mocked(App.InsertBlockBefore).mockResolvedValueOnce("above");
+		vi.mocked(App.InsertBlockBefore).mockResolvedValueOnce(change("grp", "above"));
 		await base.startEdit(block("done", "ctx", "untouched"), 0);
 		await base.insertAbove("done");
 		expect(App.InsertBlockBefore).toHaveBeenCalledWith("done", "");
@@ -896,7 +897,7 @@ describe("Enter", () => {
 	});
 
 	it("splits an empty block rather than inserting above it", async () => {
-		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("grp", "new"));
 		// Same reason as above: the forest, not the argument, is what startEdit
 		// reads, so it has to actually hold the empty content under test.
 		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "")])])];
@@ -910,7 +911,7 @@ describe("Enter", () => {
 	// field. Splitting at selectionStart alone left the run in the head *and* in
 	// the tail, which is content damage rather than a misplaced caret.
 	it("drops the selected run rather than keeping it in both halves", async () => {
-		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("grp", "new"));
 		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "head SELECTED tail")])])];
 		await base.startEdit(block("done", "ctx", "head SELECTED tail"), 5);
 		await base.splitAtCaret("done", 5, 13);
@@ -918,7 +919,7 @@ describe("Enter", () => {
 	});
 
 	it("splits with the text currently in the editor, not the stored text", async () => {
-		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("grp", "new"));
 		await base.startEdit(block("done", "ctx", "old"), 0);
 		base.editText = "typed more";
 		await base.splitAtCaret("done", 5);
@@ -940,6 +941,252 @@ describe("Enter", () => {
 		await base.insertAbove("go");
 		expect(App.InsertBlockBefore).not.toHaveBeenCalled();
 		expect(base.error).toBe("");
+	});
+});
+
+describe("undo and redo", () => {
+	function seedCtx(...children: Block[]): void {
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), ...children];
+	}
+
+	async function atSeam(): Promise<void> {
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "head tail")])])];
+		await base.startEdit(block("done", "ctx", "head tail"), 4);
+	}
+
+	it("takes a split back through the batch that wrote it", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+		expect(base.canUndo()).toBe(true);
+
+		seedCtx(block("done", "ctx", "head tail"));
+		await base.undo();
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("split-1");
+		expect(base.editingID).toBe("done");
+		expect(base.editText).toBe("head tail");
+		expect(base.editCaret).toBe(4);
+	});
+
+	it("takes an indent back", async () => {
+		vi.mocked(App.IndentBlock).mockResolvedValueOnce(change("indent-1"));
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("gen", "go")];
+		await base.reloadTopic("go");
+		await base.startEdit(block("gen", "go", "gen"), 2);
+		await base.indent("gen");
+
+		await base.undo();
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("indent-1");
+		expect(base.editingID).toBe("gen");
+		expect(base.editCaret).toBe(2);
+	});
+
+	it("takes a merge back", async () => {
+		vi.mocked(App.MergeBlocks).mockResolvedValueOnce(change("merge-1"));
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("done", "ctx")];
+		await base.reloadTopic("go");
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.mergeIntoPrevious("done");
+		expect(App.MergeBlocks).toHaveBeenCalledWith("ctx", "done");
+
+		await base.undo();
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("merge-1");
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(0);
+	});
+
+	it("takes an insert-above back", async () => {
+		vi.mocked(App.InsertBlockBefore).mockResolvedValueOnce(change("above-1", "above"));
+		reloadFixture.subtrees.go = [block("go", ""), block("ctx", "go"), block("done", "ctx")];
+		await base.reloadTopic("go");
+		await base.startEdit(block("done", "ctx", "done"), 0);
+		await base.insertAbove("done");
+
+		await base.undo();
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("above-1");
+		expect(base.editingID).toBe("done");
+		expect(base.editCaret).toBe(0);
+	});
+
+	it("leaves undo of uncommitted typing to the textarea", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+
+		base.editText = "changed tail";
+
+		expect(base.canUndo()).toBe(false);
+		await base.undo();
+		expect(App.UndoGroup).not.toHaveBeenCalled();
+	});
+
+	it("redoes a split by performing it again", async () => {
+		vi.mocked(App.SplitBlock)
+			.mockResolvedValueOnce(change("split-1", "tail"))
+			.mockResolvedValueOnce(change("split-2", "tail-again"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+		seedCtx(block("done", "ctx", "head tail"));
+		await base.undo();
+		expect(base.canRedo()).toBe(true);
+
+		seedCtx(block("done", "ctx", "head"), block("tail-again", "ctx", " tail"));
+		await base.redo();
+
+		expect(App.SplitBlock).toHaveBeenLastCalledWith("done", "head", " tail");
+		expect(base.editingID).toBe("tail-again");
+		expect(base.editText).toBe(" tail");
+		expect(base.canUndo()).toBe(true);
+	});
+
+	it("follows the tail's new id through a second redo", async () => {
+		vi.mocked(App.SplitBlock)
+			.mockResolvedValueOnce(change("g1", "b"))
+			.mockResolvedValueOnce(change("g2", "c"))
+			.mockResolvedValueOnce(change("g3", "b-again"))
+			.mockResolvedValueOnce(change("g4", "c-again"));
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "one two three")])])];
+		await base.startEdit(block("done", "ctx", "one two three"), 3);
+
+		seedCtx(block("done", "ctx", "one"), block("b", "ctx", " two three"));
+		await base.splitAtCaret("done", 3);
+		seedCtx(block("done", "ctx", "one"), block("b", "ctx", " two"), block("c", "ctx", " three"));
+		await base.splitAtCaret("b", 4);
+
+		seedCtx(block("done", "ctx", "one"), block("b", "ctx", " two three"));
+		await base.undo();
+		seedCtx(block("done", "ctx", "one two three"));
+		await base.undo();
+		expect(base.editingID).toBe("done");
+
+		seedCtx(block("done", "ctx", "one"), block("b-again", "ctx", " two three"));
+		await base.redo();
+		expect(base.editingID).toBe("b-again");
+
+		expect(base.canRedo()).toBe(true);
+		seedCtx(block("done", "ctx", "one"), block("b-again", "ctx", " two"), block("c-again", "ctx", " three"));
+		await base.redo();
+
+		expect(App.SplitBlock).toHaveBeenLastCalledWith("b-again", " two", " three");
+		expect(base.editingID).toBe("c-again");
+	});
+
+	it("keeps the command when the backend refuses the rollback", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+
+		vi.mocked(App.UndoGroup).mockRejectedValueOnce(new Error("bridge down"));
+		await base.undo();
+
+		expect(base.error).not.toBe("");
+		expect(base.canUndo()).toBe(true);
+		expect(base.canRedo()).toBe(false);
+	});
+
+	it("survives moving to another block", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+
+		await base.startEdit(block("done", "ctx", "head"), 0);
+
+		expect(base.canUndo()).toBe(true);
+		seedCtx(block("done", "ctx", "head tail"));
+		await base.undo();
+		expect(App.UndoGroup).toHaveBeenCalledWith("split-1");
+	});
+
+	it("records the cleanup that discards a block left empty", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		vi.mocked(App.DeleteBlock).mockResolvedValueOnce(change("discard-1"));
+		base.forest = [node("go", "", [node("ctx", "go", [node("done", "ctx", [], "head")])])];
+		await base.startEdit(block("done", "ctx", "head"), 4);
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", ""));
+		await base.splitAtCaret("done", 4);
+
+		seedCtx(block("done", "ctx", "head"));
+		await base.commitEdit();
+		expect(App.DeleteBlock).toHaveBeenCalledWith("tail");
+
+		await base.undo();
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("discard-1");
+	});
+
+	it("records a gesture whose re-read fails, because the write did land", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+
+		reloadFixture.onSubtree = () => {
+			throw new Error("bridge down");
+		};
+		await base.splitAtCaret("done", 4);
+		reloadFixture.onSubtree = null;
+
+		expect(base.error).not.toBe("");
+		expect(base.canUndo()).toBe(true);
+	});
+
+	it("moves the command to redo when the re-read after an undo fails", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+
+		reloadFixture.onSubtree = () => {
+			throw new Error("bridge down");
+		};
+		await base.undo();
+		reloadFixture.onSubtree = null;
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("split-1");
+		expect(base.error).not.toBe("");
+		expect(base.canUndo()).toBe(false);
+	});
+
+	it("does not repeat a redo whose re-read failed", async () => {
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("split-1", "tail"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+		seedCtx(block("done", "ctx", "head tail"));
+		await base.undo();
+
+		reloadFixture.onSubtree = () => {
+			throw new Error("bridge down");
+		};
+		await base.redo();
+		await base.redo();
+		reloadFixture.onSubtree = null;
+
+		expect(App.SplitBlock).toHaveBeenCalledTimes(2);
+	});
+
+	it("drops the redo branch when a new gesture is made", async () => {
+		vi.mocked(App.SplitBlock)
+			.mockResolvedValueOnce(change("split-1", "tail"))
+			.mockResolvedValueOnce(change("split-2", "second"));
+		await atSeam();
+		seedCtx(block("done", "ctx", "head"), block("tail", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+		seedCtx(block("done", "ctx", "head tail"));
+		await base.undo();
+		expect(base.canRedo()).toBe(true);
+
+		seedCtx(block("done", "ctx", "head"), block("second", "ctx", " tail"));
+		await base.splitAtCaret("done", 4);
+
+		expect(base.canRedo()).toBe(false);
 	});
 });
 
@@ -1111,7 +1358,7 @@ describe("placing the caret", () => {
 		await base.mergeIntoPrevious("done");
 		expect(base.editCaretNonce).toBe(opened + 1);
 
-		vi.mocked(App.SplitBlock).mockResolvedValueOnce("new");
+		vi.mocked(App.SplitBlock).mockResolvedValueOnce(change("grp", "new"));
 		await base.splitAtCaret("ctx", 1);
 		expect(base.editCaretNonce).toBe(opened + 2);
 	});

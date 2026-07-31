@@ -48,6 +48,9 @@ type fakeRepo struct {
 	applyErr     error
 	applyCalls   int
 
+	undoneGroup  ID
+	undoGroupErr error
+
 	revisions    map[ID][]Revision // what ListRevisions serves, by block id
 	revisionsErr error
 
@@ -126,6 +129,11 @@ func (f *fakeRepo) ListRevisions(_ context.Context, blockID ID) ([]Revision, err
 func (f *fakeRepo) DeleteRevision(_ context.Context, blockID, revID ID) error {
 	f.deletedBlockID, f.deletedRevID = blockID, revID
 	return f.deleteRevisionErr
+}
+
+func (f *fakeRepo) UndoGroup(_ context.Context, groupID ID) error {
+	f.undoneGroup = groupID
+	return f.undoGroupErr
 }
 
 func (f *fakeRepo) RejectBlock(_ context.Context, blockID ID) error {

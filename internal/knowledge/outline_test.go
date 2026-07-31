@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -31,12 +32,12 @@ func outlineService(t *testing.T) (*Service, *fakeRepo) {
 func TestSplitBlockEditsHeadAndAnchorsTailAfterIt(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	newID, err := svc.SplitBlock(t.Context(), "first", "Fi", "rst")
+	change, err := svc.SplitBlock(t.Context(), "first", "Fi", "rst")
 	if err != nil {
 		t.Fatalf("SplitBlock: %v", err)
 	}
-	if newID != "new-1" {
-		t.Errorf("new id = %q, want new-1", newID)
+	if change.BlockID != "new-1" {
+		t.Errorf("new id = %q, want new-1", change.BlockID)
 	}
 	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Source != SourceGUIManual {
 		t.Errorf("meta = %+v, want owner/gui_manual (born reviewed)", repo.applyMeta)
@@ -98,7 +99,7 @@ func TestSplitBlockReportsAMissingBlock(t *testing.T) {
 func TestIndentBlockMovesItUnderThePreviousSibling(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if err := svc.IndentBlock(t.Context(), "second"); err != nil {
+	if _, err := svc.IndentBlock(t.Context(), "second"); err != nil {
 		t.Fatalf("IndentBlock: %v", err)
 	}
 	if len(repo.applyOps) != 1 {
@@ -119,7 +120,7 @@ func TestIndentFirstChildIsRefused(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	// Nothing above it at its own level to become its parent.
-	err := svc.IndentBlock(t.Context(), "first")
+	_, err := svc.IndentBlock(t.Context(), "first")
 	if !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
@@ -143,7 +144,7 @@ func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
 
-	if err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
+	if _, err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
 		t.Fatalf("OutdentBlock: %v", err)
 	}
 	if len(repo.applyOps) != 1 {
@@ -161,7 +162,7 @@ func TestOutdentChildOfTopicRootIsRefused(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	// Outdenting here would make the block a second topic root.
-	err := svc.OutdentBlock(t.Context(), "first")
+	_, err := svc.OutdentBlock(t.Context(), "first")
 	if !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
@@ -186,7 +187,7 @@ func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
 
-	if err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
+	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
 		t.Fatalf("MergeBlocks: %v", err)
 	}
 
@@ -234,7 +235,7 @@ func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
 
-	if err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
+	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
 		t.Fatalf("MergeBlocks: %v", err)
 	}
 
@@ -264,7 +265,7 @@ func TestMergeBlocksWithNoChildrenEmitsNoMoves(t *testing.T) {
 
 	// first and second, from outlineService's fixture, are childless: their
 	// subtree is absent from repo.subtrees, so GetSubtree serves nil.
-	if err := svc.MergeBlocks(t.Context(), "first", "second"); err != nil {
+	if _, err := svc.MergeBlocks(t.Context(), "first", "second"); err != nil {
 		t.Fatalf("MergeBlocks: %v", err)
 	}
 
@@ -281,7 +282,7 @@ func TestMergeBlocksWithNoChildrenEmitsNoMoves(t *testing.T) {
 func TestMergeBlocksRefusesMergingIntoItself(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if err := svc.MergeBlocks(t.Context(), "first", "first"); !errors.Is(err, ErrInvalidOps) {
+	if _, err := svc.MergeBlocks(t.Context(), "first", "first"); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
 	if repo.applyCalls != 0 {
@@ -297,7 +298,7 @@ func TestMergeBlocksRefusesATopicRootAsSource(t *testing.T) {
 	// children onto target and cascade the topic root itself away — the
 	// whole topic disappearing, born reviewed and unrecoverable through
 	// Reject.
-	if err := svc.MergeBlocks(t.Context(), "first", "root"); !errors.Is(err, ErrInvalidOps) {
+	if _, err := svc.MergeBlocks(t.Context(), "first", "root"); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
 	if repo.applyCalls != 0 {
@@ -310,7 +311,7 @@ func TestMergeBlocksRefusesATopicRootAsTarget(t *testing.T) {
 
 	// Merging into a topic root would append body text onto the topic's
 	// title.
-	if err := svc.MergeBlocks(t.Context(), "root", "first"); !errors.Is(err, ErrInvalidOps) {
+	if _, err := svc.MergeBlocks(t.Context(), "root", "first"); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
 	if repo.applyCalls != 0 {
@@ -321,7 +322,7 @@ func TestMergeBlocksRefusesATopicRootAsTarget(t *testing.T) {
 func TestDeleteBlockEmitsOneDelete(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if err := svc.DeleteBlock(t.Context(), "second"); err != nil {
+	if _, err := svc.DeleteBlock(t.Context(), "second"); err != nil {
 		t.Fatalf("DeleteBlock: %v", err)
 	}
 	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpDelete || repo.applyOps[0].BlockID != "second" {
@@ -332,7 +333,7 @@ func TestDeleteBlockEmitsOneDelete(t *testing.T) {
 func TestMoveBlockPassesTheAnchorThrough(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if err := svc.MoveBlock(t.Context(), "second", "root", "first"); err != nil {
+	if _, err := svc.MoveBlock(t.Context(), "second", "root", "first"); err != nil {
 		t.Fatalf("MoveBlock: %v", err)
 	}
 	move := repo.applyOps[0]
@@ -346,10 +347,50 @@ func TestMoveBlockRefusesATopicRoot(t *testing.T) {
 
 	// Reparenting a topic root under a block would un-root the topic —
 	// that is merging two topics, a different act than a plain move.
-	if err := svc.MoveBlock(t.Context(), "root", "first", ""); !errors.Is(err, ErrInvalidOps) {
+	if _, err := svc.MoveBlock(t.Context(), "root", "first", ""); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
 	}
+}
+
+func sequencedOutlineService(t *testing.T) (*Service, *fakeRepo) {
+	t.Helper()
+	svc, repo := outlineService(t)
+	n := 0
+	svc.newID = func() ID { n++; return ID(fmt.Sprintf("id-%d", n)) }
+	return svc, repo
+}
+
+func TestOutlineGesturesReportTheBatchTheyWrote(t *testing.T) {
+	t.Run("split also reports the block it created", func(t *testing.T) {
+		svc, repo := sequencedOutlineService(t)
+
+		change, err := svc.SplitBlock(t.Context(), "first", "Fi", "rst")
+		if err != nil {
+			t.Fatalf("SplitBlock: %v", err)
+		}
+		if change.GroupID != repo.applyGroupID {
+			t.Errorf("GroupID = %q, want the batch's %q", change.GroupID, repo.applyGroupID)
+		}
+		if change.BlockID != "id-1" {
+			t.Errorf("BlockID = %q, want the new tail id-1", change.BlockID)
+		}
+	})
+
+	t.Run("a gesture that creates nothing still reports its batch", func(t *testing.T) {
+		svc, repo := sequencedOutlineService(t)
+
+		change, err := svc.IndentBlock(t.Context(), "second")
+		if err != nil {
+			t.Fatalf("IndentBlock: %v", err)
+		}
+		if change.GroupID != repo.applyGroupID {
+			t.Errorf("GroupID = %q, want the batch's %q", change.GroupID, repo.applyGroupID)
+		}
+		if change.BlockID != "" {
+			t.Errorf("BlockID = %q, want empty: indent creates no block", change.BlockID)
+		}
+	})
 }

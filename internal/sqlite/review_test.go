@@ -794,3 +794,143 @@ func TestMarkGroupReviewedMarksEdges(t *testing.T) {
 		t.Errorf("edge reviewed = false after MarkGroupReviewed, want true")
 	}
 }
+
+func TestUndoGroupTakesBackASplit(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "topic"},
+		{Kind: knowledge.OpAdd, BlockID: "head", Parent: "root", Content: "head tail"},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "head", Content: "head"},
+		{Kind: knowledge.OpAdd, BlockID: "tail", Parent: "root", After: "head", Content: " tail"},
+	}); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+
+	if err := repo.UndoGroup(ctx, "grp-2"); err != nil {
+		t.Fatalf("UndoGroup: %v", err)
+	}
+
+	if _, _, content, ok := blockRow(t, repo, "head"); !ok || content != "head tail" {
+		t.Errorf("head after undo = content=%q ok=%v, want %q/true", content, ok, "head tail")
+	}
+	if _, _, _, ok := blockRow(t, repo, "tail"); ok {
+		t.Errorf("tail still present after undoing the split that created it")
+	}
+	if revs := revisionsOf(t, repo, "tail"); len(revs) != 0 {
+		t.Errorf("tail revisions after undo = %+v, want none", revs)
+	}
+	if revs := revisionsOf(t, repo, "head"); len(revs) != 1 {
+		t.Errorf("head revisions after undo = %+v, want 1", revs)
+	}
+}
+
+func TestUndoGroupResurrectsAMergedBlock(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "root", Content: "topic"},
+		{Kind: knowledge.OpAdd, BlockID: "target", Parent: "root", Content: "head"},
+		{Kind: knowledge.OpAdd, BlockID: "source", Parent: "root", After: "target", Content: " tail"},
+		{Kind: knowledge.OpAdd, BlockID: "kid", Parent: "source", Content: "kid"},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "target", Content: "head tail"},
+		{Kind: knowledge.OpMove, BlockID: "kid", Parent: "target"},
+		{Kind: knowledge.OpDelete, BlockID: "source"},
+	}); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	if err := repo.UndoGroup(ctx, "grp-2"); err != nil {
+		t.Fatalf("UndoGroup: %v", err)
+	}
+
+	if _, _, content, ok := blockRow(t, repo, "target"); !ok || content != "head" {
+		t.Errorf("target after undo = content=%q ok=%v, want head/true", content, ok)
+	}
+	if _, _, content, ok := blockRow(t, repo, "source"); !ok || content != " tail" {
+		t.Errorf("source after undo = content=%q ok=%v, want ' tail'/true", content, ok)
+	}
+	if parent, _, _, ok := blockRow(t, repo, "kid"); !ok || parent != "source" {
+		t.Errorf("kid after undo = parent=%q ok=%v, want source/true", parent, ok)
+	}
+}
+
+func TestUndoGroupRefusesAGroupWithNewerRevisions(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
+	}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-3", ownerMeta("manual edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v3"},
+	}); err != nil {
+		t.Fatalf("later edit: %v", err)
+	}
+
+	err := repo.UndoGroup(ctx, "grp-2")
+
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("UndoGroup of a buried group = %v, want ErrInvalidRollback", err)
+	}
+	if _, _, content, ok := blockRow(t, repo, "b1"); !ok || content != "v3" {
+		t.Errorf("b1 after refused undo = content=%q ok=%v, want v3/true", content, ok)
+	}
+	if revs := revisionsOf(t, repo, "b1"); len(revs) != 3 {
+		t.Errorf("b1 revisions after refused undo = %+v, want all 3 intact", revs)
+	}
+}
+
+func TestUndoGroupReportsAnUnknownGroup(t *testing.T) {
+	repo := testRepo(t)
+
+	err := repo.UndoGroup(t.Context(), "never-written")
+
+	if !errors.Is(err, knowledge.ErrNotFound) {
+		t.Fatalf("UndoGroup of an unknown group = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUndoGroupRefusesAGroupThatTouchedEdges(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+
+	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "a", Content: "a"},
+		{Kind: knowledge.OpAdd, BlockID: "b", Content: "b"},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "a", Content: "a linked"},
+		{Kind: knowledge.OpLink, From: "a", To: "b", Relation: knowledge.RelationRelated},
+	}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+
+	err := repo.UndoGroup(ctx, "grp-2")
+
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("UndoGroup of an edge-bearing group = %v, want ErrInvalidRollback", err)
+	}
+	if _, _, content, ok := blockRow(t, repo, "a"); !ok || content != "a linked" {
+		t.Errorf("a after refused undo = content=%q ok=%v, want 'a linked'/true", content, ok)
+	}
+}
