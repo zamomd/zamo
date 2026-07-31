@@ -31,6 +31,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrInvalidOps, "invalid_ops"},
 		{knowledge.ErrEmptyOps, "empty_ops"},
 		{knowledge.ErrInvalidRollback, "invalid_rollback"},
+		{knowledge.ErrDuplicateTopic, "duplicate_topic"},
 		{knowledge.ErrBusy, "busy"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 		{knowledge.ErrLLMBadResponse, "llm_bad_response"},
