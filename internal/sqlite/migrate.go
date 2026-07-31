@@ -17,12 +17,17 @@ CREATE TABLE blocks (
     parent_id  TEXT REFERENCES blocks(id),
     position   INTEGER NOT NULL DEFAULT 0,
     content    TEXT NOT NULL,
+    title_key  TEXT,
     metadata   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
 CREATE INDEX idx_blocks_parent ON blocks(parent_id, position);
+
+-- Topic names are unique among roots. NULL means the root's first line
+-- yields no name, and the index tolerates any number of those.
+CREATE UNIQUE INDEX idx_topic_title ON blocks(title_key) WHERE parent_id IS NULL;
 
 CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,

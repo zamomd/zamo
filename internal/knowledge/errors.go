@@ -24,6 +24,11 @@ var (
 	// removal that would orphan live children.
 	ErrInvalidRollback = errors.New("rollback would leave an inconsistent tree")
 
+	// ErrDuplicateTopic reports a write that would give two topic roots the
+	// same name. Names are how [[Topic]] references resolve, so they must
+	// stay unique.
+	ErrDuplicateTopic = errors.New("topic name already taken")
+
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")

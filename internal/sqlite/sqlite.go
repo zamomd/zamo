@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	sqlite3 "modernc.org/sqlite"
@@ -67,6 +68,14 @@ func isBusy(err error) bool {
 	return false
 }
 
+// isDuplicateTopic reports the partial unique index on blocks.title_key
+// firing. SQLite names the offending column rather than the index, so the
+// column is what the message can be recognised by.
+func isDuplicateTopic(err error) bool {
+	e, ok := errors.AsType[*sqlite3.Error](err)
+	return ok && strings.Contains(e.Error(), "UNIQUE constraint failed: blocks.title_key")
+}
+
 // translate maps infrastructure errors to domain sentinels so driver types never leak to callers.
 func translate(err error) error {
 	switch {
@@ -76,9 +85,26 @@ func translate(err error) error {
 		return knowledge.ErrNotFound
 	case isBusy(err):
 		return knowledge.ErrBusy
+	case isDuplicateTopic(err):
+		return knowledge.ErrDuplicateTopic
 	default:
 		return err
 	}
+}
+
+// titleKey is the value blocks.title_key takes for a block: the normalized
+// first line of a topic root's content, and NULL for everything else. A root
+// whose first line normalizes to nothing is unnamed, which is also NULL — the
+// partial unique index admits any number of those.
+func titleKey(parent any, content string) any {
+	if parent != nil {
+		return nil
+	}
+	key := knowledge.NormalizeTitle(content)
+	if key == "" {
+		return nil
+	}
+	return key
 }
 
 // Repo implements knowledge.Repository.
@@ -326,9 +352,10 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(op.BlockID), parent, pos, op.Content, string(payload), b.now, b.now); err != nil {
+		`INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(op.BlockID), parent, pos, op.Content, titleKey(parent, op.Content),
+		string(payload), b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
 	rev := b.revision(r.newID(), op, 1, knowledge.Revision{
@@ -366,9 +393,13 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
+	var parentArg any
+	if parent.Valid && parent.String != "" {
+		parentArg = parent.String
+	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		op.Content, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
+		op.Content, titleKey(parentArg, op.Content), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	return nil
@@ -416,8 +447,8 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, titleKey(parent, content), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return nil
