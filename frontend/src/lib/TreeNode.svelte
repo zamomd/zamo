@@ -9,13 +9,6 @@
 	import TreeNode from "./TreeNode.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
-	// One row of the base tree, recursing into its children. All state and
-	// actions come from the base store; node, nested and title are the only
-	// inputs. nested is set by the recursion itself (never by the top-level
-	// caller in TopicView.svelte), so a topic root's own <li> stays unmarked and
-	// rail-less while every recursed child's <li> carries .nested. title marks
-	// the one row that is the view's root rather than a row of the tree: it is
-	// the page's heading, so it carries no dot and no collapse toggle.
 	let {
 		node,
 		nested = false,
@@ -27,27 +20,13 @@
 	const editing = $derived(base.editingID === node.block.ID);
 	const linksOpen = $derived(base.openLinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
-	// unreviewed marks a block carrying its own pending revision; ghost is the
-	// subset that is also a pending deletion (merged into the forest by
-	// base.svelte.ts's reload — see base.ghosts). A topic root additionally
-	// gets a page-wide Accept all / Reject all when anything under it is dirty.
 	const unreviewed = $derived(node.block.Unreviewed);
 	const ghost = $derived(base.ghosts.has(node.block.ID));
 	const topicRoot = $derived(node.block.ParentID === "");
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
-	// Authorship, from the creation stamp applied by storage. Anything that is
-	// not exactly "ai" reads as the owner's: applyEdit does not restamp the
-	// metadata, and projectHead rebuilds a resurrected block with none at all,
-	// so a missing author must not be reported as the machine's work.
 	const byAI = $derived(node.block.Meta?.author === "ai");
-	// The halo says "there is something in here you cannot see", which is only
-	// true while the block is collapsed and actually has children.
 	const hasHidden = $derived(hasChildren && !expanded);
 
-	// Scroll this row into view and flash it when a search jump targets it. The
-	// effect keys on highlightNonce so a repeat jump to the same block re-fires;
-	// flash is toggled off then back on across a frame so the CSS animation
-	// restarts rather than sitting at its finished state.
 	let rowEl: HTMLElement | undefined;
 	let contentEl: HTMLElement | undefined = $state();
 	let flash = $state(false);
@@ -63,11 +42,6 @@
 		});
 	});
 
-	// The content is a click-to-edit surface that now holds rendered markdown, so
-	// it is a div with button semantics rather than a <button> (a real button
-	// cannot contain the links markdown may emit). A click on a link opens it in
-	// the system browser — keeping the webview on the SPA — and must not also
-	// start an edit; any other click, or Enter/Space, edits.
 	function editFromClick(e: MouseEvent): void {
 		const link = (e.target as HTMLElement).closest("a");
 		if (link) {
@@ -79,7 +53,6 @@
 		if (base.busy) {
 			return;
 		}
-		// Map the rendered click to the Markdown source; fall back to the end.
 		const raw = node.block.Content;
 		const rendered =
 			contentEl === undefined ? null : renderedOffsetFromPoint(contentEl, e.clientX, e.clientY);
@@ -88,9 +61,6 @@
 	}
 	function editFromKey(e: KeyboardEvent): void {
 		if (e.key !== "Enter" && e.key !== " ") return;
-		// A rendered link is focusable; activating it by keyboard must open the
-		// link, not edit the block, so leave it to the anchor's own handling —
-		// mirror the anchor guard in editFromClick.
 		if ((e.target as HTMLElement).closest("a")) return;
 		e.preventDefault();
 		if (!base.busy) {

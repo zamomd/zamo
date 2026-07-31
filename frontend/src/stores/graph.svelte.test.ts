@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The store calls one binding, which does not exist outside the webview.
-// graphFixture is declared via vi.hoisted so the mock factory — itself hoisted
-// above this file's imports — can close over it; each test rewrites respond to
-// control what the backend answers.
 const graphFixture = vi.hoisted(() => ({
 	calls: 0,
 	respond: (): Promise<unknown> => Promise.resolve({ Topics: [], Edges: [] }),
@@ -63,8 +59,6 @@ describe("load", () => {
 	});
 
 	it("treats null slices as an empty base", async () => {
-		// A Go nil slice marshals to JSON null, so an empty base arrives as a
-		// present object with two null fields — not as a null graph.
 		graphFixture.respond = () => Promise.resolve({ Topics: null, Edges: null });
 		await graph.load();
 		expect(graph.topics).toHaveLength(0);

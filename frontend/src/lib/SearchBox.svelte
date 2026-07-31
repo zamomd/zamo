@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { search } from "../stores/search.svelte";
 
-	// The field only. Results render in the sidebar, replacing the topic list,
-	// so searching never opens a second panel over the tree.
 </script>
 
 <div class="field">

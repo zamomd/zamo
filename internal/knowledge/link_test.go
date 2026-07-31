@@ -6,16 +6,11 @@ import (
 	"testing"
 )
 
-// newLinkService wires a Service around the fake repo; links touch neither
-// the LLM nor the writer.
 func newLinkService(repo *fakeRepo) *Service {
 	return NewService(&fakeLLM{}, repo, func() ID { return "01NEW" }, &fakeFileWriter{})
 }
 
 func TestLinkedBlocksHydratesBothDirections(t *testing.T) {
-	// The panel shows each neighbour's content and which side of the edge the
-	// queried block is on — an incoming example and an outgoing related link
-	// are different affordances.
 	repo := &fakeRepo{
 		edges: []Edge{
 			{From: "01EX", To: "01ME", Relation: RelationExample},
@@ -45,8 +40,6 @@ func TestLinkedBlocksHydratesBothDirections(t *testing.T) {
 }
 
 func TestLinkedBlocksDropsVanishedNeighbour(t *testing.T) {
-	// An edge whose neighbour vanished mid-read is dropped, not an error: the
-	// next read simply no longer sees the edge either.
 	repo := &fakeRepo{
 		edges: []Edge{
 			{From: "01ME", To: "01GONE", Relation: RelationRelated},
@@ -89,7 +82,6 @@ func TestCreateLinkRejectsUnknownRelation(t *testing.T) {
 }
 
 func TestCreateLinkDefaultsRelationToRelated(t *testing.T) {
-	// Mirrors the link op's default: an unset relation means "related".
 	repo := &fakeRepo{}
 	if err := newLinkService(repo).CreateLink(t.Context(), "01A", "01B", ""); err != nil {
 		t.Fatalf("CreateLink: %v", err)

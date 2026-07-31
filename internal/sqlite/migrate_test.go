@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Simulates GUI and MCP processes starting at once on an old database:
-// every Open runs migrations, and all of them must succeed.
 func TestMigrateConcurrentStarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "race.db")
 
@@ -34,8 +32,6 @@ func TestMigrateConcurrentStarts(t *testing.T) {
 	}
 }
 
-// Smoke test: the schema applies, and the full-text index actually picks
-// up inserts and edits through the triggers.
 func TestMigrateAndFTS(t *testing.T) {
 	ctx := t.Context()
 
@@ -79,8 +75,6 @@ func TestMigrateAndFTS(t *testing.T) {
 	}
 }
 
-// Smoke test: the new revision tables are accessible and edges no longer
-// require foreign key references to blocks.
 func TestMigrateRevisionTables(t *testing.T) {
 	ctx := t.Context()
 
@@ -90,7 +84,6 @@ func TestMigrateRevisionTables(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Insert into revision_groups.
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO revision_groups (id, title, source, created_at)
 		VALUES ('group1', 'Test Group', 'ai', '2026-07-18')`)
@@ -98,7 +91,6 @@ func TestMigrateRevisionTables(t *testing.T) {
 		t.Fatalf("insert revision_groups: %v", err)
 	}
 
-	// Insert into block_revisions.
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO block_revisions (id, block_id, seq, content, parent_id, position, author, reviewed, group_id, created_at)
 		VALUES ('rev1', 'block1', 1, 'test content', NULL, 0, 'owner', 0, 'group1', '2026-07-18')`)
@@ -106,7 +98,6 @@ func TestMigrateRevisionTables(t *testing.T) {
 		t.Fatalf("insert block_revisions: %v", err)
 	}
 
-	// Insert an edge without a matching block (should succeed now that FK is gone).
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO edges (from_id, to_id, relation, author, reviewed, created_at)
 		VALUES ('nonexistent_from', 'nonexistent_to', 'related', 'owner', 1, '2026-07-18')`)
@@ -114,7 +105,6 @@ func TestMigrateRevisionTables(t *testing.T) {
 		t.Fatalf("insert edge without matching blocks: %v", err)
 	}
 
-	// Verify the unreviewed index works on block_revisions.
 	var count int
 	err = db.QueryRowContext(ctx, `
 		SELECT count(*) FROM block_revisions WHERE reviewed = 0`).Scan(&count)

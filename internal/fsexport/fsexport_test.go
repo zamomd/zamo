@@ -43,8 +43,6 @@ func TestWriterHonoursCancellation(t *testing.T) {
 }
 
 func TestWriterSurfacesWriteError(t *testing.T) {
-	// A nested directory that does not exist: os.WriteFile cannot create the
-	// parent, so the write must surface rather than be swallowed.
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
 	err := (Writer{}).WriteFiles(t.Context(), dir, []knowledge.ExportFile{{Name: "a.md", Content: "x"}})
 	if err == nil {

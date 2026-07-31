@@ -3,12 +3,10 @@
 	import { base } from "../stores/base.svelte";
 	import { caretColumn, lineCount, lineIndexOf } from "./caret";
 
-	// The store owns editor state so it survives row remounts.
 	let { id }: { id: string } = $props();
 
 	let el: HTMLTextAreaElement | undefined;
 
-	// WKWebView does not reliably support field-sizing: content.
 	function fit(): void {
 		if (el === undefined) {
 			return;
@@ -17,8 +15,6 @@
 		el.style.height = `${el.scrollHeight}px`;
 	}
 
-	// The nonce represents a placement event, including repeated offsets.
-	// Caret reports and text updates must not retrigger placement.
 	$effect(() => {
 		void base.editCaretNonce;
 		if (el === undefined) {
@@ -30,8 +26,6 @@
 		fit();
 	});
 
-	// These events cover caret changes without relying on selectionchange support
-	// for text controls.
 	function reportCaret(): void {
 		if (el === undefined) {
 			return;
@@ -44,7 +38,6 @@
 		fit();
 	});
 
-	// visualLines derives wrapped line count from the fitted textarea height.
 	function visualLines(area: HTMLTextAreaElement): number | null {
 		const style = getComputedStyle(area);
 		const height = Number.parseFloat(style.lineHeight);
@@ -56,14 +49,12 @@
 	}
 
 	function onkeydown(e: KeyboardEvent): void {
-		// Composition keystrokes belong to the IME.
 		if (e.isComposing || el === undefined) {
 			return;
 		}
 		const value = base.editText;
 		const caret = el.selectionStart;
 		const selecting = el.selectionStart !== el.selectionEnd;
-		// Leave uncommitted text to the textarea's native undo history.
 		if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
 			const redo = e.shiftKey;
 			if (redo ? base.canRedo() : base.canUndo()) {
@@ -72,7 +63,6 @@
 			}
 			return;
 		}
-		// Ctrl+Y is redo on Windows and Linux, but Cmd+Y is not redo on macOS.
 		if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "y") {
 			if (base.canRedo()) {
 				e.preventDefault();
@@ -113,7 +103,6 @@
 				return;
 			case "ArrowUp":
 			case "ArrowDown": {
-				// Cross-block navigation starts only at a visual edge line.
 				const direction = e.key === "ArrowUp" ? "up" : "down";
 				const column = caretColumn(value, caret);
 				const visual = visualLines(el);
@@ -125,7 +114,6 @@
 					void base.moveCaret(id, direction, column);
 					return;
 				}
-				// Wrapped line boundaries are observable only after the browser moves.
 				requestAnimationFrame(() => {
 					if (el?.isConnected !== true || document.activeElement !== el) {
 						return;
@@ -150,7 +138,6 @@
 		}
 	}
 
-	// Losing window focus must not commit the edit.
 	function onblur(): void {
 		if (base.busy) {
 			return;

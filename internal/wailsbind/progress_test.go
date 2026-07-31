@@ -54,6 +54,5 @@ func TestWithProgressWithoutEmitterIsPassthrough(t *testing.T) {
 	if got := app.withProgress(ctx); got != ctx {
 		t.Error("withProgress changed the context with no emitter set")
 	}
-	// Report on the unchanged context must stay a no-op, not panic.
 	knowledge.Report(app.withProgress(ctx), knowledge.Progress{Phase: knowledge.PhaseRequesting})
 }

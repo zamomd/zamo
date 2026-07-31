@@ -18,15 +18,10 @@ class SearchStore {
 	error = $state("");
 
 	private timer: ReturnType<typeof setTimeout> | null = null;
-	// seq stamps each request so a slow earlier response cannot overwrite a
-	// later query's results; only the newest seq is allowed to land.
 	private seq = 0;
 
 	setQuery(q: string): void {
 		this.query = q;
-		// Any edit invalidates what is showing and in flight: bump seq so a late
-		// response for the superseded text is dropped, and clear the list so a hit
-		// for an older query is never shown — or clicked — under the newer text.
 		this.seq++;
 		this.results = [];
 		this.status = "";

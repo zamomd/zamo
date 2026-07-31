@@ -10,7 +10,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// add builds the add operation ParseOps is expected to emit for a new block.
 func add(tempID, parent, content string) knowledge.Op {
 	return knowledge.Op{Kind: knowledge.OpAdd, TempID: tempID, Parent: parent, Content: content}
 }
@@ -150,7 +149,6 @@ func TestParseOps(t *testing.T) {
 }
 
 func TestParseOpsCapsDepth(t *testing.T) {
-	// Root at depth 1 plus a single-child chain running 7 levels deep; the cap is 5.
 	raw := `{"content":"d1","children":[{"content":"d2","children":[{"content":"d3","children":[` +
 		`{"content":"d4","children":[{"content":"d5","children":[{"content":"d6","children":[` +
 		`{"content":"d7"}]}]}]}]}]}]}`
@@ -167,7 +165,6 @@ func TestParseOpsCapsDepth(t *testing.T) {
 }
 
 func TestParseOpsCapsCount(t *testing.T) {
-	// Root plus 65 children; the cap is 60 blocks total.
 	var b strings.Builder
 	b.WriteString(`{"content":"Root","children":[`)
 	for i := range 65 {
@@ -188,9 +185,6 @@ func TestParseOpsCapsCount(t *testing.T) {
 }
 
 func TestParseOpsRejectsOversizedReply(t *testing.T) {
-	// The reply crosses the untrusted boundary; a reviewable expansion is a few KB.
-	// A multi-megabyte "block" is hostile, not content, and must be refused up front
-	// rather than parsed and allocated.
 	raw := `{"content":"` + strings.Repeat("x", 2<<20) + `"}`
 	if _, err := ParseOps([]byte(raw)); !errors.Is(err, knowledge.ErrLLMBadResponse) {
 		t.Fatalf("oversized reply error = %v, want errors.Is %v", err, knowledge.ErrLLMBadResponse)
@@ -198,7 +192,6 @@ func TestParseOpsRejectsOversizedReply(t *testing.T) {
 }
 
 func TestParseOpsAcceptsReplyAtSizeLimit(t *testing.T) {
-	// A reply exactly at the size limit is valid; only a strictly larger one is refused.
 	overhead := len(`{"content":""}`)
 	raw := `{"content":"` + strings.Repeat("x", maxReplyBytes-overhead) + `"}`
 	if len(raw) != maxReplyBytes {
@@ -214,10 +207,6 @@ func TestParseOpsAcceptsReplyAtSizeLimit(t *testing.T) {
 }
 
 func TestParseOpsIgnoresBracesInsideContent(t *testing.T) {
-	// The nesting guard tracks string literals: braces, escaped quotes and backslashes
-	// inside a block's content are data, not structure, and must not count toward the
-	// nesting cap. Broken string tracking would either miscount these braces as nesting
-	// (false rejection) or let an escaped quote end the string early.
 	content := `a \" b \\ c ` + strings.Repeat("{", 4*maxNestDepth)
 	raw := `{"content":"` + content + `"}`
 	got, err := ParseOps([]byte(raw))
@@ -230,9 +219,6 @@ func TestParseOpsIgnoresBracesInsideContent(t *testing.T) {
 }
 
 func TestParseOpsRejectsDeeplyNestedReply(t *testing.T) {
-	// A chain of deeply nested nodes must not be decoded and walked: without a nesting
-	// bound, degenerate input drives O(nesting) recursion in both the JSON decoder and
-	// the walk, burning CPU and stack on garbage. Extreme nesting is refused, not capped.
 	const depth = 500
 	raw := strings.Repeat(`{"content":"x","children":[`, depth) +
 		`{"content":"leaf"}` + strings.Repeat(`]}`, depth)

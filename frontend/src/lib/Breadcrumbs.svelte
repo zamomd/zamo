@@ -2,12 +2,6 @@
 	import { base } from "../stores/base.svelte";
 	import { crumbTrail } from "./tree";
 
-	// The way back out of a zoom-in. Absent when nothing is focused: an
-	// unfocused view is already at the top of its topic, and an empty bar there
-	// would be furniture with nothing to say.
-	//
-	// A trail of null means the focused id is not in the forest — a reload can
-	// drop it — so the bar renders nothing rather than guessing.
 	const trail = $derived(base.focusID === null ? null : crumbTrail(base.forest, base.focusID));
 </script>
 

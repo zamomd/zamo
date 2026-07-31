@@ -7,10 +7,6 @@
 	import SearchBox from "./SearchBox.svelte";
 	import { topicRows } from "./tree";
 
-	// The base's index: every topic, and the first level of the selected one.
-	// While a search is running the list is replaced by its hits rather than
-	// shown beside them — two lists competing for the same column is worse than
-	// one that changes meaning with a visible cause (the field above it).
 	const rows = $derived(topicRows(base.forest, base.selectedTopicID));
 	const searching = $derived(search.query.trim() !== "");
 </script>

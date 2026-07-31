@@ -9,7 +9,6 @@ export type Mode = "tree" | "graph" | "changes" | "settings";
 class ShellStore {
 	mode = $state<Mode>("tree");
 
-	// setMode keeps the current mode when an open edit cannot be committed.
 	async setMode(m: Mode): Promise<void> {
 		if (base.busy) {
 			return;

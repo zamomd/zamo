@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// writeAt puts content at a named file inside a fresh temp dir.
 func writeAt(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
@@ -38,7 +37,6 @@ model = "claude-sonnet-4-5"
 	if r.Origins.Model != OriginGUI {
 		t.Errorf("model origin = %q, want %q", r.Origins.Model, OriginGUI)
 	}
-	// An untouched field keeps the declared value and reports where it came from.
 	if r.Config.LLM.Provider != ProviderAnthropic {
 		t.Errorf("provider = %q, want anthropic", r.Config.LLM.Provider)
 	}
@@ -54,8 +52,6 @@ declarative = true
 [llm]
 model = "claude-opus-4-5"
 `)
-	// A settings.toml left over from before the flag was set must not leak back
-	// in: that is the ghost the two-layer split exists to prevent.
 	setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
 	if err := os.WriteFile(setPath, []byte("[llm]\nmodel = \"stale\"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -111,7 +107,6 @@ api_key = "from-gui"
 		t.Fatal(err)
 	}
 
-	// The GUI layer beats api_key_file and the inline config key.
 	key, err := r.APIKeyValue()
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +118,6 @@ api_key = "from-gui"
 		t.Errorf("key origin = %q, want %q", r.Origins.APIKey, OriginGUI)
 	}
 
-	// The environment beats everything, and the field becomes read-only.
 	t.Setenv("ANTHROPIC_API_KEY", "from-env")
 	r, err = ResolveFrom(cfgPath, setPath)
 	if err != nil {
@@ -145,8 +139,6 @@ func TestAPIKeyValueIsReadLazily(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 
-	// Regression for sops-nix rotation: the file is rewritten under a symlink
-	// that flips on activation, so the value must be read per call.
 	keyFile := writeAt(t, "key.txt", "old\n")
 	cfgPath := writeAt(t, "config.toml", "[llm]\napi_key_file = \""+keyFile+"\"\n")
 
@@ -198,8 +190,6 @@ func TestSaveOverridesRoundTripsAndIsPrivate(t *testing.T) {
 }
 
 func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
-	// An absent field means "not overridden", which is what makes "reset to
-	// config" expressible; an empty string would be a real override to "".
 	path := filepath.Join(t.TempDir(), "settings.toml")
 	if err := SaveOverrides(path, Overrides{LLM: LLMOverrides{Model: "qwen3"}}); err != nil {
 		t.Fatal(err)
@@ -214,9 +204,6 @@ func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 }
 
 func TestNoProviderIgnoresEnvAPIKey(t *testing.T) {
-	// When no provider is configured (AI off), ambient ANTHROPIC_API_KEY
-	// must not lock the API key field in the GUI. The key origin should be
-	// OriginDefault, and APIKeySet should report false.
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-key")
 	t.Setenv("OPENAI_API_KEY", "")
 

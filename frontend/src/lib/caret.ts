@@ -16,7 +16,6 @@ export function sourceOffset(raw: string, renderedOffset: number): number {
 	const target = Math.max(renderedOffset, 0);
 	let r = 0;
 	let s = 0;
-	// Continue past the target through adjacent source-only delimiters.
 	while (s < raw.length && (r < target || (r < rendered.length && raw[s] !== rendered[r]))) {
 		const entity = raw.slice(s).match(entityAtStart)?.[0];
 		if (entity !== undefined) {
@@ -30,7 +29,6 @@ export function sourceOffset(raw: string, renderedOffset: number): number {
 				continue;
 			}
 		}
-		// An escape and its visible character form one rendered unit.
 		if (raw[s] === "\\" && raw[s + 1] === rendered[r]) {
 			if (r === target) {
 				break;
@@ -44,7 +42,6 @@ export function sourceOffset(raw: string, renderedOffset: number): number {
 			s++;
 			continue;
 		}
-		// markdown-it inserts text-node newlines around list markup.
 		if (r < target && rendered[r] === "\n" && raw[s] !== "\n") {
 			r++;
 			continue;
@@ -94,7 +91,6 @@ export function offsetAtLine(text: string, line: number, column: number): number
 
 // renderedOffsetFromPoint returns an offset into the container's textContent.
 export function renderedOffsetFromPoint(container: HTMLElement, x: number, y: number): number | null {
-	// Wails' WebKit webview exposes the non-standard caretRangeFromPoint API.
 	const fromPoint = (
 		document as Document & {
 			caretRangeFromPoint?: (x: number, y: number) => Range | null;
@@ -104,8 +100,6 @@ export function renderedOffsetFromPoint(container: HTMLElement, x: number, y: nu
 	if (!range || !container.contains(range.startContainer)) {
 		return null;
 	}
-	// Sum the text nodes preceding the hit, in the same order textContent
-	// concatenates them, then add the offset within the hit node.
 	const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
 	let offset = 0;
 	let node = walker.nextNode();

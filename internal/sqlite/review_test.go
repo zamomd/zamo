@@ -7,8 +7,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// ownerMeta is the write-batch provenance an owner-authored ApplyOps call
-// carries: born-reviewed, unlike aiMeta (apply_test.go).
 func ownerMeta(title string) knowledge.WriteMeta {
 	return knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: title}
 }
@@ -65,7 +63,6 @@ func TestDeleteMiddleRevisionKeepsState(t *testing.T) {
 		t.Fatalf("edit2: %v", err)
 	}
 
-	// seq 2 is "rev-002"; deleting it must not touch the current head (seq 3).
 	if err := repo.DeleteRevision(ctx, "b1", knowledge.ID("rev-002")); err != nil {
 		t.Fatalf("DeleteRevision: %v", err)
 	}
@@ -123,8 +120,6 @@ func TestDeleteHeadTombstoneResurrects(t *testing.T) {
 		t.Fatalf("b1 still present after tombstoning")
 	}
 
-	// The tombstone is the head (seq 2, rev-002); deleting it must resurrect
-	// the block with its prior content.
 	if err := repo.DeleteRevision(ctx, "b1", knowledge.ID("rev-002")); err != nil {
 		t.Fatalf("DeleteRevision(tombstone): %v", err)
 	}
@@ -152,8 +147,6 @@ func TestDeleteRevisionOrphanGuard(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	// root's only revision is rev-001; deleting it would remove root from the
-	// projection while child still points at it.
 	err := repo.DeleteRevision(ctx, "root", knowledge.ID("rev-001"))
 	if !errors.Is(err, knowledge.ErrInvalidRollback) {
 		t.Fatalf("DeleteRevision(root's only rev) = %v, want ErrInvalidRollback", err)
@@ -170,9 +163,6 @@ func TestDeleteRevisionParentGuard(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	// P and X both exist; X is then tombstoned (deleted) while still
-	// unreviewed, then P is tombstoned too. Deleting X's head tombstone would
-	// resurrect X, but X's recorded parent P no longer exists.
 	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P"},
 		{Kind: knowledge.OpAdd, BlockID: "x", Parent: "p", Content: "X"},
@@ -190,8 +180,6 @@ func TestDeleteRevisionParentGuard(t *testing.T) {
 		t.Fatalf("delete p: %v", err)
 	}
 
-	// IDs are minted in ApplyOps call order: rev-001 (add p), rev-002 (add
-	// x), rev-003 (delete x — x's head tombstone), rev-004 (delete p).
 	err := repo.DeleteRevision(ctx, "x", knowledge.ID("rev-003"))
 	if !errors.Is(err, knowledge.ErrInvalidRollback) {
 		t.Fatalf("DeleteRevision(x's tombstone) = %v, want ErrInvalidRollback", err)
@@ -231,7 +219,6 @@ func TestRejectBlockDropsUnreviewedChain(t *testing.T) {
 		t.Errorf("b1 revisions after RejectBlock = %+v, want 1", revs)
 	}
 
-	// A fully reviewed block is a no-op.
 	if err := repo.RejectBlock(ctx, "b1"); err != nil {
 		t.Fatalf("RejectBlock (no-op case): %v", err)
 	}
@@ -271,7 +258,6 @@ func TestMarkReviewedVariants(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	// Block variant.
 	if err := repo.ApplyOps(ctx, "grp-b", aiMeta("ai add b"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "topic", Content: "b text"},
 	}); err != nil {
@@ -282,7 +268,6 @@ func TestMarkReviewedVariants(t *testing.T) {
 	}
 	assertNotInUnreviewed(t, repo, "b")
 
-	// Group variant.
 	if err := repo.ApplyOps(ctx, "grp-g", aiMeta("ai add g"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "topic", Content: "g text"},
 	}); err != nil {
@@ -293,8 +278,6 @@ func TestMarkReviewedVariants(t *testing.T) {
 	}
 	assertNotInUnreviewed(t, repo, "g")
 
-	// Page variant, covering a ghost: AI-delete a child under topic, then
-	// MarkPageReviewed(topic) must mark the tombstone too.
 	if err := repo.ApplyOps(ctx, "grp-c", aiMeta("ai add c"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "topic", Content: "c text"},
 	}); err != nil {
@@ -316,8 +299,6 @@ func TestMarkReviewedVariants(t *testing.T) {
 	assertNotInUnreviewed(t, repo, "c")
 }
 
-// assertInUnreviewed / assertNotInUnreviewed check ListUnreviewed for a
-// given block id, for tests that only care about presence.
 func assertInUnreviewed(t *testing.T, repo *Repo, id string) {
 	t.Helper()
 	if !blockIsUnreviewed(t, repo, id) {
@@ -374,12 +355,6 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ai delete: %v", err)
 	}
-	// buried: an AI edit lands unreviewed, then the owner edits straight on
-	// top of it (owner writes are born reviewed and bypass the queue). The
-	// head is now the owner's revision, but the AI revision underneath is
-	// still unreviewed — GroupID/GroupTitle must come from that AI revision
-	// (the "newest unreviewed" one ListUnreviewed's query targets), not from
-	// the head's own (reviewed, unrelated) group.
 	if err := repo.ApplyOps(ctx, "grp-ai-buried", aiMeta("ai edit buried"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "buried", Content: "buried v2 ai"},
 	}); err != nil {
@@ -452,8 +427,6 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	if buried.GroupTitle != "ai edit buried" {
 		t.Errorf("buried GroupTitle = %q, want %q", buried.GroupTitle, "ai edit buried")
 	}
-	// The newest *unreviewed* revision's group, matching GroupTitle — must
-	// differ from Head.GroupID (asserted above).
 	if buried.GroupID != "grp-ai-buried" {
 		t.Errorf("buried GroupID = %q, want %q", buried.GroupID, "grp-ai-buried")
 	}
@@ -506,11 +479,6 @@ func TestBlocksCarryUnreviewedFlag(t *testing.T) {
 	}
 }
 
-// TestRejectPageResurrectsNestedSubtree pins the fixpoint order projectHead
-// needs for a multi-level AI delete: a naive single deepest-first pass
-// processes the grandchild before its parent is live again and trips the
-// restore-parent guard. RejectPage must retry until every block in the
-// tombstoned subtree is back.
 func TestRejectPageResurrectsNestedSubtree(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -553,11 +521,6 @@ func TestRejectPageResurrectsNestedSubtree(t *testing.T) {
 	}
 }
 
-// TestRejectPageMixedAddAndDelete covers the case a single global order
-// cannot satisfy: one page with both an unreviewed AI add (needs its
-// children rejected before its root — bottom-up) and an unreviewed AI
-// delete of a reviewed subtree (needs its root resurrected before its
-// children — top-down). One RejectPage call must resolve both.
 func TestRejectPageMixedAddAndDelete(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -599,12 +562,6 @@ func TestRejectPageMixedAddAndDelete(t *testing.T) {
 	}
 }
 
-// TestAcceptDeletedSubtreeCascades pins that accepting a deleted subtree's
-// root also resolves each descendant's own tombstone: without the cascade,
-// accepting P alone leaves C's ghost with no reachable parent (P's ghost
-// just disappeared) — invisible to the frontend's buildTree (which merges
-// ghosts in by parent) yet still counted as pending, and unrejectable
-// (RejectBlock(C) would refuse: "restore parent first").
 func TestAcceptDeletedSubtreeCascades(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -651,10 +608,6 @@ func TestAcceptDeletedSubtreeCascades(t *testing.T) {
 	}
 }
 
-// TestAcceptDeletedSubtreeCascadesMultiLevel pins that the cascade is not
-// just one generation deep: P→C→G all tombstoned by one AI delete of P,
-// MarkBlockReviewed(P) must walk the chain and resolve every level, not
-// only C.
 func TestAcceptDeletedSubtreeCascadesMultiLevel(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -701,10 +654,6 @@ func TestAcceptDeletedSubtreeCascadesMultiLevel(t *testing.T) {
 	}
 }
 
-// TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings pins that the cascade
-// is scoped to the accepted block's own chain: two unrelated AI-deleted
-// subtrees under the same topic, and accepting one root must not touch the
-// other's tombstones.
 func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -753,10 +702,6 @@ func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
 	}
 }
 
-// TestMarkGroupReviewedMarksEdges pins that accepting a whole ApplyOps
-// batch does not leave a link op it contained pending: applyLink stamps
-// the edge with the batch's group_id, and MarkGroupReviewed must flip its
-// reviewed flag along with the batch's revisions.
 func TestMarkGroupReviewedMarksEdges(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()

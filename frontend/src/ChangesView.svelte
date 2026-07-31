@@ -8,16 +8,8 @@
 	import { base } from "./stores/base.svelte";
 	import { changes } from "./stores/changes.svelte";
 
-	// The Changes screen is a second read of the same unreviewed set the tree
-	// renders inline: a flat, reviewable list for someone who wants to work
-	// through everything at once instead of hunting rows across the base.
-	// Block actions go through the base store (base.accept/reject) so the tree
-	// stays in sync; edges have no tree row to sync with, so they call the
-	// binding directly and just refresh changes.
 	let { onjump }: { onjump: (id: ID) => void } = $props();
 
-	// Blocks are already sorted by TopicID then BlockID (see ListUnreviewed);
-	// grouping preserves that order, one section per page.
 	const groups = $derived.by(() => {
 		const map = new Map<ID, UnreviewedBlock[]>();
 		for (const b of changes.blocks) {
@@ -28,18 +20,6 @@
 		return [...map.entries()];
 	});
 
-	// Batches: one row per distinct ApplyOps group across every unreviewed
-	// block, regardless of which page it lands on — the compact "accept the
-	// whole AI turn at once" affordance AcceptGroup exposes but nothing in
-	// the UI called yet. Keyed by b.GroupID, NOT b.Head.GroupID: the two
-	// diverge whenever a reviewed owner edit sits on top of a still-
-	// unreviewed AI edit (Head is then the owner's revision, but GroupID/
-	// GroupTitle name the AI batch actually awaiting review — see
-	// UnreviewedBlock's doc). Keying by Head.GroupID would accept the wrong,
-	// already-reviewed group: a no-op that leaves the row sitting there.
-	// A block with no GroupID (should not happen for an unreviewed change,
-	// but the field is technically optional) is skipped defensively rather
-	// than grouped under an empty-string batch.
 	const batches = $derived.by(() => {
 		const map = new Map<ID, { title: string; count: number }>();
 		for (const b of changes.blocks) {
@@ -55,11 +35,6 @@
 		return [...map.entries()];
 	});
 
-	// acceptBatch mirrors base's accept/reject discipline (busy flag, error
-	// reset, status on success) even though the call itself is edge-shaped
-	// like acceptEdge/rejectEdge above: it touches both blocks and edges of
-	// the batch, so both the tree (base.reload) and the flat list
-	// (changes.refresh) need to catch up.
 	async function acceptBatch(groupID: ID): Promise<void> {
 		if (base.busy) return;
 		base.busy = true;
@@ -77,15 +52,10 @@
 		}
 	}
 
-	// The topic's own content is not part of UnreviewedChanges (only the
-	// touched blocks are); the tree already has it, including a ghost topic
-	// root's — reload merges those in too (see base.svelte.ts).
 	function topicLabel(topicID: ID): string {
 		return findBlock(base.forest, topicID)?.Content ?? topicID;
 	}
 
-	// Edges are not covered by the base store: they never render as tree
-	// rows, so their busy/error state lives here instead.
 	let edgeBusy = new SvelteSet<string>();
 	let edgeError = $state("");
 

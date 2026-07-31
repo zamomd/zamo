@@ -16,7 +16,6 @@ import (
 	"github.com/cominddev/comind/internal/llm"
 )
 
-// stubClient stands in for the client the manager starts with.
 type stubClient struct{}
 
 func (stubClient) GenerateTree(_ context.Context, _, _ string) ([]knowledge.Op, error) {
@@ -29,9 +28,6 @@ func (stubClient) GenerateEdit(_ context.Context, _ []knowledge.Block, _ string)
 
 func (stubClient) Ping(_ context.Context) error { return nil }
 
-// newManager points a Manager at a temp config.toml and settings.toml. It
-// clears both provider key env vars first: ambient ANTHROPIC_API_KEY or
-// OPENAI_API_KEY has leaked into these tests before.
 func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string) {
 	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -50,9 +46,6 @@ func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string)
 }
 
 func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
-	// The swap is the point of the whole task, so check it directly: after Save,
-	// the holder the service already holds must reach the new provider. A stub
-	// server standing in for it is the observable proof.
 	var reached bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
@@ -80,8 +73,6 @@ func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
 		t.Errorf("saved model = %q, want qwen3", o.LLM.Model)
 	}
 
-	// The holder started with stubClient, whose Ping is a no-op that touches no
-	// network. Reaching the server can only mean Save swapped the client in.
 	if err := h.Ping(t.Context()); err != nil {
 		t.Fatalf("Ping through the holder = %v, want nil", err)
 	}
@@ -132,17 +123,9 @@ func TestCurrentNeverExposesTheKey(t *testing.T) {
 	if v.APIKeyOrigin != string(config.OriginConfig) {
 		t.Errorf("key origin = %q, want config", v.APIKeyOrigin)
 	}
-	// The View has no field for the key value at all; this test documents that
-	// the screen learns only whether one is set.
 }
 
 func TestSaveResetToConfigSwapsLiveClient(t *testing.T) {
-	// Nothing declared in config.toml: after Save(anthropic) then Save(In{})
-	// (a reset), the live client must be the disabled one, not a stale
-	// anthropic client. Pin the distinction against llm.Disabled{}.Ping's own
-	// message, not just the shared ErrLLMUnavailable sentinel, so the test
-	// would fail if Save left the anthropic client in place returning its own
-	// "no API key configured" flavor of the same sentinel.
 	m, h, _ := newManager(t, "")
 
 	if err := m.Save(t.Context(), In{Provider: config.ProviderAnthropic}); err != nil {
@@ -165,12 +148,6 @@ func TestSaveResetToConfigSwapsLiveClient(t *testing.T) {
 }
 
 func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
-	// Overriding config-declared fields in the GUI and then resetting must
-	// fall back to the declared values, not keep the override baked in by a
-	// double merge. The file alone cannot prove that — Save persists the
-	// overrides correctly even when its merge is broken — so the test pings
-	// through the holder against a stub server at the config-declared base
-	// URL: only the live client betrays the stale merge.
 	var reached bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
@@ -207,13 +184,9 @@ func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
 }
 
 func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
-	// ANTHROPIC_API_KEY is ambient from a prior anthropic setup; switching to
-	// openai-compatible with a key typed for THAT provider must not be
-	// refused just because the old provider's env var happens to be set.
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
 	t.Setenv("OPENAI_API_KEY", "")
 	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
-	// newManager clears both env vars; set the ambient one back after.
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
 
 	err := m.Save(t.Context(), In{
@@ -235,9 +208,6 @@ func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
 }
 
 func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
-	// OPENAI_API_KEY is set; submitting an openai-compatible key by hand must
-	// still be refused, and must write nothing. The message must name the
-	// actual environment variable so the user knows what to clear and retry.
 	m, _, setPath := newManager(t, "")
 	t.Setenv("OPENAI_API_KEY", "ambient-openai-key")
 
@@ -258,9 +228,6 @@ func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
 }
 
 func TestSaveRejectsOpenAICompatWithoutBaseURL(t *testing.T) {
-	// openai-compatible only exists to point at an endpoint; with none
-	// declared anywhere, the submission must be refused before anything is
-	// written, rather than saving happily and failing opaquely later.
 	m, _, setPath := newManager(t, "")
 
 	err := m.Save(t.Context(), In{Provider: config.ProviderOpenAICompat})
@@ -273,9 +240,6 @@ func TestSaveRejectsOpenAICompatWithoutBaseURL(t *testing.T) {
 }
 
 func TestSaveAllowsOpenAICompatWithBaseURLFromConfig(t *testing.T) {
-	// The base URL is declared in config.toml, not in the submission; the
-	// guard must check the resolved value, not in.BaseURL, or this legitimate
-	// save would be refused too.
 	configTOML := "[llm]\nprovider = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n"
 	m, _, setPath := newManager(t, configTOML)
 
@@ -290,8 +254,6 @@ func TestSaveAllowsOpenAICompatWithBaseURLFromConfig(t *testing.T) {
 
 func TestCheckDoesNotSave(t *testing.T) {
 	m, _, setPath := newManager(t, "")
-	// The check reaches a provider that is not there; the point is only that a
-	// failed check leaves no file behind.
 	_ = m.Check(t.Context(), In{
 		Provider: config.ProviderOpenAICompat,
 		BaseURL:  "http://127.0.0.1:1/v1",

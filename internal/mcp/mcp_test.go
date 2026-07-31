@@ -12,8 +12,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// fakeBase satisfies Searcher, TreeReader, LinkReader and Writer — the four
-// narrow capabilities the server needs — and records what it was asked.
 type fakeBase struct {
 	searchQuery  string
 	searchBlocks []knowledge.Block
@@ -64,7 +62,6 @@ func (f *fakeBase) ApplyOps(
 
 const testVersion = "v-test"
 
-// connect wires an in-memory client to the server under test.
 func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 	t.Helper()
 	ctx := t.Context()
@@ -84,7 +81,6 @@ func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 }
 
 func TestHandshakeReportsInjectedVersion(t *testing.T) {
-	// The handshake reports the injected build version, not a constant of its own.
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
@@ -117,8 +113,6 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
 	}
-	// The write applies immediately with a fixed mcp source and AI authorship —
-	// MCP never picks its own provenance.
 	if fake.writeCalls != 1 {
 		t.Fatalf("ApplyOps called %d times, want 1", fake.writeCalls)
 	}
@@ -139,7 +133,6 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 			t.Errorf("Origin = %q, want mcp on every op", op.Origin)
 		}
 	}
-	// The group and the temp->real id map come back to the client.
 	var out writeOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -152,10 +145,6 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 }
 
 func TestWriteStampsOriginServerSide(t *testing.T) {
-	// Provenance is the server's to assign: the tool schema has no origin field
-	// (a client cannot even supply one), and every forwarded op carries the
-	// fixed mcp marker. The client's Rationale — the "why" the reviewer reads —
-	// is preserved.
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
@@ -189,10 +178,6 @@ func TestWriteStampsOriginServerSide(t *testing.T) {
 }
 
 func TestWriteRejectsForgedOrigin(t *testing.T) {
-	// The schema is closed: an op field the client must not set (origin) is
-	// refused, never silently accepted. Since go-sdk v1.5 an input-schema
-	// violation surfaces as a tool error (IsError in-band, so a model can see
-	// it and correct itself), not as a jsonrpc invalid-params error.
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
@@ -214,7 +199,6 @@ func TestWriteRejectsForgedOrigin(t *testing.T) {
 	}
 }
 
-// callBlocks calls a read tool and decodes its structured block list.
 func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
@@ -272,8 +256,6 @@ func TestTopicMapTool(t *testing.T) {
 }
 
 func TestToolSurface(t *testing.T) {
-	// Exactly five tools, each described; the only write tool is write_blocks —
-	// the sole path that mutates the base over MCP.
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
 
@@ -299,9 +281,6 @@ func TestToolSurface(t *testing.T) {
 }
 
 func TestReadToolsNeverWrite(t *testing.T) {
-	// The read tools must not be able to reach the write path: exercising every
-	// one leaves the base untouched. Guards against a read handler being wired
-	// to the wrong capability.
 	fake := &fakeBase{
 		searchBlocks: []knowledge.Block{{ID: "01A"}},
 		subtree:      []knowledge.Block{{ID: "01ROOT"}},
@@ -330,8 +309,6 @@ func TestReadToolsNeverWrite(t *testing.T) {
 }
 
 func TestToolSurfacesDomainError(t *testing.T) {
-	// Every tool must turn a capability failure into a tool error the model can
-	// read, not a transport crash.
 	boom := errors.New("base unavailable")
 	cases := []struct {
 		tool string
@@ -361,9 +338,6 @@ func TestToolSurfacesDomainError(t *testing.T) {
 }
 
 func TestGetLinksReturnsHydratedLinks(t *testing.T) {
-	// Each link carries the neighbour's id and content so an agent can follow
-	// example/related without a second get_subtree round-trip; direction says
-	// which side of the edge the queried block is on.
 	fake := &fakeBase{links: []knowledge.LinkedBlock{
 		{
 			Relation: knowledge.RelationExample, Outgoing: false,

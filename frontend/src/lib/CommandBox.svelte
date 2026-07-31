@@ -1,10 +1,6 @@
 <script lang="ts">
 	import { base } from "../stores/base.svelte";
 
-	// The one AI command field: expansion when nothing is targeted, a
-	// restructure of the targeted block otherwise. The write applies directly
-	// and lands unreviewed; an expansion also moves the main area onto the
-	// topic it just created (see base.askAI).
 	async function submit(e: SubmitEvent): Promise<void> {
 		e.preventDefault();
 		await base.askAI();

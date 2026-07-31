@@ -1,61 +1,30 @@
-// The topic map's geometry. Everything here is a pure function of its
-// arguments: no Math.random, no clock, no animation frame. A set of topics has
-// no geometry of its own — physics invents one — and an invented geometry that
-// differs between runs cannot be checked by a test or by comparing screenshots,
-// which is the only way this project can verify appearance at all.
+// Topic-map geometry is deterministic so layouts remain stable across renders.
 
 export type Point = { x: number; y: number };
 
-// The layout takes structural types rather than the generated binding types, so
-// it can be tested without the Wails bindings. TopicNode and TopicEdge are
-// assignable to these.
+// Structural inputs keep the layout independent of generated bindings.
 export type LayoutTopic = { ID: string };
 export type LayoutEdge = { From: string; To: string };
 
-// The golden angle. Seeding node i at angle i·GOLDEN_ANGLE with radius
-// SPIRAL_STEP·√i spreads the nodes evenly with no clumping, and — because the
-// read path returns topics in ULID order — a new topic takes a new slot at the
-// end instead of shifting the ones already placed. The simulation still nudges
-// its neighbours afterwards, so the map is perturbed by an addition, not
-// reshuffled by it.
+// Golden-angle seeding spreads nodes evenly while preserving their input order.
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const SPIRAL_STEP = 40;
 
-// The simulation. Repulsion separates every pair, springs pull linked topics to
-// a rest length, and a weak pull toward the origin keeps disconnected
-// components from drifting away — which they otherwise do, since nothing else
-// acts on them.
+// Repulsion separates topics, springs cluster links, and centering bounds
+// disconnected components.
 const ITERATIONS = 300;
 const REPULSION = 9000;
 const SPRING = 0.1;
 const REST_LENGTH = 90;
 const CENTERING = 0.006;
-// Cooling: the step shrinks each iteration, so the system settles instead of
-// oscillating around its equilibrium forever.
 const COOLING = 0.985;
 const INITIAL_STEP = 1;
 
-// Two nodes at the same point would make the inverse-square repulsion
-// infinite. No current input reaches this: seeding places every node at a
-// distance set purely by its index, and across every fixture in
-// graph.test.ts — including the stress fixture of thousands of duplicate
-// edges pulling two nodes together — the observed minimum inter-node
-// distance stays well clear of this threshold. The guard stays anyway,
-// three lines of cheap insurance against a future change to seeding rather
-// than a case any input today can trigger. If it is ever reached, nodes are
-// pushed apart along a fixed axis by MIN_DISTANCE — fixed, not random, so the
-// result stays reproducible.
+// Avoid singular repulsion while retaining deterministic output.
 const MIN_DISTANCE = 1;
-// No node may move more than MAX_MOVE in one iteration — the displacement
-// vector's magnitude is clamped, not each axis independently, so a diagonal
-// step is bounded the same as an axis-aligned one. This keeps a near-collision
-// (see MIN_DISTANCE above) from launching a node off the map in one step.
 const MAX_MOVE = 20;
 
-// Repulsion is over all pairs, so the cost is quadratic in the topic count and
-// linear in the iterations. Above this many topics the iteration count drops,
-// and the view says so rather than silently degrading. Barnes-Hut is the answer
-// if a base ever really grows that far.
+// Repulsion is quadratic, so large maps use fewer iterations.
 const FULL_ITERATION_MAX = 200;
 const REDUCED_ITERATIONS = 60;
 
@@ -75,8 +44,6 @@ export function layout(topics: LayoutTopic[], edges: LayoutEdge[]): Map<string, 
 	}
 
 	const index = new Map(topics.map((t, i) => [t.ID, i]));
-	// An edge to an unknown topic, or a topic to itself, contributes no force.
-	// The read path emits neither, but the layout does not depend on that.
 	const links: Array<[number, number]> = [];
 	for (const e of edges) {
 		const a = index.get(e.From);
@@ -145,9 +112,7 @@ export function layout(topics: LayoutTopic[], edges: LayoutEdge[]): Map<string, 
 	return out;
 }
 
-// clampMagnitude scales (dx, dy) down to at most limit if it exceeds it,
-// preserving direction. Clamping the vector's magnitude, rather than each
-// axis independently, bounds a diagonal step the same as an axis-aligned one.
+// clampMagnitude bounds a vector without changing its direction.
 function clampMagnitude(dx: number, dy: number, limit: number): [number, number] {
 	const magnitude = Math.hypot(dx, dy);
 	if (magnitude <= limit) {
@@ -157,10 +122,7 @@ function clampMagnitude(dx: number, dy: number, limit: number): [number, number]
 	return [dx * scale, dy * scale];
 }
 
-// Node radius from block count. The area scales with the count, not the radius,
-// so a topic with four times the blocks reads as four times the ink rather than
-// sixteen. Both ends are clamped: a one-block topic has to stay visible, and a
-// huge one must not swallow the map.
+// Radius scales area with block count and stays within visible bounds.
 const BASE_RADIUS = 5;
 const MAX_RADIUS = 26;
 
@@ -170,30 +132,15 @@ export function radiusOf(blocks: number): number {
 
 export type Box = { minX: number; minY: number; maxX: number; maxY: number };
 
-// circleBox is a circle's axis-aligned bounding box, in the same units as its
-// center and radius.
+// circleBox returns a circle's axis-aligned bounding box.
 export function circleBox(x: number, y: number, r: number): Box {
 	return { minX: x - r, minY: y - r, maxX: x + r, maxY: y + r };
 }
 
-// A base with very few topics has almost no content extent to fit — the
-// nodes have nowhere to spread apart, so the tight-fitting viewBox scales
-// them up to fill the pane instead. Left alone, that makes the *smallest*
-// bases draw the *largest* circles: exactly backwards from block-count
-// sizing, where a bigger circle should mean more content, not less of it
-// to look at. Flooring the fitted extent (never the circle radius, which
-// stays a pure function of block count) puts every small base on the same
-// content-independent scale, so a topic's size on screen keeps meaning
-// what radiusOf says it means regardless of how many topics exist yet.
-// MIN_EXTENT is picked to sit above the extent a repulsion-only layout
-// settles a handful of nodes into, so it normalises the smallest bases
-// without ever having to fire for one a reader would call "not small".
+// A minimum fitted extent prevents sparse maps from magnifying small topics.
 const MIN_EXTENT = 300;
 
-// floorAxis expands [min, max] to at least MIN_EXTENT, keeping it centered
-// on the original midpoint so flooring never shifts the content off-center
-// within its own box. An axis already at or past the floor is returned
-// unchanged.
+// floorAxis expands an interval to MIN_EXTENT without moving its midpoint.
 function floorAxis(min: number, max: number): [number, number] {
 	const extent = max - min;
 	if (extent >= MIN_EXTENT) {
@@ -203,18 +150,8 @@ function floorAxis(min: number, max: number): [number, number] {
 	return [mid - MIN_EXTENT / 2, mid + MIN_EXTENT / 2];
 }
 
-// viewBox fits every given box, plus pad, into an SVG viewBox string. Fitting
-// the content is what lets the first version ship without pan or zoom. An
-// empty graph still needs a box with area, or the SVG collapses. Only nodes'
-// circles are ever passed in (see GraphView) — a label is deliberately left
-// out of the fit and simply clipped by the SVG on a pane too narrow to hold
-// it, because letting a label's screen-constant pixel size feed back into
-// the very box that determines its own scale is a runaway: shrinking the
-// pane grows the box to fit the label, which shrinks the scale, which grows
-// the label further in box units. Bounded clipping of an annotation beats an
-// unreadable map. The fitted extent is floored per axis (see MIN_EXTENT)
-// before padding is added, so the floor and the pad never fight over the
-// same units.
+// viewBox fits boxes and padding into an SVG view box. Labels are excluded
+// because their screen-relative size would create a circular fit calculation.
 export function viewBox(boxes: Box[], pad: number): string {
 	if (boxes.length === 0) {
 		return `0 0 ${2 * pad} ${2 * pad}`;
@@ -234,17 +171,8 @@ export function viewBox(boxes: Box[], pad: number): string {
 	return `${minX - pad} ${minY - pad} ${maxX - minX + 2 * pad} ${maxY - minY + 2 * pad}`;
 }
 
-// scaleFor is the number of viewBox units one screen pixel represents when a
-// box of the given width/height is fitted into a pxWidth×pxHeight container
-// under SVG's default `preserveAspectRatio="xMidYMid meet"`. `meet` scales
-// the whole box uniformly by the SMALLER of the two axis-fit ratios (so the
-// box is never cropped, only letterboxed) — which means the axis that is
-// NOT the bottleneck ends up with slack on screen, and converting back from
-// pixels to viewBox units, the bottleneck axis is the LARGER ratio. Taking
-// the min here (matching only the width) is the bug this function replaces:
-// whichever axis actually constrains the fit — commonly height, when a
-// near-square bounding box meets a wide, short pane — was silently ignored.
-// Falls back to 1 (no correction) before the SVG has a measured pixel size.
+// scaleFor returns view-box units per screen pixel for SVG's default meet fit.
+// It returns 1 until both boxes have measurable dimensions.
 export function scaleFor(boxWidth: number, boxHeight: number, pxWidth: number, pxHeight: number): number {
 	if (pxWidth <= 0 || pxHeight <= 0 || boxWidth <= 0 || boxHeight <= 0) {
 		return 1;
@@ -252,18 +180,8 @@ export function scaleFor(boxWidth: number, boxHeight: number, pxWidth: number, p
 	return Math.max(boxWidth / pxWidth, boxHeight / pxHeight);
 }
 
-// Padding exists so the map has breathing room, not to become the map: a
-// fixed pixel allowance converted to user units by the circles' own scale
-// (see GraphView) has no upper bound on its own — on a narrow enough pane
-// that conversion alone can ask for padding many times the content's size.
-// clampPad is the hard ceiling that makes that structurally impossible
-// rather than merely unlikely: whatever is requested, the padding actually
-// used can never exceed a quarter of the tighter axis of the boxes it
-// surrounds, so the circles a reader is looking at can never be squeezed
-// toward nothing by their own margin. A quarter is generous room on typical
-// windows (see task-5 report measurements) while still bounding the box's
-// total inflation from padding to at most 1.5× the content's own extent in
-// the worst case, against the roughly 4× this replaces.
+// Padding is capped against the tighter content axis so margins cannot dwarf
+// the map on narrow panes.
 const PAD_CLAMP_FRACTION = 0.25;
 
 export function clampPad(boxes: Box[], requestedPad: number): number {
@@ -274,20 +192,9 @@ export function clampPad(boxes: Box[], requestedPad: number): number {
 	return Math.min(requestedPad, PAD_CLAMP_FRACTION * Math.min(w, h));
 }
 
-// A topic's title is its root block's content — arbitrary prose, potentially
-// a full sentence — so a label needs a bounded length regardless of the
-// map's physical size. Bounding it also narrows (without eliminating — see
-// the plan's parked item) how far a label can reach over a neighbouring
-// node's hit area. It no longer has anything to do with the viewBox fit —
-// see viewBox's comment above — this is purely about not drawing an entire
-// sentence next to a node.
 const MAX_LABEL_CHARS = 28;
 
 export function truncateLabel(title: string): string {
-	// Array.from splits on Unicode code points, not UTF-16 code units: a
-	// title with astral characters (emoji, and most CJK is within the BMP but
-	// some ideographs and all emoji are not) would otherwise risk slicing a
-	// surrogate pair in half, rendering the broken half as U+FFFD.
 	const codePoints = Array.from(title);
 	if (codePoints.length <= MAX_LABEL_CHARS) {
 		return title;

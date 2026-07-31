@@ -12,7 +12,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// openTestDB opens a fresh migrated database in a temp dir.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
@@ -23,7 +22,6 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// insertBlock inserts one block with the storage layer's timestamp convention.
 func insertBlock(ctx context.Context, t *testing.T, db *sql.DB, id, parent string, pos int, content string) {
 	t.Helper()
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC).Format(timeLayout)
@@ -52,12 +50,6 @@ func TestGetSubtree(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// A tree:
-	// root
-	//   a (pos 0)
-	//     a1 (pos 0)
-	//   b (pos 1)
-	// plus an unrelated root that must not leak in.
 	insertBlock(ctx, t, db, "root", "", 0, "Root")
 	insertBlock(ctx, t, db, "b", "root", 1, "B")
 	insertBlock(ctx, t, db, "a", "root", 0, "A")
@@ -70,12 +62,10 @@ func TestGetSubtree(t *testing.T) {
 		t.Fatalf("GetSubtree: %v", err)
 	}
 
-	// Whole subtree, pre-order DFS: parents before children, siblings by position.
 	want := []knowledge.ID{"root", "a", "a1", "b"}
 	if g := ids(got); !equalIDs(g, want) {
 		t.Fatalf("GetSubtree order = %v, want %v", g, want)
 	}
-	// Fields are mapped, not left zero.
 	if got[0].Content != "Root" {
 		t.Fatalf("root content = %q, want Root", got[0].Content)
 	}
@@ -114,7 +104,6 @@ func TestGetTopics(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// Two roots, first-level children, and a grandchild that must be excluded.
 	insertBlock(ctx, t, db, "t1", "", 0, "Topic 1")
 	insertBlock(ctx, t, db, "t2", "", 1, "Topic 2")
 	insertBlock(ctx, t, db, "t1b", "t1", 1, "Sub 1b")
@@ -147,9 +136,6 @@ func TestGetTopicsOrdersByPosition(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// Root ids sort opposite to their position, so ordering by id would return
-	// the wrong top-level order; roots must follow position, as GetSubtree does
-	// for siblings.
 	insertBlock(ctx, t, db, "z-root", "", 0, "First")
 	insertBlock(ctx, t, db, "a-root", "", 1, "Second")
 	insertBlock(ctx, t, db, "z-b", "z-root", 1, "child b")
@@ -202,7 +188,6 @@ func TestSearchMultiWordIsAND(t *testing.T) {
 	insertBlock(ctx, t, db, "both", "", 0, "go concurrency patterns")
 	insertBlock(ctx, t, db, "one", "", 1, "python concurrency")
 
-	// Word order differs from the content; both words must be present.
 	got, err := r(db).Search(ctx, "concurrency go")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -212,8 +197,6 @@ func TestSearchMultiWordIsAND(t *testing.T) {
 	}
 }
 
-// Punctuation and FTS5 operator syntax in the query must never crash or be
-// interpreted as query operators — they are matched as literal terms.
 func TestSearchNeutralizesSyntax(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
@@ -289,8 +272,6 @@ func TestGetBlocksEmptyInput(t *testing.T) {
 	}
 }
 
-// r wraps a db in the repository under test. Read-only tests never mint a
-// revision, so the id generator only needs to satisfy the signature.
 func r(db *sql.DB) *Repo {
 	seq := 0
 	return NewRepo(db, time.Now, func() knowledge.ID {

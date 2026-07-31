@@ -7,16 +7,11 @@
 	import { base } from "../stores/base.svelte";
 	import { jumpToBlock } from "./navigate";
 
-	// The inline links panel under a tree row: the block's typed links (with
-	// jump and unlink) plus the +link picker. All state and actions live in
-	// the base store; the block is the only input.
 	let { block }: { block: Block } = $props();
 
 	const links = $derived(base.linksById.get(block.ID) ?? []);
 	const picking = $derived(base.linkingID === block.ID);
 
-	// An edge is identified by (endpoints, relation); direction disambiguates
-	// a mutual pair of links between the same two blocks.
 	const linkKey = (l: LinkedBlock) => `${l.Relation}:${l.Outgoing ? "out" : "in"}:${l.Block.ID}`;
 </script>
 

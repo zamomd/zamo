@@ -8,7 +8,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// stubClient is an LLMClient double that reports which instance was called.
 type stubClient struct{ name string }
 
 func (s stubClient) GenerateTree(context.Context, string, string) ([]knowledge.Op, error) {
@@ -43,8 +42,6 @@ func TestHolderSetSwapsClient(t *testing.T) {
 	}
 }
 
-// TestHolderRace is meaningful only under -race: the settings screen calls Set
-// while an expansion is in flight.
 func TestHolderRace(t *testing.T) {
 	h := NewHolder(stubClient{name: "first"})
 	var wg sync.WaitGroup

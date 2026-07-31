@@ -23,8 +23,12 @@ just check          # lint + race tests + go mod tidy -diff
 
 ## Conventions
 
-- Code comments in English, godoc style; comments state
-  constraints the code cannot show, not what the next line does.
+- Keep comments in English and concise. Document exported Go APIs with godoc
+  when the name and signature do not already make the contract clear. Other
+  comments are only for non-obvious invariants, constraints, or safety reasons.
+  Never record implementation history, rejected approaches, task references,
+  debugging evidence, or the steps used to reach a solution. Do not narrate
+  code or duplicate assertions and test names.
 - Go 1.26 idioms: `errors.AsType`, `wg.Go`, `t.Context()`, `omitzero`,
   `for i := range n`, `new(expr)`.
 - `context.Context` is the first argument of every method that crosses

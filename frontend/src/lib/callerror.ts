@@ -24,10 +24,7 @@ export function callError(err: unknown): CallError {
 			if (typeof envelope.message === "string") {
 				return { code: "internal", message: envelope.message };
 			}
-		} catch {
-			// Not an envelope (e.g. a network failure): the raw message is
-			// the best text there is.
-		}
+		} catch {}
 		return { code: "internal", message: err.message };
 	}
 	return { code: "internal", message: String(err) };

@@ -2,9 +2,6 @@
 	import { base } from "../stores/base.svelte";
 	import { type Mode, shell } from "../stores/shell.svelte";
 
-	// The glyphs are text, not icons: the window ships one embedded face and a
-	// second asset class for four buttons is not worth the weight. Each carries
-	// its name in the title so the rail stays legible without labels.
 	const modes: { id: Mode; glyph: string; label: string }[] = [
 		{ id: "tree", glyph: "▤", label: "tree" },
 		{ id: "graph", glyph: "◈", label: "graph" },

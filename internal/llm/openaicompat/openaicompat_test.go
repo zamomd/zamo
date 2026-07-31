@@ -15,12 +15,9 @@ import (
 	"github.com/cominddev/comind/internal/llm"
 )
 
-// tree is a canned expansion the stub server returns as the model's message
-// content: a topic root with one child, in the JSON shape ParseOps expects.
 const tree = `{"content":"# Go contexts","children":[` +
 	`{"content":"context.Context carries deadlines","children":[]}]}`
 
-// chatReply wraps model text in an OpenAI chat-completions envelope.
 func chatReply(content string) string {
 	return `{"choices":[{"message":{"role":"assistant","content":` + jsonString(content) + `}}]}`
 }
@@ -65,7 +62,6 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 	if ops[1].Parent != ops[0].TempID {
 		t.Errorf("child parent = %q, want the root temp id %q", ops[1].Parent, ops[0].TempID)
 	}
-	// The rendered prompt (carrying the topic) and a token budget reach the model.
 	if model, _ := gotBody["model"].(string); model != "llama3" {
 		t.Errorf("model = %q, want llama3", gotBody["model"])
 	}
@@ -98,7 +94,6 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 	if len(ops) != 2 || ops[0].Kind != knowledge.OpEdit || ops[1].Kind != knowledge.OpDelete {
 		t.Fatalf("ops = %+v, want an edit and a delete", ops)
 	}
-	// The instruction and the scope block ids must reach the model.
 	prompt := bodyText(gotBody)
 	if !strings.Contains(prompt, "revise the first, drop the second") || !strings.Contains(prompt, "01A") {
 		t.Errorf("request did not carry the instruction and scope to the model:\n%s", prompt)
@@ -106,9 +101,6 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 }
 
 func TestGenerateTreeWorksWithoutAPIKey(t *testing.T) {
-	// A local model (Ollama, LM Studio) needs no key; the request must still be
-	// made and must NOT carry an Authorization header. This is the "data never
-	// leaves the machine" path.
 	c := newTestClient(t, "", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := r.Header["Authorization"]; ok {
 			t.Errorf("Authorization header sent with no key: %q", r.Header.Get("Authorization"))
@@ -127,8 +119,6 @@ func TestGenerateTreeWorksWithoutAPIKey(t *testing.T) {
 }
 
 func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
-	// A base URL with a trailing slash (a common hand-edited config) must not
-	// become ".../v1//chat/completions" and 404 — the local-model footgun.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
@@ -145,10 +135,6 @@ func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 }
 
 func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
-	// Each choice is an independent alternative completion. The answer is the
-	// first choice; if it is empty the model gave nothing, so a later choice
-	// must not be spliced in to rescue it — that would report a tree the model
-	// did not put first.
 	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"choices":[`+
@@ -184,8 +170,6 @@ func TestPingChecksModelsEndpoint(t *testing.T) {
 }
 
 func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
-	// Local providers (Ollama, LM Studio) need no key; a bare Bearer header
-	// makes some of them reject the request.
 	var hadAuth bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, hadAuth = r.Header["Authorization"]
@@ -230,32 +214,26 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 			wantMsg: "invalid api key",
 		},
 		{
-			// The 2xx boundary: even a 300 carrying a valid-looking envelope is
-			// not success and must not be parsed into a tree.
 			name:    "3xx is not success",
 			handler: respond(http.StatusMultipleChoices, chatReply(tree)),
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
-			// A 200 that isn't the chat envelope (a proxy or CDN HTML page).
 			name:    "non-JSON envelope",
 			handler: respond(http.StatusOK, "<html>gateway</html>"),
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
-			// Valid JSON, but without "choices": a gateway answered, not the model.
 			name:    "valid JSON, not an envelope",
 			handler: respond(http.StatusOK, `{"foo":"bar"}`),
 			want:    knowledge.ErrLLMUnavailable,
 		},
 		{
-			// The model answered, but the text is not the expected JSON tree.
 			name:    "unparsable text",
 			handler: respond(http.StatusOK, chatReply("sorry, I cannot help with that")),
 			want:    knowledge.ErrLLMBadResponse,
 		},
 		{
-			// A 200 with no choices yields nothing to parse.
 			name:    "no choices",
 			handler: respond(http.StatusOK, `{"choices":[]}`),
 			want:    knowledge.ErrLLMBadResponse,
@@ -291,8 +269,6 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 }
 
 func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
-	// A redirect means the configured endpoint is not the API; following a
-	// 307 would re-POST the prompt to wherever Location points.
 	var followed atomic.Bool
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		followed.Store(true)
@@ -356,7 +332,6 @@ func TestGenerateEditReportsProgressPhases(t *testing.T) {
 	}
 }
 
-// bodyText concatenates the user message text of a decoded request body.
 func bodyText(body map[string]any) string {
 	msgs, _ := body["messages"].([]any)
 	var b strings.Builder
@@ -369,12 +344,10 @@ func bodyText(body map[string]any) string {
 	return b.String()
 }
 
-// apiErrBody builds an OpenAI-style error body with the given message.
 func apiErrBody(msg string) string {
 	return `{"error":{"message":"` + msg + `","type":"invalid_request_error"}}`
 }
 
-// jsonString quotes s as a JSON string literal for embedding in a canned reply.
 func jsonString(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil {

@@ -26,13 +26,10 @@ func TestReportDeliversToInstalledReporter(t *testing.T) {
 }
 
 func TestReportWithoutReporterIsNoOp(t *testing.T) {
-	// A provider calls Report unconditionally; on a context with no reporter it
-	// must be a silent no-op, not a panic.
 	Report(context.Background(), Progress{Phase: PhaseAwaiting})
 }
 
 func TestWithProgressNilReporterIsNoOp(t *testing.T) {
-	// Passing a nil reporter installs nothing, so Report stays a no-op.
 	ctx := WithProgress(context.Background(), nil)
 	Report(ctx, Progress{Phase: PhaseAwaiting})
 }

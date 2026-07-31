@@ -4,10 +4,6 @@
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
 
-	// The screen edits the mutable layer (settings.toml) only. "config" fields
-	// are declared in config.toml, "gui" fields override them and can be
-	// reset, "env" cannot be changed here. In declarative mode every field is
-	// read-only, but Check still works: it writes nothing.
 	let view = $state<View | null>(null);
 	let provider = $state("");
 	let model = $state("");
@@ -17,20 +13,13 @@
 	let error = $state("");
 	let busy = $state(false);
 
-	// An untouched field must submit "" (not overridden), or saving a change
-	// to one field would capture another field's config.toml-declared value
-	// into settings.toml (see input()).
 	let providerDirty = $state(false);
 	let modelDirty = $state(false);
 	let baseUrlDirty = $state(false);
 
-	// Reset is confirmed with an inline row: window.confirm() is a silent
-	// no-op in the Wails v3 webview (see AGENTS.md).
 	let resetConfirming = $state(false);
 
 	let ro = $derived(view?.declarative ?? false);
-	// An empty provider means AI features are off (see config.LLM.Provider);
-	// the dependent fields are hidden rather than shown disabled.
 	let aiOff = $derived(provider === "");
 
 	async function load(): Promise<void> {
@@ -46,7 +35,6 @@
 		resetConfirming = false;
 	}
 
-	// fieldNote explains a field's origin; "default" gets no annotation.
 	function fieldNote(field: { origin: string }): string {
 		if (field.origin === "config") return "set in config.toml";
 		if (field.origin === "gui") return "overridden here";
@@ -68,16 +56,10 @@
 			case "gui":
 				return "overridden here";
 			default:
-				// Only worth saying in declarative mode; otherwise the empty,
-				// enabled input already says it.
 				return ro ? "set api_key_file in config.toml, or the provider's API key environment variable" : "";
 		}
 	});
 
-	// Accepted limitation of absent-means-reset: when config.toml declares a
-	// provider, saving an empty selection falls back to it instead of turning
-	// AI off (see internal/settings.Manager.overrides). This note warns about
-	// exactly that.
 	let providerFallbackNote = $derived.by((): string => {
 		if (!view) return "";
 		if (provider === "" && view.provider.origin === "config" && view.provider.value !== "") {
@@ -89,11 +71,6 @@
 		return "";
 	});
 
-	// input() builds the submission. On the wire an empty string means "not
-	// overridden" (see In), so a field is submitted only when the user edited
-	// it or it already is a GUI override — never its config.toml-declared
-	// value. With no provider selected the hidden fields are dropped entirely,
-	// so nothing typed before switching to "None" can be persisted.
 	function input(): In {
 		const submittedProvider = providerDirty || view?.provider.origin === "gui" ? provider : "";
 		if (aiOff) {
@@ -133,9 +110,6 @@
 		}
 	}
 
-	// clearKey drops only the stored API key, leaving every other override as
-	// it stands — plain Save cannot express that: input() always carries
-	// clearApiKey: false so an untouched key is never wiped by accident.
 	async function clearKey(): Promise<void> {
 		busy = true;
 		status = "";
@@ -144,7 +118,6 @@
 			const { provider: p, model: m, baseUrl: b } = input();
 			await App.SaveSettings({ provider: p, model: m, baseUrl: b, apiKey: "", clearApiKey: true });
 			await load();
-			// config.toml may still supply a key; only the GUI override is gone.
 			status = "GUI key override removed.";
 		} catch (e) {
 			error = messageFor(e);
@@ -161,8 +134,6 @@
 		resetConfirming = false;
 	}
 
-	// confirmReset drops every override, API key included — which is why it
-	// sits behind the confirmation row.
 	async function confirmReset(): Promise<void> {
 		resetConfirming = false;
 		busy = true;

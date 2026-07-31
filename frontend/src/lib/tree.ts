@@ -99,7 +99,6 @@ export function crumbTrail(nodes: TreeNodeData[], id: string): Crumb[] | null {
 	}
 	return path.map((ancestorID) => ({
 		id: ancestorID,
-		// findPath returned this id out of this forest, so the block is present.
 		title: plainText(findBlock(nodes, ancestorID)?.Content ?? ""),
 	}));
 }

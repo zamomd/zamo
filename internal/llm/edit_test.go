@@ -49,9 +49,6 @@ func TestParseEditOpsReadsArrayAmidProse(t *testing.T) {
 }
 
 func TestParseEditOpsGeneratesTempIDForAdd(t *testing.T) {
-	// Adds without a temp_id still need one so later ops (and the assembler) can
-	// reference the new block. Generated ids count up (t1, t2), stay distinct,
-	// and do not clobber an id the model did supply.
 	ops, err := ParseEditOps([]byte(`[
 		{"op":"add","parent":"01A","content":"first"},
 		{"op":"add","temp_id":"keep","parent":"01A","content":"given"},
@@ -70,9 +67,6 @@ func TestParseEditOpsGeneratesTempIDForAdd(t *testing.T) {
 }
 
 func TestParseEditOpsDropsInvalidOps(t *testing.T) {
-	// Each op kind has required fields; an op missing one, or of an unknown
-	// kind, is dropped rather than failing the whole reply. One valid op
-	// survives to prove filtering, not a blanket reject.
 	raw := []byte(`[
 		{"op":"frobnicate","block_id":"01A"},
 		{"op":"edit","block_id":"01A"},
@@ -92,9 +86,6 @@ func TestParseEditOpsDropsInvalidOps(t *testing.T) {
 }
 
 func TestParseEditOpsMoveToRootKeepsEmptyParent(t *testing.T) {
-	// The domain treats an empty parent as the topic root and supports moving a
-	// block there; the parser must not be stricter than the pipeline it feeds
-	// and silently drop a valid move.
 	ops, err := ParseEditOps([]byte(`[{"op":"move","block_id":"01A"}]`))
 	if err != nil {
 		t.Fatalf("ParseEditOps: %v", err)
@@ -105,9 +96,6 @@ func TestParseEditOpsMoveToRootKeepsEmptyParent(t *testing.T) {
 }
 
 func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
-	// A generated temp id must not collide with one the model supplied on
-	// another op, or two adds fight for one id and the whole batch becomes
-	// unappliable.
 	ops, err := ParseEditOps([]byte(`[
 		{"op":"add","temp_id":"t1","parent":"01A","content":"supplied"},
 		{"op":"add","parent":"01A","content":"generated"}
@@ -127,8 +115,6 @@ func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
 }
 
 func TestParseEditOpsDropsDuplicateSuppliedTempID(t *testing.T) {
-	// The later of two adds sharing a temp id is dropped like any other
-	// invalid op; the rest of the reply stays usable.
 	ops, err := ParseEditOps([]byte(`[
 		{"op":"add","temp_id":"t1","parent":"01A","content":"first"},
 		{"op":"add","temp_id":"t1","parent":"01A","content":"dup"},
@@ -143,8 +129,6 @@ func TestParseEditOpsDropsDuplicateSuppliedTempID(t *testing.T) {
 }
 
 func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
-	// An empty array earlier in the reply must not shadow the real one, the way
-	// firstJSONObject skips a bare {}.
 	raw := []byte(`Options were [] but here are the changes: [{"op":"delete","block_id":"01C"}]`)
 	ops, err := ParseEditOps(raw)
 	if err != nil {
@@ -156,7 +140,6 @@ func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
 }
 
 func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
-	// [] is the prompt's "no change needed" answer — valid, not a bad response.
 	for name, body := range map[string]string{
 		"bare":   `[]`,
 		"fenced": "```json\n[]\n```",
@@ -174,7 +157,6 @@ func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
 }
 
 func TestParseEditOpsSkipsForeignArrayShadow(t *testing.T) {
-	// An array with no usable op must not shadow the real one later in the reply.
 	raw := []byte(`Considered [{"id":1}] first. Changes: [{"op":"delete","block_id":"01C"}]`)
 	ops, err := ParseEditOps(raw)
 	if err != nil {

@@ -3,19 +3,10 @@
 	import { base } from "../stores/base.svelte";
 	import Diff from "./Diff.svelte";
 
-	// The inline revision-history panel under a tree row: base.revisions is
-	// newest first (BlockHistory's own order), so index 0 is always the head.
-	// Deleting a revision IS the rollback mechanism (internal/sqlite's
-	// DeleteRevision + projectHead), so each row's delete button doubles as
-	// undo — the head's is labelled "revert" since that is what deleting it does.
 	let { block }: { block: Block } = $props();
 
 	const revisions = $derived(base.revisions);
 
-	// Each revision diffs against the content of the revision right before it
-	// in time — the next-older one, i.e. the next entry in this newest-first
-	// list. The oldest revision (creation) has no older content to diff
-	// against, so it diffs from empty: the whole block reads as added.
 	function olderContent(i: number): string {
 		return i + 1 < revisions.length ? revisions[i + 1].Content : "";
 	}

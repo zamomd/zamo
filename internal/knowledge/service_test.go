@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// fakeFileWriter is a FileWriter double: it records the files it was handed
-// instead of touching disk, so export tests assert what the domain produced
-// without a filesystem.
 type fakeFileWriter struct {
 	dir      string
 	files    []ExportFile
@@ -25,9 +22,6 @@ func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []Exp
 	return nil
 }
 
-// fakeRepo is a Repository double: it records what each write method was
-// handed and serves canned reads, so tests can assert the domain drives
-// storage correctly without a database.
 type fakeRepo struct {
 	topics     []Block // what GetTopics returns
 	topicsErr  error
@@ -40,8 +34,6 @@ type fakeRepo struct {
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
 
-	// ApplyOps records the group, meta and (already prepared) ops it was
-	// handed.
 	applyGroupID ID
 	applyMeta    WriteMeta
 	applyOps     []Op
@@ -199,8 +191,6 @@ func (f *fakeRepo) RejectEdge(_ context.Context, from, to ID, rel Relation) erro
 
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
 
-// fakeLLM is an LLMClient double: it returns canned ops (or errors) for
-// tree expansion and edit generation, and records what it was asked.
 type fakeLLM struct {
 	tree              []Op
 	treeErr           error
@@ -247,8 +237,6 @@ func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 	if repo.applyGroupID != got.GroupID {
 		t.Errorf("repo saw group %q, want the returned %q", repo.applyGroupID, got.GroupID)
 	}
-	// Storage receives resolved, parent-first ops: the root add before the
-	// child that references it.
 	if len(repo.applyOps) != 2 || repo.applyOps[0].Content != "Root" {
 		t.Fatalf("repo ops = %+v, want the root add first (parent-first)", repo.applyOps)
 	}
@@ -288,7 +276,6 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 }
 
 func TestApplyOpsRejectsMalformedOps(t *testing.T) {
-	// Malformed input from an untrusted source (MCP) must never reach storage.
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
@@ -331,14 +318,12 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EditWithAI: %v", err)
 	}
-	// The scope is read from storage and handed to the model with the command.
 	if repo.gotSubtree != "01A" {
 		t.Errorf("read subtree of %q, want 01A", repo.gotSubtree)
 	}
 	if llm.gotInstruction != "revise this block" || len(llm.gotScope) != 1 || llm.gotScope[0].ID != "01A" {
 		t.Errorf("model got scope %+v / instruction %q, want the scope and command", llm.gotScope, llm.gotInstruction)
 	}
-	// Applied directly (not queued): an AI write, awaiting review.
 	if repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIEdit {
 		t.Errorf("meta = %+v, want ai/gui_edit", repo.applyMeta)
 	}
@@ -379,7 +364,6 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 }
 
 func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
-	// A command the model turns into no operations must not be applied.
 	llm := &fakeLLM{editOps: nil}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs(), nil)
@@ -429,8 +413,6 @@ func TestExpandTopicSurfacesLLMError(t *testing.T) {
 }
 
 func TestExpandTopicRejectsEmptyTree(t *testing.T) {
-	// A provider that returns no ops (nil error) must not be applied as an
-	// empty batch; the empty-ops invariant surfaces instead.
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
 	svc := NewService(llm, repo, seqIDs(), nil)
@@ -444,8 +426,6 @@ func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 }
 
 func TestServiceReviewPassThroughs(t *testing.T) {
-	// Every review method is a direct pass-through to Repository; assert each
-	// reaches its storage counterpart with the right arguments.
 	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
@@ -512,10 +492,6 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 }
 
 func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
-	// The domain must render and hand the files to the injected writer, never
-	// touch the disk itself. GetTopics returns roots plus their first level;
-	// only roots become files, each carrying its full subtree — a first-level
-	// child must not spawn its own file. The writer records what it received.
 	repo := &fakeRepo{
 		topics: []Block{
 			blk("t1", "", 0, "# Alpha"),
@@ -537,7 +513,6 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 	if writer.dir != "/export/here" {
 		t.Errorf("writer got dir %q, want the dir passed to ExportMarkdown", writer.dir)
 	}
-	// Two files, one per root; the child does not spawn its own.
 	want := []ExportFile{
 		{Name: "alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
 		{Name: "beta.md", Content: "- # Beta\n"},
@@ -548,8 +523,6 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 }
 
 func TestServiceExportMarkdownIncludesOutgoingLinks(t *testing.T) {
-	// A block's outgoing typed links must reach the export, hydrated with the
-	// target's first line, so nothing in the base is dropped.
 	repo := &fakeRepo{
 		topics:   []Block{blk("t1", "", 0, "# Root")},
 		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Root")}},
@@ -571,7 +544,6 @@ func TestServiceExportMarkdownIncludesOutgoingLinks(t *testing.T) {
 }
 
 func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
-	// A write failure must reach the caller, mirroring the read-error path.
 	boom := errors.New("disk full")
 	repo := &fakeRepo{
 		topics:   []Block{blk("t1", "", 0, "# Alpha")},
@@ -611,7 +583,6 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Errorf("error = %v, want the storage read error surfaced", err)
 	}
-	// A read failure aborts before any write; the writer is never reached.
 	if writer.files != nil {
 		t.Errorf("writer was handed %+v; a read failure must write nothing", writer.files)
 	}

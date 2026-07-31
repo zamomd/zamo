@@ -53,7 +53,6 @@ func TestLoadRejectsUnknownProvider(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownKey(t *testing.T) {
-	// A typo in the config must fail loudly, not be ignored silently.
 	if _, err := Load(write(t, "databse = \"x\"\n")); err == nil {
 		t.Fatal("unknown key must be rejected")
 	}

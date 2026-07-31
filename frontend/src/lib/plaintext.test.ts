@@ -2,14 +2,8 @@ import { describe, expect, it } from "vitest";
 import { plainText } from "./plaintext";
 
 describe("plainText", () => {
-	// Each case is a shape the expansion prompt actually produces, so these are
-	// the strings the sidebar has to survive, not invented ones.
 	const cases: [string, string, string][] = [
 		["heading", "# Rate limiting", "Rate limiting"],
-		// Non-Latin source, written as \u escapes rather than literal Cyrillic:
-		// `just check`'s english-only gate (justfile:32) greps tracked file
-		// bytes, and this repo is source-English-only even though block
-		// content is not. The runtime string is identical either way.
 		[
 			"deeper heading",
 			"### \u041d\u0430\u0448\u0020\u0448\u043b\u044e\u0437",
@@ -40,7 +34,6 @@ describe("plainText", () => {
 	}
 
 	it("leaves a bare asterisk alone rather than eating punctuation", () => {
-		// Emphasis needs a closing delimiter; a lone star is content.
 		expect(plainText("2 * 3 = 6")).toBe("2 * 3 = 6");
 	});
 });

@@ -12,8 +12,6 @@ import {
 	visibleOrder,
 } from "./tree";
 
-// block builds the minimum Block the tree helpers read; the rest of the shape
-// never reaches them.
 function block(id: string, parent: string): Block {
 	return {
 		ID: id,
@@ -68,9 +66,6 @@ describe("topicRows", () => {
 		expect(topicRows(forest, null)[0].title).toBe("go");
 	});
 
-	// The sidebar is a one-line index, so both levels go through the same
-	// stripper the crumbs use. The forest above cannot show this: block() sets
-	// Content to the id, which has no markdown in it to strip.
 	it("strips markdown from both the topic and its children", () => {
 		const child: TreeNodeData = { block: { ...block("kid", "root"), Content: "**token** buckets" }, children: [] };
 		const styled: TreeNodeData = {
@@ -92,7 +87,6 @@ describe("topicRows", () => {
 
 	it("expands one level only", () => {
 		const rows = topicRows(forest, "go");
-		// "done" is a grandchild and must not appear in the sidebar.
 		expect(rows[0].children.map((c) => c.id)).not.toContain("done");
 	});
 
@@ -132,8 +126,6 @@ describe("crumbTrail", () => {
 	});
 
 	it("strips markdown from the crumb titles", () => {
-		// A crumb is a one-line label, so it goes through the same stripper as
-		// the sidebar rather than showing a heading's hashes.
 		const deep = node("child", "root");
 		const root: TreeNodeData = {
 			block: { ...deep.block, ID: "root", ParentID: "", Content: "# Rate limiting" },
@@ -143,13 +135,9 @@ describe("crumbTrail", () => {
 	});
 });
 
-// none is the empty exclusion set: a forest with no ghosts in it. Named rather
-// than written inline so the ghost cases below stand out as the ones that pass
-// something.
 const none = new Set<string>();
 
 describe("visibleOrder", () => {
-	// go > ctx > done, and sqlite > wal: two topics, one of them two deep.
 	const forest = [
 		node("go", "", [node("ctx", "go", [node("done", "ctx")])]),
 		node("sqlite", "", [node("wal", "sqlite")]),
@@ -192,12 +180,9 @@ describe("prevVisible and nextVisible", () => {
 	});
 
 	it("walks back into the deepest visible descendant, not to the sibling's own row", () => {
-		// gen's predecessor is done, ctx's last child — not ctx itself.
 		expect(prevVisible(forest, "gen", new Set(), none)).toBe("done");
 	});
 
-	// This is what makes Backspace land where the eye says it should: a collapsed
-	// block hides its subtree, so the row above is the collapsed block itself.
 	it("skips a collapsed block's hidden children", () => {
 		expect(prevVisible(forest, "gen", new Set(["ctx"]), none)).toBe("ctx");
 	});
@@ -212,7 +197,6 @@ describe("prevSibling", () => {
 	const forest = [node("go", "", [node("ctx", "go", [node("done", "ctx")]), node("gen", "go")])];
 
 	it("returns the sibling directly above, ignoring how deep it is", () => {
-		// ctx has a child, but Tab indents gen under ctx, not under done.
 		expect(prevSibling(forest, "gen", none)).toBe("ctx");
 	});
 
@@ -229,12 +213,7 @@ describe("prevSibling", () => {
 	});
 });
 
-// A ghost is a pending deletion: the reader sees the struck-through row, but
-// storage has no such block, so no gesture may reach it. The walks take the
-// exclusion set for exactly this — see the skip parameter's own comment.
 describe("the exclusion set", () => {
-	// gone is a ghost with a live child: the AI proposed deleting a parent, and
-	// kid is still a real block the reader can see and edit.
 	const forest = [node("go", "", [node("ctx", "go"), node("gone", "go", [node("kid", "gone")]), node("gen", "go")])];
 	const ghosts = new Set(["gone"]);
 
@@ -247,8 +226,6 @@ describe("the exclusion set", () => {
 	});
 
 	it("walks past an excluded row to the one above it on screen", () => {
-		// kid is the row the reader sees directly above gen; gone's own row is
-		// between them but is not a legal target.
 		expect(prevVisible(forest, "gen", new Set(), ghosts)).toBe("kid");
 	});
 

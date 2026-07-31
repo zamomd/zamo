@@ -1,7 +1,6 @@
 package sqlite
 
-// revision row helpers shared by the write path (sqlite.go) and the review
-// operations (Task 4: reject, mark-reviewed, list-unreviewed).
+// Revision helpers shared by writes and review operations.
 
 import (
 	"context"
@@ -25,9 +24,7 @@ type rowQueryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// scanner is satisfied by *sql.Row and *sql.Rows, so scanRevision maps
-// either a single lookup (headRevision) or one row of a multi-row listing
-// (Task 4's ListRevisions and friends).
+// scanner is implemented by *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -106,17 +103,11 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 	return rev, nil
 }
 
-// projectHead rebuilds the blocks row from the block's current head
-// revision, enforcing the rollback invariants: a live head needs a live
-// parent (or root), and removing a block from the projection (no head, or a
-// tombstone head) is refused while live children exist. created_at is the
-// first revision's timestamp, updated_at the head's — not "now": rebuilding
-// the projection from history must reproduce the state as of that revision,
-// not stamp the moment of the rollback.
+// projectHead rebuilds a block from its current head revision. A live head
+// requires a live parent, and a block with live children cannot be removed.
+// Timestamps come from revision history so rollback reproduces historical state.
 //
-// The upsert's content change fires the FTS update trigger; the resurrect
-// insert fires the insert trigger; the delete fires the delete trigger — FTS
-// stays consistent for free.
+// Projection writes use the normal FTS-maintaining triggers.
 func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	head, ok, err := headRevision(ctx, tx, blockID)
 	if err != nil {
@@ -172,13 +163,8 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	return nil
 }
 
-// DeleteRevision implements knowledge.Repository: the rollback primitive.
-// Deleting a non-head revision only prunes history — the projection is
-// already built from a later revision. Deleting the head rebuilds the
-// projection from whatever revision is now the head (projectHead), which
-// refuses (ErrInvalidRollback) and rolls the whole transaction back when
-// that would orphan live children or leave the block pointing at a missing
-// parent — a refused rollback leaves history untouched.
+// DeleteRevision removes a revision and rebuilds the projection when the head
+// changes. Invalid projections roll back the transaction.
 func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

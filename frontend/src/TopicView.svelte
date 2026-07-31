@@ -5,14 +5,6 @@
 	import TreeNode from "./lib/TreeNode.svelte";
 	import { base } from "./stores/base.svelte";
 
-	// One topic, not the forest: the sidebar is the index, so repeating every
-	// topic here would make the same list twice. The tree scrolls; the command
-	// line stays pinned to the bottom, because it is the entry point for the
-	// next thing the reader writes and hunting for it would break that.
-	//
-	// The view's root is whatever the reader is looking at — the topic, or a
-	// block they zoomed into — and it renders as the page's title row rather
-	// than as a heading above a duplicate of itself.
 	const tree = $derived(base.viewRoot);
 </script>
 

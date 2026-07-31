@@ -6,16 +6,11 @@ import (
 	"testing"
 )
 
-// blk is a terse Block constructor for the render tests: id, parent, position,
-// content. Positions matter only for sibling order, which the caller
-// (GetSubtree) has already applied — RenderMarkdown renders in the order given.
 func blk(id, parent string, pos int, content string) Block {
 	return Block{ID: ID(id), ParentID: ID(parent), Position: pos, Content: content}
 }
 
 func TestRenderMarkdownNestsByDepth(t *testing.T) {
-	// A pre-ordered subtree (root first, parents before children) renders as a
-	// Logseq-style bullet list: two spaces of indent per level of depth.
 	sub := []Block{
 		blk("t1", "", 0, "# Go Contexts"),
 		blk("t2", "t1", 0, "context.Context carries deadlines"),
@@ -43,8 +38,6 @@ func TestRenderMarkdownSlugsFilenameFromTopic(t *testing.T) {
 }
 
 func TestRenderMarkdownKeepsUnicodeInSlug(t *testing.T) {
-	// A personal base holds any language; a non-ASCII letter must survive the
-	// slug rather than being nuked to an unreadable fallback.
 	files := RenderMarkdown([][]Block{{blk("t1", "", 0, "Café Résumé")}}, nil)
 	if files[0].Name != "café-résumé.md" {
 		t.Errorf("name = %q, want café-résumé.md", files[0].Name)
@@ -52,9 +45,6 @@ func TestRenderMarkdownKeepsUnicodeInSlug(t *testing.T) {
 }
 
 func TestRenderMarkdownDedupesCollidingSlugs(t *testing.T) {
-	// Topics that slug to the same base must not overwrite one file; the suffix
-	// counts up (name.md, name-2.md, name-3.md), never repeating or counting
-	// down.
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "# Go Contexts")},
 		{blk("t2", "", 0, "Go contexts!")},
@@ -68,9 +58,6 @@ func TestRenderMarkdownDedupesCollidingSlugs(t *testing.T) {
 }
 
 func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
-	// The suffix of one topic must not equal the base name of another: "x 2"
-	// slugs to "x-2", and a second "x" must not also become "x-2.md" and
-	// overwrite it. Every file must be distinct, or a topic is silently lost.
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "x 2")},
 		{blk("t2", "", 0, "x")},
@@ -89,8 +76,6 @@ func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
 }
 
 func TestRenderMarkdownFallsBackOnEmptySlug(t *testing.T) {
-	// A topic whose content has no slug-able characters still yields a usable,
-	// unique filename rather than ".md".
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "###")},
 		{blk("t2", "", 0, "   ")},
@@ -101,8 +86,6 @@ func TestRenderMarkdownFallsBackOnEmptySlug(t *testing.T) {
 }
 
 func TestRenderMarkdownIndentsMultilineContent(t *testing.T) {
-	// Block content is pure markdown and may span lines; continuation lines
-	// must align under the bullet text so the list stays valid markdown.
 	sub := []Block{
 		blk("t1", "", 0, "# Root"),
 		blk("t2", "t1", 0, "first line\nsecond line"),
@@ -117,9 +100,6 @@ func TestRenderMarkdownIndentsMultilineContent(t *testing.T) {
 }
 
 func TestRenderMarkdownRendersOutgoingLinks(t *testing.T) {
-	// A block's outgoing typed links render as a nested "links" list right under
-	// it, so nothing in the base is dropped from the export and the connection
-	// is readable in plain markdown.
 	sub := []Block{
 		blk("t1", "", 0, "# Root"),
 		blk("t2", "t1", 0, "Goroutine leaks"),

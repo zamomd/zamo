@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// seqIDs returns a generator handing out deterministic ids U1, U2, … so tests
-// can predict the temp_id → ID resolution.
 func seqIDs() IDGenerator {
 	n := 0
 	return func() ID {
@@ -33,8 +31,6 @@ func TestPrepareOpsResolvesTempIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareOps: %v", err)
 	}
-	// Parent-first: the root add (no Parent) must be emitted before the
-	// child add that references it, even though it arrives second.
 	if out[0].Kind != OpAdd || out[0].Parent != "" {
 		t.Fatalf("op 0 = %+v, want the root add first (parent-first order)", out[0])
 	}
@@ -53,7 +49,6 @@ func TestPrepareOpsResolvesTempIDs(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsCycle(t *testing.T) {
-	// A moves under B, B moves under A: a ring through two existing ids.
 	ops := []Op{
 		{Kind: OpMove, BlockID: "a", Parent: "b"},
 		{Kind: OpMove, BlockID: "b", Parent: "a"},
@@ -70,8 +65,6 @@ func TestPrepareOpsRejectsEmpty(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsDuplicateTemp(t *testing.T) {
-	// Two adds sharing a temp id would collide on resolution — one real id for
-	// two blocks. Reject the whole batch rather than resolve ambiguously.
 	ops := []Op{addOp("t1", "", "A"), addOp("t1", "", "B")}
 	if _, _, err := prepareOps(ops, seqIDs()); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("error = %v, want ErrInvalidOps", err)
@@ -79,9 +72,6 @@ func TestPrepareOpsRejectsDuplicateTemp(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsAddWithEmptyTempID(t *testing.T) {
-	// An add with no temp id cannot resolve to a real id — it would emit a
-	// blank BlockID. Batches reach here from untrusted sources (MCP), so a
-	// malformed add is a domain validation error, not silently applied.
 	ops := []Op{addOp("", "", "no temp id")}
 	if _, _, err := prepareOps(ops, seqIDs()); !errors.Is(err, ErrInvalidOps) {
 		t.Errorf("empty temp id: got %v, want ErrInvalidOps", err)
@@ -89,8 +79,6 @@ func TestPrepareOpsRejectsAddWithEmptyTempID(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsCycleAmongTempIDs(t *testing.T) {
-	// Two adds each claiming the other as parent form a ring with no root — the
-	// tree cannot be built, so prepareOps must refuse it with ErrCycle.
 	ops := []Op{
 		addOp("t1", "t2", "A"),
 		addOp("t2", "t1", "B"),
@@ -101,9 +89,6 @@ func TestPrepareOpsRejectsCycleAmongTempIDs(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsMoveIntoOwnSubtree(t *testing.T) {
-	// A new block is parented under an existing block X, and the same batch
-	// moves X under that new block: X would sit inside its own subtree. The
-	// ring runs through an existing id, so it is still ErrCycle.
 	ops := []Op{
 		addOp("t1", "X", "new child of X"),
 		{Kind: OpMove, BlockID: "X", Parent: "t1"},
@@ -114,7 +99,6 @@ func TestPrepareOpsRejectsMoveIntoOwnSubtree(t *testing.T) {
 }
 
 func TestPrepareOpsRejectsSelfParent(t *testing.T) {
-	// A block claiming itself as parent is a one-node ring.
 	ops := []Op{addOp("t1", "t1", "self")}
 	if _, _, err := prepareOps(ops, seqIDs()); !errors.Is(err, ErrCycle) {
 		t.Errorf("self-parent: got %v, want ErrCycle", err)
@@ -122,8 +106,6 @@ func TestPrepareOpsRejectsSelfParent(t *testing.T) {
 }
 
 func TestPrepareOpsAllowsDiamondUnderExistingParent(t *testing.T) {
-	// Two new children of the same existing block X share a parent — a diamond
-	// in id-space, but no ring, so it must not be flagged as a cycle.
 	ops := []Op{addOp("t1", "X", "c1"), addOp("t2", "X", "c2")}
 	got, _, err := prepareOps(ops, seqIDs())
 	if err != nil {
@@ -135,9 +117,6 @@ func TestPrepareOpsAllowsDiamondUnderExistingParent(t *testing.T) {
 }
 
 func TestPrepareOpsOrdersMoveAfterItsNewParent(t *testing.T) {
-	// A move onto a block created in the same batch must be emitted after that
-	// add and carry the resolved parent id, even when it comes first in the
-	// input.
 	ops := []Op{
 		{Kind: OpMove, BlockID: "X", Parent: "t1"},
 		addOp("t1", "", "new parent"),
@@ -155,8 +134,6 @@ func TestPrepareOpsOrdersMoveAfterItsNewParent(t *testing.T) {
 }
 
 func TestPrepareOpsResolvesLinkEndpoints(t *testing.T) {
-	// A link between two new blocks is emitted after both adds, with From/To
-	// resolved to their new ids.
 	ops := []Op{
 		addOp("t1", "", "A"),
 		addOp("t2", "", "B"),
@@ -173,9 +150,6 @@ func TestPrepareOpsResolvesLinkEndpoints(t *testing.T) {
 }
 
 func TestPrepareOpsResolvesUnlinkEndpoints(t *testing.T) {
-	// Unlink is a first-class op: it validates on from/to and its endpoints
-	// resolve through temp ids exactly like a link's, so an unlink can name
-	// blocks added earlier in the same batch.
 	ops := []Op{
 		addOp("t1", "", "A"),
 		addOp("t2", "", "B"),
@@ -199,9 +173,6 @@ func TestPrepareOpsRejectsUnlinkWithoutEndpoints(t *testing.T) {
 }
 
 func TestPrepareOpsOrdersParentsBeforeChildren(t *testing.T) {
-	// The ops arrive child-first (an MCP client need not pre-order them);
-	// prepareOps must topologically order parents before children and assign
-	// ids in that order, so a parent always exists when its child is written.
 	ops := []Op{
 		addOp("t3", "t2", "Grandchild"),
 		addOp("t2", "t1", "Child"),
@@ -217,7 +188,6 @@ func TestPrepareOpsOrdersParentsBeforeChildren(t *testing.T) {
 			t.Fatalf("op %d = %q, want %q (whole: %+v)", i, got[i].Content, want, got)
 		}
 	}
-	// Ids follow the emitted order, and each child points at its parent's id.
 	if string(got[0].BlockID) != "U1" || got[0].Parent != "" {
 		t.Errorf("root = %+v, want BlockID U1, no parent", got[0])
 	}
@@ -227,9 +197,6 @@ func TestPrepareOpsOrdersParentsBeforeChildren(t *testing.T) {
 }
 
 func TestPrepareOpsResolvesAndOrders(t *testing.T) {
-	// A small add-tree. temp ids resolve to fresh ids (from the injected
-	// generator) in add order, parents keep pointing at their (now resolved)
-	// parent, and the result stays parents-before-children.
 	ops := []Op{
 		addOp("t1", "", "# Root"),
 		addOp("t2", "t1", "Child A"),
@@ -279,8 +246,6 @@ func TestPrepareOpsResolvesAnchors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareOps: %v", err)
 	}
-	// Anchors are resolved to the real ids the same batch assigned, so storage
-	// never sees a temp id.
 	for _, op := range out {
 		switch op.Content {
 		case "second":
@@ -296,9 +261,6 @@ func TestPrepareOpsResolvesAnchors(t *testing.T) {
 }
 
 func TestPrepareOpsOrdersAnchorAfterItsAdd(t *testing.T) {
-	// The anchored add is listed first; ordering must still emit the add that
-	// creates the anchor before it, or storage would resolve a position
-	// against a block that does not exist yet.
 	ops := []Op{
 		{Kind: OpAdd, TempID: "t2", Parent: "root", After: "t1", Content: "second"},
 		{Kind: OpAdd, TempID: "t1", Parent: "root", Content: "first"},
@@ -322,8 +284,6 @@ func TestOpValidateRejectsBothAnchors(t *testing.T) {
 }
 
 func TestOpValidateRejectsAnAnchorOnAKindThatIgnoresIt(t *testing.T) {
-	// Only add and move place a block among siblings; an anchor on any other
-	// kind would be silently dropped rather than honoured.
 	op := Op{Kind: OpEdit, BlockID: "b1", After: "x"}
 	err := op.validate()
 	if !errors.Is(err, ErrInvalidOps) {

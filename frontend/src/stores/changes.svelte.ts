@@ -18,11 +18,6 @@ class ChangesStore {
 		this.edges = c?.Edges ?? [];
 	}
 
-	// start reads the changes once and begins polling. An MCP-submitted write
-	// arrives out of band while the window sits idle; re-read it without a
-	// restart. Poll only while the window is visible (no wakeups when
-	// minimized) and re-read the moment it regains focus or visibility, so a
-	// return from the background is never left stale. Returns the cleanup.
 	start(): () => void {
 		const refresh = (): void => {
 			if (!document.hidden) {

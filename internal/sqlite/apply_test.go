@@ -11,8 +11,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// testRepo opens a scratch repo whose clock and revision ids are
-// deterministic, so assertions can pin exact values instead of just shapes.
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
 	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
@@ -25,12 +23,10 @@ func testRepo(t *testing.T) *Repo {
 		func() knowledge.ID { seq++; return knowledge.ID(fmt.Sprintf("rev-%03d", seq)) })
 }
 
-// aiMeta is the write-batch provenance an AI-authored ApplyOps call carries.
 func aiMeta(title string) knowledge.WriteMeta {
 	return knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: title}
 }
 
-// blockRow reads one blocks row for assertions; ok is false if it is gone.
 func blockRow(t *testing.T, repo *Repo, id string) (parent string, position int, content string, ok bool) {
 	t.Helper()
 	err := repo.db.QueryRowContext(t.Context(),
@@ -44,7 +40,6 @@ func blockRow(t *testing.T, repo *Repo, id string) (parent string, position int,
 	return parent, position, content, true
 }
 
-// revRow is one block_revisions row, flattened for assertions.
 type revRow struct {
 	seq      int
 	content  string
@@ -56,7 +51,6 @@ type revRow struct {
 	group    string
 }
 
-// revisionsOf reads every revision of a block, oldest (seq 1) first.
 func revisionsOf(t *testing.T, repo *Repo, blockID string) []revRow {
 	t.Helper()
 	rows, err := repo.db.QueryContext(t.Context(),
@@ -81,7 +75,6 @@ func revisionsOf(t *testing.T, repo *Repo, blockID string) []revRow {
 	return out
 }
 
-// countRows returns the number of rows in table, for atomicity assertions.
 func countRows(t *testing.T, repo *Repo, table string) int {
 	t.Helper()
 	var n int
@@ -95,7 +88,6 @@ func TestApplyOpsAddWritesRevisionAndProjection(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	// Already-resolved ids, parent-first ordered, as prepareOps emits.
 	ops := []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b-root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "b-child", Parent: "b-root", Content: "child"},
@@ -158,8 +150,6 @@ func TestApplyOpsEditAppendsRevision(t *testing.T) {
 	if revs[0].seq != 1 || revs[1].seq != 2 {
 		t.Errorf("revision seqs = %d, %d, want 1, 2", revs[0].seq, revs[1].seq)
 	}
-	// seq 2 carries the parent/position that were already there — a revision
-	// is a full snapshot, not a diff.
 	if revs[1].parent != revs[0].parent || revs[1].position != revs[0].position {
 		t.Errorf("seq 2 parent/position = %q/%d, want unchanged from seq 1 (%q/%d)",
 			revs[1].parent, revs[1].position, revs[0].parent, revs[0].position)
@@ -173,7 +163,6 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	// root -> mid -> leaf, plus an unrelated topic "other" to move onto.
 	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 		{Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root", Content: "Mid"},
@@ -183,8 +172,6 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	// Legitimate move: "other" becomes root's second child. Content survives
-	// unchanged; position is one stride past root's existing child (mid, pos 0).
 	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "other", Parent: "root"},
 	}); err != nil {
@@ -200,7 +187,6 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 		t.Errorf("other revisions = %+v, want a second entry content=Other parent=root position=%d", revs, positionStride)
 	}
 
-	// Cycle: moving root under its own grandchild must fail and write nothing.
 	err := repo.ApplyOps(ctx, "grp-3", aiMeta("cycle"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "root", Parent: "leaf"},
 	})
@@ -254,7 +240,6 @@ func TestApplyOpsDeleteTombstonesSubtree(t *testing.T) {
 			t.Errorf("%s head revision = %+v, want deleted=true group=grp-del", id, head)
 		}
 	}
-	// Content is preserved in the tombstone, not blanked.
 	rootRevs := revisionsOf(t, repo, "root")
 	if got := rootRevs[len(rootRevs)-1].content; got != "Root text" {
 		t.Errorf("root tombstone content = %q, want %q", got, "Root text")
@@ -328,8 +313,6 @@ func TestApplyOpsLinkUpsertsEdge(t *testing.T) {
 		t.Errorf("edge = reviewed=%v deleted=%v author=%q, want false/false/ai", reviewed, deleted, author)
 	}
 
-	// Soft-delete the edge (as a review rejection would), then re-link:
-	// the upsert must resurrect it.
 	if _, err := repo.db.ExecContext(ctx,
 		`UPDATE edges SET deleted = 1 WHERE from_id = 'from' AND to_id = 'to'`); err != nil {
 		t.Fatalf("soft-delete edge: %v", err)

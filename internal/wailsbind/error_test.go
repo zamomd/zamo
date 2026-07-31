@@ -9,8 +9,6 @@ import (
 	"github.com/cominddev/comind/internal/settings"
 )
 
-// unmarshalPayload round-trips MarshalError output, failing the test on
-// anything that is not the documented JSON shape.
 func unmarshalPayload(t *testing.T, raw []byte) ErrorPayload {
 	t.Helper()
 	if raw == nil {
@@ -24,8 +22,6 @@ func unmarshalPayload(t *testing.T, raw []byte) ErrorPayload {
 }
 
 func TestMarshalErrorCodes(t *testing.T) {
-	// Every sentinel the frontend can react to must keep its wire code: the
-	// rollback/busy/LLM reactions in the GUI switch on these strings.
 	cases := []struct {
 		err  error
 		code string
@@ -43,8 +39,6 @@ func TestMarshalErrorCodes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.code, func(t *testing.T) {
-			// Wrapped like the service does it: the code must survive the
-			// chain, and the message must keep the wrapping context.
 			wrapped := fmt.Errorf("apply ops: %w", c.err)
 			p := unmarshalPayload(t, MarshalError(wrapped))
 			if p.Code != c.code {

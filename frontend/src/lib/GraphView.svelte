@@ -4,34 +4,16 @@
 	import { circleBox, clampPad, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
 	import { openTopic } from "./navigate";
 
-	// The fixed screen-space allowance around the fitted circles, before
-	// clampPad below has a chance to cap it. Real screen pixels, like
-	// LABEL_GAP, so the margin reads the same regardless of zoom — see box.
 	const PAD_PX = 24;
-	// Vertical gap between a node's circle and its label's baseline, in real
-	// screen pixels — see textScale below for why this is pixels and not
-	// viewBox units.
 	const LABEL_GAP = 12;
 
 	onMount(() => {
 		void graph.load();
 	});
 
-	// The SVG's own rendered size. viewBox fits the content, so the map's
-	// on-screen scale (viewBox units per pixel) changes with the topic count —
-	// a five-node map and a five-hundred-node map do not occupy the same
-	// number of viewBox units per pixel. A <text> element's font-size is in
-	// viewBox units like everything else in the SVG, so left alone it would
-	// scale with that ratio: unreadably small on a large map, oversized on a
-	// small one. svgPxWidth/svgPxHeight let scaleFor below undo exactly that
-	// scaling, on whichever axis actually constrains the fit.
 	let svgPxWidth = $state(0);
 	let svgPxHeight = $state(0);
 
-	// A topic root with empty content (an untitled page) would otherwise give
-	// this a "" aria-label — a focusable control a screen reader cannot name,
-	// under a visible circle with an equally blank label. The fallback keeps
-	// both the control's accessible name and the on-screen label non-empty.
 	const UNTITLED = "Untitled topic";
 
 	const nodes = $derived(
@@ -48,21 +30,8 @@
 			.filter((l): l is { a: { x: number; y: number }; b: { x: number; y: number } } => l.a !== undefined && l.b !== undefined),
 	);
 
-	// Only circles are fitted — never labels. A label has a fixed screen
-	// size (see textScale/the label <g> below), so its extent in viewBox
-	// units is inversely proportional to the scale; folding it into the box
-	// that determines that same scale is positive feedback, and it diverged
-	// on windows this app does not prevent (see task-5 report). A label
-	// simply gets clipped by the SVG when a pane is too narrow to hold it —
-	// bounded clipping of an annotation beats an unreadable map, and the
-	// circles, which are the map, are never affected by a label's length.
 	const circleBoxes = $derived(nodes.map((n) => circleBox(n.x, n.y, n.r)));
 
-	// One-shot, not iterative: the circles-only scale converts PAD_PX to user
-	// units exactly once, and that result feeds nothing back into itself.
-	// clampPad then hard-caps it so padding can never dominate the fit
-	// regardless of window shape — the guard the old iterative version
-	// lacked.
 	const box = $derived.by(() => {
 		const [, , w0, h0] = viewBox(circleBoxes, 0).split(" ").map(Number);
 		const scale = scaleFor(w0, h0, svgPxWidth, svgPxHeight);

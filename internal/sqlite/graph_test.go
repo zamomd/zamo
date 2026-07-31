@@ -9,8 +9,6 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// insertEdge inserts one edge with the storage layer's timestamp convention.
-// deleted is the soft-delete flag RemoveEdge sets.
 func insertEdge(ctx context.Context, t *testing.T, db *sql.DB, from, to string, rel knowledge.Relation, deleted bool) {
 	t.Helper()
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC).Format(timeLayout)
@@ -27,8 +25,6 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// Topic "a" holds four blocks including its own root; "b" is isolated and
-	// holds one. An isolated topic is shown, not hidden.
 	insertBlock(ctx, t, db, "a", "", 0, "Topic A")
 	insertBlock(ctx, t, db, "a1", "a", 0, "A1")
 	insertBlock(ctx, t, db, "a2", "a", 1, "A2")
@@ -67,17 +63,11 @@ func TestGetTopicGraphAggregatesEdges(t *testing.T) {
 	insertBlock(ctx, t, db, "b1", "b", 0, "B1")
 	insertBlock(ctx, t, db, "c", "", 2, "Topic C")
 
-	// Two links between the same pair of topics, from different blocks and
-	// with different relations: one edge.
 	insertEdge(ctx, t, db, "a1", "b1", knowledge.RelationRelated, false)
 	insertEdge(ctx, t, db, "a2", "b1", knowledge.RelationExample, false)
-	// The reverse direction of a pair already seen: still one edge.
 	insertEdge(ctx, t, db, "b1", "a1", knowledge.RelationExample, false)
-	// A link inside one topic is not an edge.
 	insertEdge(ctx, t, db, "a1", "a2", knowledge.RelationRelated, false)
-	// A soft-deleted edge is invisible, exactly as in GetEdges.
 	insertEdge(ctx, t, db, "a1", "c", knowledge.RelationRelated, true)
-	// An edge whose endpoint block does not exist is invisible too.
 	insertEdge(ctx, t, db, "a1", "gone", knowledge.RelationRelated, false)
 
 	got, err := r(db).GetTopicGraph(ctx)
@@ -88,7 +78,6 @@ func TestGetTopicGraphAggregatesEdges(t *testing.T) {
 	if len(got.Edges) != len(want) || got.Edges[0] != want[0] {
 		t.Fatalf("edges = %v, want %v", got.Edges, want)
 	}
-	// Topic C stays on the map even though its only edge was deleted.
 	if len(got.Topics) != 3 {
 		t.Fatalf("topics = %v, want three", got.Topics)
 	}
@@ -98,13 +87,6 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
 
-	// Inserted out of id order. This pins the caller-visible contract the
-	// layout depends on — sorted by id — which is what the explicit ORDER BY
-	// in graph.go exists to guarantee; nothing in this suite can tell that
-	// guarantee apart from SQLite incidentally sorting this fixture on its
-	// own (GROUP BY and SELECT DISTINCT both materialize through a sorted
-	// temp B-tree), since removing the ORDER BY still leaves this table small
-	// enough to come back sorted by chance.
 	insertBlock(ctx, t, db, "c", "", 0, "Topic C")
 	insertBlock(ctx, t, db, "a", "", 1, "Topic A")
 	insertBlock(ctx, t, db, "b", "", 2, "Topic B")
