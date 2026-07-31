@@ -91,23 +91,6 @@ func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Bl
 	return a.svc.GetSubtree(ctx, root)
 }
 
-// GetLinks passes the call to knowledge.Service: the block's typed links,
-// hydrated with their neighbour blocks.
-func (a *App) GetLinks(ctx context.Context, id knowledge.ID) ([]knowledge.LinkedBlock, error) {
-	return a.svc.LinkedBlocks(ctx, id)
-}
-
-// CreateLink passes the call to knowledge.Service. The owner links directly,
-// without the review queue — like EditBlockContent.
-func (a *App) CreateLink(ctx context.Context, from, to knowledge.ID, relation knowledge.Relation) error {
-	return a.svc.CreateLink(ctx, from, to, relation)
-}
-
-// RemoveLink passes the call to knowledge.Service.
-func (a *App) RemoveLink(ctx context.Context, from, to knowledge.ID, relation knowledge.Relation) error {
-	return a.svc.RemoveLink(ctx, from, to, relation)
-}
-
 // EditBlockContent passes the call to knowledge.Service. A manual edit by the
 // owner applies directly, without the review queue.
 func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
@@ -121,7 +104,7 @@ func (a *App) SplitBlock(ctx context.Context, id knowledge.ID, head, tail string
 }
 
 // InsertBlockBefore is Enter at the very start of a block: an empty sibling
-// appears above and the block keeps its id, history and links.
+// appears above and the block keeps its id and history.
 func (a *App) InsertBlockBefore(ctx context.Context, id knowledge.ID, content string) (knowledge.OutlineChange, error) {
 	return a.svc.InsertBefore(ctx, id, content)
 }
@@ -213,16 +196,6 @@ func (a *App) BlockHistory(ctx context.Context, id knowledge.ID) ([]knowledge.Re
 // DeleteRevision passes the call to knowledge.Service.
 func (a *App) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
 	return a.svc.DeleteRevision(ctx, blockID, revID)
-}
-
-// AcceptEdge passes the call to knowledge.Service.
-func (a *App) AcceptEdge(ctx context.Context, from, to knowledge.ID, rel knowledge.Relation) error {
-	return a.svc.AcceptEdge(ctx, from, to, rel)
-}
-
-// RejectEdge passes the call to knowledge.Service.
-func (a *App) RejectEdge(ctx context.Context, from, to knowledge.ID, rel knowledge.Relation) error {
-	return a.svc.RejectEdge(ctx, from, to, rel)
 }
 
 // Settings passes the call to settings.Manager: the effective provider

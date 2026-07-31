@@ -86,38 +86,10 @@ ORDER BY r.root`
 	return out, nil
 }
 
-// topicEdges lifts block-level links to the topic level. The CASE pair orders
-// each edge's endpoints, so A->B and B->A collapse to one row under DISTINCT;
-// the root inequality drops links inside a single topic; and joining both
-// endpoints against roots drops an edge whose block no longer exists — the
-// same visibility rule GetEdges spells out with EXISTS.
+// topicEdges lifts block-level connections to the topic level. There is
+// currently no such connection to lift — semantic links, its only source,
+// are gone — so it always reports none; GetTopicGraph and pruneDanglingEdges
+// stay in place for whatever read replaces that source.
 func (r *Repo) topicEdges(ctx context.Context) ([]knowledge.TopicEdge, error) {
-	const q = topicRoots + `
-SELECT DISTINCT
-    CASE WHEN f.root < t.root THEN f.root ELSE t.root END AS a,
-    CASE WHEN f.root < t.root THEN t.root ELSE f.root END AS b
-FROM edges e
-JOIN roots f ON f.id = e.from_id
-JOIN roots t ON t.id = e.to_id
-WHERE e.deleted = 0 AND f.root <> t.root
-ORDER BY a, b`
-
-	rows, err := r.db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("read topic edges: %w", translate(err))
-	}
-	defer rows.Close()
-
-	var out []knowledge.TopicEdge
-	for rows.Next() {
-		var e knowledge.TopicEdge
-		if err := rows.Scan(&e.From, &e.To); err != nil {
-			return nil, fmt.Errorf("read topic edges: %w", translate(err))
-		}
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read topic edges: %w", translate(err))
-	}
-	return out, nil
+	return nil, nil
 }

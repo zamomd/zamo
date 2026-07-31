@@ -1,4 +1,4 @@
-// Package knowledge is the domain layer: blocks, links, revisions
+// Package knowledge is the domain layer: blocks, references, revisions
 // and the rules around them. Package rule: imports nothing but
 // the standard library.
 package knowledge
@@ -9,17 +9,6 @@ import "time"
 // by creation time).
 // ID generation lives outside the domain and is injected into Service.
 type ID string
-
-// Relation is the type of a non-hierarchical link between blocks.
-// The hierarchy (contains/part-of) is not stored as links: it lives
-// in Block.ParentID (one source of truth per fact).
-type Relation string
-
-// The two non-hierarchical relations.
-const (
-	RelationExample Relation = "example" // code example ↔ theory
-	RelationRelated Relation = "related" // loosely related (default type)
-)
 
 // Metadata holds extensible block metadata: authorship (human/AI),
 // provenance, model, etc. Stored in the database as JSON.
@@ -44,28 +33,3 @@ type Block struct {
 
 // IsTopic reports whether the block is a topic root.
 func (b Block) IsTopic() bool { return b.ParentID == "" }
-
-// Edge is a typed link between two blocks from different branches of the tree.
-type Edge struct {
-	From     ID
-	To       ID
-	Relation Relation
-
-	// Reviewed reports that the edge has been accepted (or was created by
-	// the owner, born reviewed). Derived by storage on read; never
-	// written by callers.
-	Reviewed bool
-
-	// Removing reports that this is a pending removal (an unreviewed unlink):
-	// the edge is already hidden from the graph but the removal awaits review,
-	// which can reject it to restore the link. Derived by storage on read.
-	Removing bool
-}
-
-// LinkedBlock is a neighbour reachable over a typed link, hydrated for
-// display: the edge's relation and direction plus the neighbour block itself.
-type LinkedBlock struct {
-	Relation Relation
-	Outgoing bool // true when the queried block is the edge's From
-	Block    Block
-}

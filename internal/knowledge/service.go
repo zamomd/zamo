@@ -3,8 +3,6 @@ package knowledge
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 )
 
@@ -138,16 +136,6 @@ func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
 	return s.repo.UndoGroup(ctx, groupID)
 }
 
-// AcceptEdge marks a pending edge as reviewed.
-func (s *Service) AcceptEdge(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.MarkEdgeReviewed(ctx, from, to, rel)
-}
-
-// RejectEdge removes a pending edge.
-func (s *Service) RejectEdge(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.RejectEdge(ctx, from, to, rel)
-}
-
 // Search runs a full-text search over block content.
 func (s *Service) Search(ctx context.Context, query string) ([]Block, error) {
 	return s.repo.Search(ctx, query)
@@ -170,59 +158,6 @@ func (s *Service) TopicGraph(ctx context.Context) (TopicGraph, error) {
 // GetSubtree returns a block together with all of its descendants.
 func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 	return s.repo.GetSubtree(ctx, root)
-}
-
-// LinkedBlocks returns the block's typed links hydrated with the neighbour
-// blocks. An edge whose neighbour vanished mid-read is dropped rather than
-// reported: the next read no longer sees the edge either.
-func (s *Service) LinkedBlocks(ctx context.Context, id ID) ([]LinkedBlock, error) {
-	edges, err := s.repo.GetEdges(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]ID, len(edges))
-	for i, e := range edges {
-		ids[i] = e.To
-		if e.From != id {
-			ids[i] = e.From
-		}
-	}
-	blocks, err := s.repo.GetBlocks(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]LinkedBlock, 0, len(edges))
-	for i, e := range edges {
-		b, ok := blocks[ids[i]]
-		if !ok {
-			continue
-		}
-		out = append(out, LinkedBlock{Relation: e.Relation, Outgoing: e.From == id, Block: b})
-	}
-	return out, nil
-}
-
-// CreateLink records a typed link directly, without going through review:
-// review guards the base against AI, not against its owner (like
-// EditBlockContent). An empty relation defaults to related, mirroring the
-// link op.
-func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) error {
-	if from == to {
-		return fmt.Errorf("link %s to itself: %w", from, ErrInvalidLink)
-	}
-	if rel == "" {
-		rel = RelationRelated
-	}
-	if rel != RelationExample && rel != RelationRelated {
-		return fmt.Errorf("link %s->%s relation %q: %w", from, to, rel, ErrInvalidLink)
-	}
-	return s.repo.AddEdge(ctx, from, to, rel, WriteMeta{Author: AuthorOwner, Source: SourceGUIManual})
-}
-
-// RemoveLink deletes a typed link directly — the owner's counterpart of
-// CreateLink. Removing an absent link is a no-op.
-func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.RemoveEdge(ctx, from, to, rel)
 }
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
@@ -248,53 +183,5 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	links, err := s.exportLinks(ctx, subtrees)
-	if err != nil {
-		return err
-	}
-	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees, links))
-}
-
-// exportLinks collects each block's outgoing typed links for the export,
-// hydrated with the first line of the target block so the connection reads in
-// plain markdown. Edges whose target vanished mid-read are dropped, like
-// LinkedBlocks. Only outgoing edges are rendered, so a link appears once, under
-// its source.
-func (s *Service) exportLinks(ctx context.Context, subtrees [][]Block) (map[ID][]ExportLink, error) {
-	outgoing := make(map[ID][]Edge)
-	targets := make(map[ID]bool)
-	for _, sub := range subtrees {
-		for _, block := range sub {
-			edges, err := s.repo.GetEdges(ctx, block.ID)
-			if err != nil {
-				return nil, err
-			}
-			for _, e := range edges {
-				if e.From != block.ID {
-					continue // render a link once, under its source
-				}
-				outgoing[block.ID] = append(outgoing[block.ID], e)
-				targets[e.To] = true
-			}
-		}
-	}
-	if len(targets) == 0 {
-		return nil, nil
-	}
-	blocks, err := s.repo.GetBlocks(ctx, slices.Collect(maps.Keys(targets)))
-	if err != nil {
-		return nil, err
-	}
-	links := make(map[ID][]ExportLink, len(outgoing))
-	for blockID, edges := range outgoing {
-		for _, e := range edges {
-			target, ok := blocks[e.To]
-			if !ok {
-				continue // the neighbour vanished mid-read
-			}
-			first, _, _ := strings.Cut(target.Content, "\n")
-			links[blockID] = append(links[blockID], ExportLink{Relation: e.Relation, Target: first})
-		}
-	}
-	return links, nil
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
 }

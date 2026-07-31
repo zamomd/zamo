@@ -1,25 +1,10 @@
 package sqlite
 
 import (
-	"context"
-	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
-
-func insertEdge(ctx context.Context, t *testing.T, db *sql.DB, from, to string, rel knowledge.Relation, deleted bool) {
-	t.Helper()
-	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC).Format(timeLayout)
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, reviewed, deleted, created_at)
-		VALUES (?, ?, ?, 'owner', 1, ?, ?)`,
-		from, to, string(rel), deleted, now)
-	if err != nil {
-		t.Fatalf("insert edge %s->%s: %v", from, to, err)
-	}
-}
 
 func TestGetTopicGraphCountsBlocks(t *testing.T) {
 	ctx := t.Context()
@@ -52,37 +37,6 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 	}
 }
 
-func TestGetTopicGraphAggregatesEdges(t *testing.T) {
-	ctx := t.Context()
-	db := openTestDB(t)
-
-	insertBlock(ctx, t, db, "a", "", 0, "Topic A")
-	insertBlock(ctx, t, db, "a1", "a", 0, "A1")
-	insertBlock(ctx, t, db, "a2", "a", 1, "A2")
-	insertBlock(ctx, t, db, "b", "", 1, "Topic B")
-	insertBlock(ctx, t, db, "b1", "b", 0, "B1")
-	insertBlock(ctx, t, db, "c", "", 2, "Topic C")
-
-	insertEdge(ctx, t, db, "a1", "b1", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "a2", "b1", knowledge.RelationExample, false)
-	insertEdge(ctx, t, db, "b1", "a1", knowledge.RelationExample, false)
-	insertEdge(ctx, t, db, "a1", "a2", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "a1", "c", knowledge.RelationRelated, true)
-	insertEdge(ctx, t, db, "a1", "gone", knowledge.RelationRelated, false)
-
-	got, err := r(db).GetTopicGraph(ctx)
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
-	want := []knowledge.TopicEdge{{From: "a", To: "b"}}
-	if len(got.Edges) != len(want) || got.Edges[0] != want[0] {
-		t.Fatalf("edges = %v, want %v", got.Edges, want)
-	}
-	if len(got.Topics) != 3 {
-		t.Fatalf("topics = %v, want three", got.Topics)
-	}
-}
-
 func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	ctx := t.Context()
 	db := openTestDB(t)
@@ -90,8 +44,6 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	insertBlock(ctx, t, db, "c", "", 0, "Topic C")
 	insertBlock(ctx, t, db, "a", "", 1, "Topic A")
 	insertBlock(ctx, t, db, "b", "", 2, "Topic B")
-	insertEdge(ctx, t, db, "c", "a", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "c", "b", knowledge.RelationRelated, false)
 
 	got, err := r(db).GetTopicGraph(ctx)
 	if err != nil {
@@ -100,10 +52,6 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	ids := []knowledge.ID{got.Topics[0].ID, got.Topics[1].ID, got.Topics[2].ID}
 	if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
 		t.Errorf("topic order = %v, want a b c", ids)
-	}
-	want := []knowledge.TopicEdge{{From: "a", To: "c"}, {From: "b", To: "c"}}
-	if len(got.Edges) != 2 || got.Edges[0] != want[0] || got.Edges[1] != want[1] {
-		t.Errorf("edges = %v, want %v", got.Edges, want)
 	}
 }
 

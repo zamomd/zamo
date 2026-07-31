@@ -281,7 +281,7 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 }
 
 // undoableBlockIDs returns the affected blocks when a group can be removed
-// without crossing newer revisions or edge changes.
+// without crossing newer revisions.
 func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
 	var buried bool
 	if err := tx.QueryRowContext(ctx, `
@@ -296,15 +296,6 @@ func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string
 	}
 	if buried {
 		return nil, fmt.Errorf("group %s: written over since: %w", groupID, knowledge.ErrInvalidRollback)
-	}
-	var edges bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM edges WHERE group_id = ?)`, groupID).Scan(&edges); err != nil {
-		return nil, translate(err)
-	}
-	if edges {
-		return nil, fmt.Errorf("group %s: edges have no revisions to roll back: %w",
-			groupID, knowledge.ErrInvalidRollback)
 	}
 
 	ids, err := queryIDs(ctx, tx,
@@ -462,18 +453,11 @@ func tombstoneChainReaches(ctx context.Context, tx *sql.Tx, id, root string) (bo
 }
 
 // MarkGroupReviewed implements knowledge.Repository: accepts every
-// revision AND every edge of one ApplyOps batch at once — a batch that
-// included a link op (applyLink stamps the edge with the same group_id)
-// must not leave that link pending just because the accept happened at
-// the group, not the block, granularity.
+// revision of one ApplyOps batch at once.
 func (r *Repo) MarkGroupReviewed(ctx context.Context, groupID knowledge.ID) error {
 	return r.withTx(ctx, fmt.Sprintf("mark group reviewed %s", groupID), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
-			return translate(err)
-		}
 		_, err := tx.ExecContext(ctx,
-			`UPDATE edges SET reviewed = 1 WHERE group_id = ?`, string(groupID))
+			`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID))
 		return translate(err)
 	})
 }
@@ -567,33 +551,7 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		return cmp.Compare(a.Head.BlockID, b.Head.BlockID)
 	})
 
-	// An unreviewed edge is a pending change: a pending addition (deleted = 0)
-	// or a pending removal from an AI unlink (deleted = 1). Both need review;
-	// the deleted flag tells them apart via Edge.Removing.
-	const edgeQ = `
-SELECT from_id, to_id, relation, reviewed, deleted FROM edges
-WHERE reviewed = 0
-  AND EXISTS(SELECT 1 FROM blocks WHERE id = from_id)
-  AND EXISTS(SELECT 1 FROM blocks WHERE id = to_id)
-ORDER BY relation, from_id, to_id`
-	edgeRows, err := r.db.QueryContext(ctx, edgeQ)
-	if err != nil {
-		return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-	}
-	defer edgeRows.Close()
-	var edges []knowledge.Edge
-	for edgeRows.Next() {
-		var e knowledge.Edge
-		if err := edgeRows.Scan(&e.From, &e.To, &e.Relation, &e.Reviewed, &e.Removing); err != nil {
-			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-		}
-		edges = append(edges, e)
-	}
-	if err := edgeRows.Err(); err != nil {
-		return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-	}
-
-	return knowledge.UnreviewedChanges{Blocks: out, Edges: edges}, nil
+	return knowledge.UnreviewedChanges{Blocks: out}, nil
 }
 
 // unreviewedBlockIDs returns the distinct ids of every block that has at

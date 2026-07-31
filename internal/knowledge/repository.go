@@ -9,7 +9,7 @@ type Repository interface {
 	GetSubtree(ctx context.Context, root ID) ([]Block, error)
 	GetBlocks(ctx context.Context, ids []ID) (map[ID]Block, error)
 	// GetTopicGraph returns every topic with its block count plus the edges
-	// between topics, aggregated from block-level links.
+	// between topics.
 	GetTopicGraph(ctx context.Context) (TopicGraph, error)
 
 	// ApplyOps applies a prepared, ordered batch in one transaction,
@@ -30,12 +30,6 @@ type Repository interface {
 	MarkGroupReviewed(ctx context.Context, groupID ID) error
 	MarkPageReviewed(ctx context.Context, topicID ID) error
 	ListUnreviewed(ctx context.Context) (UnreviewedChanges, error)
-
-	GetEdges(ctx context.Context, id ID) ([]Edge, error)
-	AddEdge(ctx context.Context, from, to ID, rel Relation, meta WriteMeta) error
-	RemoveEdge(ctx context.Context, from, to ID, rel Relation) error
-	MarkEdgeReviewed(ctx context.Context, from, to ID, rel Relation) error
-	RejectEdge(ctx context.Context, from, to ID, rel Relation) error
 
 	Search(ctx context.Context, query string) ([]Block, error)
 }

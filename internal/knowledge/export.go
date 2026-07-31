@@ -13,14 +13,6 @@ type ExportFile struct {
 	Content string
 }
 
-// ExportLink is one outgoing typed link rendered under its source block: the
-// relation and the first line of the target block, enough to read the
-// connection in plain markdown. The target may live in another file.
-type ExportLink struct {
-	Relation Relation
-	Target   string
-}
-
 // untitledSlug is the filename base for a topic whose content yields no
 // slug-able characters. Deduplication keeps concurrent fallbacks distinct.
 const untitledSlug = "untitled"
@@ -32,7 +24,7 @@ const untitledSlug = "untitled"
 // Obsidian reads with the hierarchy intact. Filenames are slugged from the
 // topic content and de-duplicated within the returned set so no file is
 // overwritten. Content is assumed to be clean markdown with no service markup.
-func RenderMarkdown(subtrees [][]Block, links map[ID][]ExportLink) []ExportFile {
+func RenderMarkdown(subtrees [][]Block) []ExportFile {
 	files := make([]ExportFile, 0, len(subtrees))
 	taken := make(map[string]bool, len(subtrees))
 	for _, sub := range subtrees {
@@ -40,7 +32,7 @@ func RenderMarkdown(subtrees [][]Block, links map[ID][]ExportLink) []ExportFile 
 			continue
 		}
 		name := uniqueName(topicSlug(sub[0].Content), taken)
-		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub, links)})
+		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub)})
 	}
 	return files
 }
@@ -49,7 +41,7 @@ func RenderMarkdown(subtrees [][]Block, links map[ID][]ExportLink) []ExportFile 
 // is the length of the parent chain up to the root, so indentation reflects the
 // tree even though the input is flat. Multi-line block content keeps its extra
 // lines aligned under the bullet text, so the list stays valid markdown.
-func renderSubtree(sub []Block, links map[ID][]ExportLink) string {
+func renderSubtree(sub []Block) string {
 	depth := make(map[ID]int, len(sub))
 	var b strings.Builder
 	for i, block := range sub {
@@ -64,18 +56,6 @@ func renderSubtree(sub []Block, links map[ID][]ExportLink) string {
 		b.WriteString(indent + "- " + lines[0] + "\n")
 		for _, line := range lines[1:] {
 			b.WriteString(indent + "  " + line + "\n")
-		}
-
-		// Outgoing links render as a nested "links" list one level under the
-		// block, so no edge is dropped from the export and the connection reads
-		// in plain markdown.
-		if bl := links[block.ID]; len(bl) > 0 {
-			head := strings.Repeat("  ", d+1)
-			item := strings.Repeat("  ", d+2)
-			b.WriteString(head + "- links:\n")
-			for _, l := range bl {
-				b.WriteString(item + "- " + string(l.Relation) + " → " + l.Target + "\n")
-			}
 		}
 	}
 	return b.String()

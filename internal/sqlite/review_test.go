@@ -702,44 +702,6 @@ func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
 	}
 }
 
-func TestMarkGroupReviewedMarksEdges(t *testing.T) {
-	repo := testRepo(t)
-	ctx := t.Context()
-
-	if err := repo.ApplyOps(ctx, "grp-setup", ownerMeta("setup"), []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "from", Content: "theory"},
-		{Kind: knowledge.OpAdd, BlockID: "to", Content: "example"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if err := repo.ApplyOps(ctx, "grp-link", aiMeta("ai link"), []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
-	}); err != nil {
-		t.Fatalf("ai link: %v", err)
-	}
-
-	var reviewed bool
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT reviewed FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&reviewed); err != nil {
-		t.Fatalf("read edge: %v", err)
-	}
-	if reviewed {
-		t.Fatalf("edge born reviewed, want unreviewed before MarkGroupReviewed")
-	}
-
-	if err := repo.MarkGroupReviewed(ctx, "grp-link"); err != nil {
-		t.Fatalf("MarkGroupReviewed: %v", err)
-	}
-
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT reviewed FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&reviewed); err != nil {
-		t.Fatalf("read edge after MarkGroupReviewed: %v", err)
-	}
-	if !reviewed {
-		t.Errorf("edge reviewed = false after MarkGroupReviewed, want true")
-	}
-}
-
 func TestUndoGroupTakesBackASplit(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -850,32 +812,5 @@ func TestUndoGroupReportsAnUnknownGroup(t *testing.T) {
 
 	if !errors.Is(err, knowledge.ErrNotFound) {
 		t.Fatalf("UndoGroup of an unknown group = %v, want ErrNotFound", err)
-	}
-}
-
-func TestUndoGroupRefusesAGroupThatTouchedEdges(t *testing.T) {
-	repo := testRepo(t)
-	ctx := t.Context()
-
-	if err := repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "a", Content: "a"},
-		{Kind: knowledge.OpAdd, BlockID: "b", Content: "b"},
-	}); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
-		{Kind: knowledge.OpEdit, BlockID: "a", Content: "a linked"},
-		{Kind: knowledge.OpLink, From: "a", To: "b", Relation: knowledge.RelationRelated},
-	}); err != nil {
-		t.Fatalf("link: %v", err)
-	}
-
-	err := repo.UndoGroup(ctx, "grp-2")
-
-	if !errors.Is(err, knowledge.ErrInvalidRollback) {
-		t.Fatalf("UndoGroup of an edge-bearing group = %v, want ErrInvalidRollback", err)
-	}
-	if _, _, content, ok := blockRow(t, repo, "a"); !ok || content != "a linked" {
-		t.Errorf("a after refused undo = content=%q ok=%v, want 'a linked'/true", content, ok)
 	}
 }

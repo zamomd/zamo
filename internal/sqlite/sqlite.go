@@ -246,10 +246,6 @@ func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch
 		return r.applyMove(ctx, tx, op, b)
 	case knowledge.OpDelete:
 		return r.applyDelete(ctx, tx, op, b)
-	case knowledge.OpLink:
-		return r.applyLink(ctx, tx, op, b)
-	case knowledge.OpUnlink:
-		return r.applyUnlink(ctx, tx, op, b)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
@@ -454,82 +450,9 @@ func rejectMoveCycle(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
 	return nil
 }
 
-// requireBlock returns ErrNotFound when a referenced block is absent. An
-// empty id (no reference) is fine.
-func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id string) error {
-	if id == "" {
-		return nil
-	}
-	var exists bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`, id).Scan(&exists); err != nil {
-		return fmt.Errorf("apply %s: block %s: %w", kind, id, translate(err))
-	}
-	if !exists {
-		return fmt.Errorf("apply %s: block %s: %w", kind, id, knowledge.ErrNotFound)
-	}
-	return nil
-}
-
-// applyLink upserts a non-hierarchical edge between two existing blocks.
-// Either endpoint gone maps to ErrNotFound; the relation defaults to
-// "related" when the op leaves it unset, matching the domain's default and
-// the schema's CHECK. The upsert resurrects a soft-deleted edge (deleted=0)
-// and refreshes its review state and group — re-linking is how the domain
-// restores a link an owner had rejected — while an edge the owner
-// hand-created (AddEdge, reviewed=1) stays reviewed only if this write is
-// also an owner write; an AI re-link of an owner edge intentionally regresses
-// it to unreviewed, since the link itself changed provenance.
-func (r *Repo) applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
-	if err := requireBlock(ctx, tx, op.Kind, op.From); err != nil {
-		return err
-	}
-	if err := requireBlock(ctx, tx, op.Kind, op.To); err != nil {
-		return err
-	}
-	relation := op.Relation
-	if relation == "" {
-		relation = knowledge.RelationRelated
-	}
-	var origin any
-	if op.Origin != "" {
-		origin = op.Origin
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, origin, reviewed, deleted, group_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-		ON CONFLICT (from_id, to_id, relation)
-		DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
-		op.From, op.To, string(relation), string(b.meta.Author), origin, b.reviewed, string(b.groupID), b.now); err != nil {
-		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
-	}
-	return nil
-}
-
-// applyUnlink soft-deletes an edge as part of a write batch — the mirror of
-// applyLink. An owner write removes the link at once (born reviewed); an AI
-// write leaves a pending removal (unreviewed, deleted) that GetEdges already
-// hides but review can still reject to restore. Unlinking an absent edge is a
-// no-op: there is nothing to hide, and the batch should not fail on it.
-func (r *Repo) applyUnlink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
-	relation := op.Relation
-	if relation == "" {
-		relation = knowledge.RelationRelated
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE edges SET deleted = 1, reviewed = ?, group_id = ?
-		WHERE from_id = ? AND to_id = ? AND relation = ?`,
-		b.reviewed, string(b.groupID), op.From, op.To, string(relation)); err != nil {
-		return fmt.Errorf("apply unlink %s->%s: %w", op.From, op.To, translate(err))
-	}
-	return nil
-}
-
 // applyDelete tombstones a block and its whole subtree, children-first: each
 // touched block gets a tombstone revision (its current snapshot, Deleted
-// true) before its blocks row is removed. Edges are left untouched — reads
-// hide edges with a dead endpoint (Task 4), so restoring the block restores
-// its links without storage having to remember them here.
+// true) before its blocks row is removed.
 func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	subtree, err := subtreePreorder(ctx, tx, op.BlockID)
 	if err != nil {

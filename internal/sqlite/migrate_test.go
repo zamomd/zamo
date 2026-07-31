@@ -98,13 +98,6 @@ func TestMigrateRevisionTables(t *testing.T) {
 		t.Fatalf("insert block_revisions: %v", err)
 	}
 
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, reviewed, created_at)
-		VALUES ('nonexistent_from', 'nonexistent_to', 'related', 'owner', 1, '2026-07-18')`)
-	if err != nil {
-		t.Fatalf("insert edge without matching blocks: %v", err)
-	}
-
 	var count int
 	err = db.QueryRowContext(ctx, `
 		SELECT count(*) FROM block_revisions WHERE reviewed = 0`).Scan(&count)

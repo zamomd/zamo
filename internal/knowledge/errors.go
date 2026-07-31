@@ -24,10 +24,6 @@ var (
 	// removal that would orphan live children.
 	ErrInvalidRollback = errors.New("rollback would leave an inconsistent tree")
 
-	// ErrInvalidLink reports a link the domain refuses to create: a block
-	// linked to itself, or an unknown relation.
-	ErrInvalidLink = errors.New("link is invalid")
-
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")

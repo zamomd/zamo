@@ -64,20 +64,6 @@ type fakeRepo struct {
 	unreviewed    UnreviewedChanges
 	unreviewedErr error
 
-	edges     []Edge // what GetEdges returns
-	edgesErr  error
-	gotEdges  ID     // the id GetEdges was asked for
-	added     []Edge // edges handed to AddEdge
-	addedMeta WriteMeta
-	addErr    error
-	removed   []Edge // edges handed to RemoveEdge
-	removeErr error
-
-	markedEdgeReviewed  Edge
-	markEdgeReviewedErr error
-	rejectedEdge        Edge
-	rejectEdgeErr       error
-
 	searchErr error
 }
 
@@ -155,38 +141,6 @@ func (f *fakeRepo) MarkPageReviewed(_ context.Context, topicID ID) error {
 
 func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
 	return f.unreviewed, f.unreviewedErr
-}
-
-func (f *fakeRepo) GetEdges(_ context.Context, id ID) ([]Edge, error) {
-	f.gotEdges = id
-	return f.edges, f.edgesErr
-}
-
-func (f *fakeRepo) AddEdge(_ context.Context, from, to ID, rel Relation, meta WriteMeta) error {
-	if f.addErr != nil {
-		return f.addErr
-	}
-	f.added = append(f.added, Edge{From: from, To: to, Relation: rel})
-	f.addedMeta = meta
-	return nil
-}
-
-func (f *fakeRepo) RemoveEdge(_ context.Context, from, to ID, rel Relation) error {
-	if f.removeErr != nil {
-		return f.removeErr
-	}
-	f.removed = append(f.removed, Edge{From: from, To: to, Relation: rel})
-	return nil
-}
-
-func (f *fakeRepo) MarkEdgeReviewed(_ context.Context, from, to ID, rel Relation) error {
-	f.markedEdgeReviewed = Edge{From: from, To: to, Relation: rel}
-	return f.markEdgeReviewedErr
-}
-
-func (f *fakeRepo) RejectEdge(_ context.Context, from, to ID, rel Relation) error {
-	f.rejectedEdge = Edge{From: from, To: to, Relation: rel}
-	return f.rejectEdgeErr
 }
 
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
@@ -456,14 +410,6 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)",
 			err, repo.deletedBlockID, repo.deletedRevID)
 	}
-	if err := svc.AcceptEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
-		repo.markedEdgeReviewed != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
-		t.Errorf("AcceptEdge did not reach MarkEdgeReviewed: err=%v got=%+v", err, repo.markedEdgeReviewed)
-	}
-	if err := svc.RejectEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
-		repo.rejectedEdge != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
-		t.Errorf("RejectEdge did not reach RejectEdge: err=%v got=%+v", err, repo.rejectedEdge)
-	}
 }
 
 func TestTopicGraphPassesThrough(t *testing.T) {
@@ -519,27 +465,6 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 	}
 	if !slices.Equal(writer.files, want) {
 		t.Errorf("writer got files %+v, want %+v", writer.files, want)
-	}
-}
-
-func TestServiceExportMarkdownIncludesOutgoingLinks(t *testing.T) {
-	repo := &fakeRepo{
-		topics:   []Block{blk("t1", "", 0, "# Root")},
-		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Root")}},
-		edges:    []Edge{{From: "t1", To: "x9", Relation: RelationExample}},
-		blocks:   map[ID]Block{"x9": {ID: "x9", Content: "Target block\nsecond line"}},
-	}
-	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer)
-
-	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
-		t.Fatalf("ExportMarkdown: %v", err)
-	}
-	want := "- # Root\n" +
-		"  - links:\n" +
-		"    - example → Target block\n"
-	if len(writer.files) != 1 || writer.files[0].Content != want {
-		t.Errorf("content = %+v, want %q", writer.files, want)
 	}
 }
 

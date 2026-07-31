@@ -25,7 +25,6 @@ func TestPrepareOpsResolvesTempIDs(t *testing.T) {
 	ops := []Op{
 		{Kind: OpAdd, TempID: "child", Parent: "root"},
 		{Kind: OpAdd, TempID: "root"},
-		{Kind: OpLink, From: "child", To: "existing"},
 	}
 	out, ids, err := prepareOps(ops, newID)
 	if err != nil {
@@ -39,9 +38,8 @@ func TestPrepareOpsResolvesTempIDs(t *testing.T) {
 			t.Errorf("op %d still carries a temp id %q", i, op.TempID)
 		}
 	}
-	link := out[2]
-	if link.Kind != OpLink || link.From != string(ids["child"]) || link.To != "existing" {
-		t.Errorf("link = %+v, want From resolved to ids[child] and To passed through unresolved", link)
+	if out[1].Parent != string(ids["root"]) {
+		t.Errorf("child parent = %+v, want resolved to ids[root]", out[1])
 	}
 	if len(ids) != 2 {
 		t.Errorf("ids = %+v, want exactly 2 entries (root, child)", ids)
@@ -130,45 +128,6 @@ func TestPrepareOpsOrdersMoveAfterItsNewParent(t *testing.T) {
 	}
 	if string(got[0].BlockID) != "U1" || got[1].Parent != "U1" {
 		t.Errorf("move parent not resolved to the new id: %+v", got)
-	}
-}
-
-func TestPrepareOpsResolvesLinkEndpoints(t *testing.T) {
-	ops := []Op{
-		addOp("t1", "", "A"),
-		addOp("t2", "", "B"),
-		{Kind: OpLink, From: "t1", To: "t2", Relation: RelationRelated},
-	}
-	got, _, err := prepareOps(ops, seqIDs())
-	if err != nil {
-		t.Fatalf("prepareOps: %v", err)
-	}
-	link := got[2]
-	if link.Kind != OpLink || link.From != "U1" || link.To != "U2" {
-		t.Errorf("link endpoints not resolved: %+v", link)
-	}
-}
-
-func TestPrepareOpsResolvesUnlinkEndpoints(t *testing.T) {
-	ops := []Op{
-		addOp("t1", "", "A"),
-		addOp("t2", "", "B"),
-		{Kind: OpUnlink, From: "t1", To: "t2", Relation: RelationRelated},
-	}
-	got, _, err := prepareOps(ops, seqIDs())
-	if err != nil {
-		t.Fatalf("prepareOps: %v", err)
-	}
-	un := got[2]
-	if un.Kind != OpUnlink || un.From != "U1" || un.To != "U2" {
-		t.Errorf("unlink endpoints not resolved: %+v", un)
-	}
-}
-
-func TestPrepareOpsRejectsUnlinkWithoutEndpoints(t *testing.T) {
-	ops := []Op{{Kind: OpUnlink, From: "", To: "x", Relation: RelationRelated}}
-	if _, _, err := prepareOps(ops, seqIDs()); !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("unlink with empty from: got %v, want ErrInvalidOps", err)
 	}
 }
 

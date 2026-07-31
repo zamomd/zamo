@@ -26,13 +26,6 @@ export function AcceptBlock(id: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * AcceptEdge passes the call to knowledge.Service.
- */
-export function AcceptEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(2114022276, $from, to, rel);
-}
-
-/**
  * AcceptGroup passes the call to knowledge.Service: accepts every block from
  * one AI batch, identified by its group id.
  */
@@ -62,14 +55,6 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
  */
 export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
     return $Call.ByID(1418756582, $in);
-}
-
-/**
- * CreateLink passes the call to knowledge.Service. The owner links directly,
- * without the review queue — like EditBlockContent.
- */
-export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(1077906829, $from, to, relation);
 }
 
 /**
@@ -119,14 +104,6 @@ export function ExportMarkdown(dir: string): $CancellablePromise<void> {
 }
 
 /**
- * GetLinks passes the call to knowledge.Service: the block's typed links,
- * hydrated with their neighbour blocks.
- */
-export function GetLinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.LinkedBlock[] | null> {
-    return $Call.ByID(3922522708, id);
-}
-
-/**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
@@ -142,7 +119,7 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0
 
 /**
  * InsertBlockBefore is Enter at the very start of a block: an empty sibling
- * appears above and the block keeps its id, history and links.
+ * appears above and the block keeps its id and history.
  */
 export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1337418982, id, content);
@@ -179,24 +156,10 @@ export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * RejectEdge passes the call to knowledge.Service.
- */
-export function RejectEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(1953244827, $from, to, rel);
-}
-
-/**
  * RejectPage passes the call to knowledge.Service.
  */
 export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
     return $Call.ByID(370056809, topicID);
-}
-
-/**
- * RemoveLink passes the call to knowledge.Service.
- */
-export function RemoveLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(583003149, $from, to, relation);
 }
 
 /**

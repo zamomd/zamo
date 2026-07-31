@@ -8,9 +8,8 @@ import (
 
 // The full-text index blocks_fts is kept in sync with blocks by
 // triggers: search can never fall behind the data. block_revisions holds a
-// full snapshot per change: blocks is a projection of each block's head
-// revision, and edges keep no FK so a tombstoned block's links survive
-// for restoration.
+// full snapshot per change, and blocks is a projection of each block's head
+// revision.
 var migrations = []string{
 	`
 CREATE TABLE blocks (
@@ -24,19 +23,6 @@ CREATE TABLE blocks (
 );
 
 CREATE INDEX idx_blocks_parent ON blocks(parent_id, position);
-
-CREATE TABLE edges (
-    from_id    TEXT NOT NULL,
-    to_id      TEXT NOT NULL,
-    relation   TEXT NOT NULL CHECK (relation IN ('example', 'related')),
-    author     TEXT NOT NULL DEFAULT 'owner',
-    origin     TEXT,
-    reviewed   INTEGER NOT NULL DEFAULT 1,
-    deleted    INTEGER NOT NULL DEFAULT 0,
-    group_id   TEXT,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (from_id, to_id, relation)
-);
 
 CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,

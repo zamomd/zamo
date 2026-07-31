@@ -3,16 +3,13 @@
 
 export {
     Author,
-    Relation,
     Source
 } from "./models.js";
 
 export type {
     Applied,
     Block,
-    Edge,
     ID,
-    LinkedBlock,
     Metadata,
     OutlineChange,
     Revision,

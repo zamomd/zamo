@@ -67,5 +67,4 @@ type UnreviewedBlock struct {
 // UnreviewedChanges is everything awaiting review.
 type UnreviewedChanges struct {
 	Blocks []UnreviewedBlock
-	Edges  []Edge
 }

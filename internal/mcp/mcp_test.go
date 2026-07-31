@@ -22,10 +22,6 @@ type fakeBase struct {
 	topic       []knowledge.Block
 	treeErr     error
 
-	linksID  knowledge.ID
-	links    []knowledge.LinkedBlock
-	linksErr error
-
 	writeMeta    knowledge.WriteMeta
 	writeOps     []knowledge.Op
 	writeCalls   int
@@ -45,11 +41,6 @@ func (f *fakeBase) TopicMap(context.Context) ([]knowledge.Block, error) {
 func (f *fakeBase) GetSubtree(_ context.Context, root knowledge.ID) ([]knowledge.Block, error) {
 	f.subtreeRoot = root
 	return f.subtree, f.treeErr
-}
-
-func (f *fakeBase) LinkedBlocks(_ context.Context, id knowledge.ID) ([]knowledge.LinkedBlock, error) {
-	f.linksID = id
-	return f.links, f.linksErr
 }
 
 func (f *fakeBase) ApplyOps(
@@ -82,7 +73,7 @@ func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 
 func TestHandshakeReportsInjectedVersion(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	got := cs.InitializeResult().ServerInfo
 	if got.Name != serverName || got.Version != testVersion {
@@ -95,7 +86,7 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 		GroupID: "01GRP",
 		IDs:     map[string]knowledge.ID{"t1": "01ROOT", "t2": "01CHILD"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -146,7 +137,7 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 
 func TestWriteStampsOriginServerSide(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -179,7 +170,7 @@ func TestWriteStampsOriginServerSide(t *testing.T) {
 
 func TestWriteRejectsForgedOrigin(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -218,7 +209,7 @@ func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[st
 
 func TestSearchTool(t *testing.T) {
 	fake := &fakeBase{searchBlocks: []knowledge.Block{{ID: "01A", Content: "context deadlines"}}}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "search", map[string]any{"query": "context"})
 	if fake.searchQuery != "context" {
@@ -234,7 +225,7 @@ func TestGetSubtreeTool(t *testing.T) {
 		{ID: "01ROOT", Content: "Root"},
 		{ID: "01CHILD", ParentID: "01ROOT", Content: "Child"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	if fake.subtreeRoot != "01ROOT" {
@@ -247,7 +238,7 @@ func TestGetSubtreeTool(t *testing.T) {
 
 func TestTopicMapTool(t *testing.T) {
 	fake := &fakeBase{topic: []knowledge.Block{{ID: "01T", Content: "# Topic"}}}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "topic_map", map[string]any{})
 	if len(out.Blocks) != 1 || out.Blocks[0].ID != "01T" {
@@ -257,7 +248,7 @@ func TestTopicMapTool(t *testing.T) {
 
 func TestToolSurface(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	got := map[string]bool{}
 	for tool, err := range cs.Tools(t.Context(), nil) {
@@ -269,7 +260,7 @@ func TestToolSurface(t *testing.T) {
 		}
 		got[tool.Name] = true
 	}
-	want := []string{"write_blocks", "search", "get_subtree", "topic_map", "get_links"}
+	want := []string{"write_blocks", "search", "get_subtree", "topic_map"}
 	if len(got) != len(want) {
 		t.Errorf("tools = %v, want exactly %v (no extra write tools)", got, want)
 	}
@@ -285,23 +276,12 @@ func TestReadToolsNeverWrite(t *testing.T) {
 		searchBlocks: []knowledge.Block{{ID: "01A"}},
 		subtree:      []knowledge.Block{{ID: "01ROOT"}},
 		topic:        []knowledge.Block{{ID: "01T"}},
-		links:        []knowledge.LinkedBlock{{Relation: knowledge.RelationRelated, Block: knowledge.Block{ID: "01L"}}},
 	}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	callBlocks(t, cs, "search", map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	callBlocks(t, cs, "topic_map", map[string]any{})
-	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name:      "get_links",
-		Arguments: map[string]any{"block_id": "01BLK"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool get_links: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("get_links reported a tool error: %+v", res.Content)
-	}
 
 	if fake.writeCalls != 0 {
 		t.Errorf("read tools called ApplyOps %d times, want 0", fake.writeCalls)
@@ -318,14 +298,13 @@ func TestToolSurfacesDomainError(t *testing.T) {
 		{"search", &fakeBase{searchErr: boom}, map[string]any{"query": "x"}},
 		{"get_subtree", &fakeBase{treeErr: boom}, map[string]any{"root": "01A"}},
 		{"topic_map", &fakeBase{treeErr: boom}, map[string]any{}},
-		{"get_links", &fakeBase{linksErr: boom}, map[string]any{"block_id": "01A"}},
 		{"write_blocks", &fakeBase{writeErr: boom}, map[string]any{
 			"title": "t", "ops": []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
-			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake, tc.fake, testVersion))
+			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake, testVersion))
 			res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tc.tool, Arguments: tc.args})
 			if err != nil {
 				t.Fatalf("unexpected transport error: %v", err)
@@ -334,45 +313,5 @@ func TestToolSurfacesDomainError(t *testing.T) {
 				t.Errorf("%s must report IsError on a capability failure", tc.tool)
 			}
 		})
-	}
-}
-
-func TestGetLinksReturnsHydratedLinks(t *testing.T) {
-	fake := &fakeBase{links: []knowledge.LinkedBlock{
-		{
-			Relation: knowledge.RelationExample, Outgoing: false,
-			Block: knowledge.Block{ID: "01EX", Content: "an example"},
-		},
-		{
-			Relation: knowledge.RelationRelated, Outgoing: true,
-			Block: knowledge.Block{ID: "01REL", Content: "related theory"},
-		},
-	}}
-	cs := connect(t, NewServer(fake, fake, fake, fake, testVersion))
-
-	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name:      "get_links",
-		Arguments: map[string]any{"block_id": "01BLK"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("get_links reported a tool error: %+v", res.Content)
-	}
-	if fake.linksID != "01BLK" {
-		t.Errorf("LinkedBlocks asked for %q, want 01BLK", fake.linksID)
-	}
-	var out linksOutput
-	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode output: %v", err)
-	}
-	want := linksOutput{Links: []linkView{
-		{Relation: "example", Direction: "in", ID: "01EX", Content: "an example"},
-		{Relation: "related", Direction: "out", ID: "01REL", Content: "related theory"},
-	}}
-	if !reflect.DeepEqual(out, want) {
-		t.Errorf("output = %+v, want %+v", out, want)
 	}
 }

@@ -25,13 +25,11 @@ const (
 	OpEdit   OpKind = "edit"
 	OpMove   OpKind = "move"
 	OpDelete OpKind = "delete"
-	OpLink   OpKind = "link"
-	OpUnlink OpKind = "unlink"
 )
 
 // Op is a single operation of a write batch. One format for every source —
 // topic expansion, AI edits, MCP tools, the owner's manual edits — each
-// emitting whichever of the five kinds it needs. New blocks reference each
+// emitting whichever of the four kinds it needs. New blocks reference each
 // other via TempID; real IDs are assigned on apply.
 type Op struct {
 	Kind    OpKind `json:"op"`
@@ -55,11 +53,6 @@ type Op struct {
 	// correctly.
 	After  string `json:"after,omitzero"`
 	Before string `json:"before,omitzero"`
-
-	// Link fields (OpLink only). From/To are TempIDs or existing IDs.
-	From     string   `json:"from,omitzero"`
-	To       string   `json:"to,omitzero"`
-	Relation Relation `json:"relation,omitzero"`
 
 	// Provenance: why the AI makes this change and where it came from.
 	// The review screen shows both fields.
@@ -91,10 +84,6 @@ func (op Op) validate() error {
 	case OpEdit, OpMove, OpDelete:
 		if op.BlockID == "" {
 			return fmt.Errorf("%s op with empty block id: %w", op.Kind, ErrInvalidOps)
-		}
-	case OpLink, OpUnlink:
-		if op.From == "" || op.To == "" {
-			return fmt.Errorf("%s op with empty from/to: %w", op.Kind, ErrInvalidOps)
 		}
 	default:
 		return fmt.Errorf("unknown op kind %q: %w", op.Kind, ErrInvalidOps)
