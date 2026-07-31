@@ -125,6 +125,29 @@ func TestUnnamedRootsCoexist(t *testing.T) {
 	}
 }
 
+func TestTitleKeyRevertsWithUndoneRename(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Old name"},
+	); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := ownerOps(t, repo, "01G2",
+		knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01ROOT", Content: "New name"},
+	); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if err := repo.UndoGroup(t.Context(), "01G2"); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	if _, _, content, ok := blockRow(t, repo, "01ROOT"); !ok || content != "Old name" {
+		t.Fatalf("content after undo = %q (present %v), want %q", content, ok, "Old name")
+	}
+	if got, want := titleKeyOf(t, repo, "01ROOT"), "old name"; got != want {
+		t.Errorf("title_key after undo = %q, want %q", got, want)
+	}
+}
+
 func TestTitleKeyRestoredWithTopic(t *testing.T) {
 	repo := testRepo(t)
 	if err := ownerOps(t, repo, "01G1",

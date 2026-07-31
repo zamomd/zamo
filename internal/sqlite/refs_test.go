@@ -123,6 +123,29 @@ func TestRefsRestoredWithBlock(t *testing.T) {
 	}
 }
 
+func TestRefsClearedWhenRejectedAddVanishes(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Zig"},
+	); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := repo.ApplyOps(t.Context(), "01G2", aiMeta("ai add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ROOT", Content: "See [[Rust]]."},
+	}); err != nil {
+		t.Fatalf("ai add: %v", err)
+	}
+	if err := repo.RejectBlock(t.Context(), "01NOTE"); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "01NOTE"); ok {
+		t.Fatal("rejected add left a block row")
+	}
+	if got := refsOf(t, repo, "01NOTE"); len(got) != 0 {
+		t.Errorf("refs of vanished block = %v, want none", got)
+	}
+}
+
 func TestRefsRevertWithUndoneGroup(t *testing.T) {
 	repo := testRepo(t)
 	if err := ownerOps(t, repo, "01G1",
