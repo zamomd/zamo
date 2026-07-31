@@ -310,3 +310,52 @@ func TestInsertBeforeIntoExhaustedGapRespaces(t *testing.T) {
 		}
 	}
 }
+
+func TestRenumberKeepsEveryRevisionAlignedForRollback(t *testing.T) {
+	repo := testRepo(t)
+	ctx := t.Context()
+	owner := knowledge.WriteMeta{
+		Author: knowledge.AuthorOwner,
+		Source: knowledge.SourceGUIManual,
+		Title:  "setup",
+	}
+	if err := repo.ApplyOps(ctx, "g-rollback-setup", owner, []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "rollback-root", Content: "root"},
+		{Kind: knowledge.OpAdd, BlockID: "rollback-first", Parent: "rollback-root", Content: "first"},
+		{Kind: knowledge.OpAdd, BlockID: "rollback-bystander", Parent: "rollback-root", Content: "before"},
+	}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := repo.ApplyOps(ctx, "g-rollback-edit", aiMeta("edit bystander"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "rollback-bystander", Content: "pending"},
+	}); err != nil {
+		t.Fatalf("edit bystander: %v", err)
+	}
+
+	tx, err := repo.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin renumber: %v", err)
+	}
+	if err := renumber(ctx, tx, "rollback-root"); err != nil {
+		tx.Rollback()
+		t.Fatalf("renumber: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit renumber: %v", err)
+	}
+
+	wantPosition := positionStride
+	for _, rev := range revisionsOf(t, repo, "rollback-bystander") {
+		if rev.position != wantPosition {
+			t.Errorf("revision %d position = %d, want %d", rev.seq, rev.position, wantPosition)
+		}
+	}
+	if err := repo.RejectBlock(ctx, "rollback-bystander"); err != nil {
+		t.Fatalf("reject bystander: %v", err)
+	}
+	parent, position, content, ok := blockRow(t, repo, "rollback-bystander")
+	if !ok || parent != "rollback-root" || position != wantPosition || content != "before" {
+		t.Errorf("bystander after rollback = parent=%q position=%d content=%q ok=%v, want rollback-root/%d/before/true",
+			parent, position, content, ok, wantPosition)
+	}
+}
