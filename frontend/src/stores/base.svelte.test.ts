@@ -53,7 +53,7 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	},
 }));
 vi.mock("./changes.svelte", () => ({
-	changes: { blocks: [], edges: [], count: 0, refresh: vi.fn(async () => {}) },
+	changes: { blocks: [], count: 0, refresh: vi.fn(async () => {}) },
 }));
 
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
@@ -93,8 +93,6 @@ beforeEach(() => {
 	base.clearUndoHistory();
 	base.ghosts.clear();
 	base.busy = false;
-	base.openLinks.clear();
-	base.linksById.clear();
 	base.historyID = null;
 	base.revisions = [];
 	reloadFixture.topicMapError = null;
@@ -451,9 +449,7 @@ describe("reloadTopic", () => {
 		expect(base.forest.length).toBe(before);
 	});
 
-	it("closes the panels of a topic that vanished entirely", async () => {
-		base.openLinks.add("ctx");
-		base.linksById.set("ctx", []);
+	it("closes the history panel of a topic that vanished entirely", async () => {
 		base.historyID = "ctx";
 		base.revisions = [{ ID: "rev" }] as unknown as typeof base.revisions;
 		reloadFixture.subtrees.go = [];
@@ -461,22 +457,16 @@ describe("reloadTopic", () => {
 		await base.reloadTopic("go");
 
 		expect(base.forest.some((t) => t.block.ID === "go")).toBe(false);
-		expect(base.openLinks.has("ctx")).toBe(false);
-		expect(base.linksById.has("ctx")).toBe(false);
 		expect(base.historyID).toBe(null);
 		expect(base.revisions).toEqual([]);
 	});
 
-	it("leaves the panels of a surviving block alone", async () => {
-		base.openLinks.add("wal");
-		base.linksById.set("wal", []);
+	it("leaves the history panel of a surviving block alone", async () => {
 		base.historyID = "wal";
 		reloadFixture.subtrees.go = [];
 
 		await base.reloadTopic("go");
 
-		expect(base.openLinks.has("wal")).toBe(true);
-		expect(base.linksById.has("wal")).toBe(true);
 		expect(base.historyID).toBe("wal");
 	});
 });
@@ -625,11 +615,6 @@ describe("an open edit no longer locks the interface", () => {
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
 	});
 
-	it("starting a link commits first", async () => {
-		await base.startLink("ctx");
-		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
-	});
-
 	it("accepting a change commits first", async () => {
 		await base.accept("done");
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
@@ -708,17 +693,6 @@ describe("a failed commit aborts the gesture", () => {
 		base.command = "tighten this";
 		await base.askAI();
 		expect(base.command).toBe("tighten this");
-		expect(base.busy).toBe(false);
-		expect(base.editingID).toBe("ctx");
-		expect(base.editText).toBe("after");
-	});
-
-	it("leaves the link picker alone when the commit that starting a link triggers fails", async () => {
-		base.linkingID = null;
-		base.busy = false;
-		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
-		await base.startLink("ctx");
-		expect(base.linkingID).toBe(null);
 		expect(base.busy).toBe(false);
 		expect(base.editingID).toBe("ctx");
 		expect(base.editText).toBe("after");

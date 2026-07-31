@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { SvelteSet } from "svelte/reactivity";
-	import type { Edge, ID, UnreviewedBlock } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+	import type { ID, UnreviewedBlock } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
 	import StatusLine from "./lib/StatusLine.svelte";
@@ -55,43 +54,11 @@
 	function topicLabel(topicID: ID): string {
 		return findBlock(base.forest, topicID)?.Content ?? topicID;
 	}
-
-	let edgeBusy = new SvelteSet<string>();
-	let edgeError = $state("");
-
-	function edgeKey(e: Edge): string {
-		return `${e.From} ${e.To} ${e.Relation}`;
-	}
-
-	// reviewEdge decides one link. Busy is tracked per edge, not globally: the
-	// rows are independent and each keeps its own buttons disabled.
-	async function reviewEdge(e: Edge, decide: () => Promise<void>): Promise<void> {
-		const key = edgeKey(e);
-		if (edgeBusy.has(key)) return;
-		edgeBusy.add(key);
-		edgeError = "";
-		try {
-			await decide();
-			await changes.refresh();
-		} catch (err: unknown) {
-			edgeError = messageFor(err);
-		} finally {
-			edgeBusy.delete(key);
-		}
-	}
-
-	function acceptEdge(e: Edge): Promise<void> {
-		return reviewEdge(e, () => App.AcceptEdge(e.From, e.To, e.Relation));
-	}
-
-	function rejectEdge(e: Edge): Promise<void> {
-		return reviewEdge(e, () => App.RejectEdge(e.From, e.To, e.Relation));
-	}
 </script>
 
 <section>
 	<h1>Changes</h1>
-	<StatusLine status={base.status} error={base.error || edgeError} />
+	<StatusLine status={base.status} error={base.error} />
 
 	{#if changes.count === 0}
 		<p>(nothing awaiting review)</p>
@@ -107,7 +74,7 @@
 							<button
 								type="button"
 								class="accept"
-								title="accept every change in this batch, blocks and links alike"
+								title="accept every change in this batch"
 								disabled={base.busy}
 								onclick={() => acceptBatch(groupID)}
 							>
@@ -161,37 +128,6 @@
 					</section>
 				{/each}
 			</div>
-		{/if}
-
-		{#if changes.edges.length > 0}
-			<section class="group">
-				<h2>Links</h2>
-				<ul>
-					{#each changes.edges as e (edgeKey(e))}
-						<li class="row">
-							<code class="snippet">{e.From} → {e.To} ({e.Relation})</code>
-							<button
-								type="button"
-								class="accept"
-								title="accept this link"
-								disabled={edgeBusy.has(edgeKey(e))}
-								onclick={() => acceptEdge(e)}
-							>
-								Accept
-							</button>
-							<button
-								type="button"
-								class="reject"
-								title="reject and remove this link"
-								disabled={edgeBusy.has(edgeKey(e))}
-								onclick={() => rejectEdge(e)}
-							>
-								Reject
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</section>
 		{/if}
 	{/if}
 </section>

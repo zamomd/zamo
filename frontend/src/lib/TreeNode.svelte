@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
-	import BlockLinks from "./BlockLinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
@@ -18,7 +17,6 @@
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
-	const linksOpen = $derived(base.openLinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
 	const unreviewed = $derived(node.block.Unreviewed);
 	const ghost = $derived(base.ghosts.has(node.block.ID));
@@ -106,8 +104,8 @@
 		{/if}
 
 		{#if ghost}
-			<!-- A pending deletion: struck through, no edit/target/links affordances —
-			     there is nothing left to edit or link until it is restored. -->
+			<!-- A pending deletion: struck through, no edit/target affordances —
+			     there is nothing left to edit until it is restored. -->
 			<span class="content ghost-content">{@html renderMarkdown(node.block.Content)}</span>
 		{:else if editing}
 			<InlineEditor id={node.block.ID} />
@@ -144,23 +142,11 @@
 				>
 					⌖
 				</button>
-				<button
-					type="button"
-					class="links-toggle"
-					class:open={linksOpen}
-					title="show this block's links"
-					aria-expanded={linksOpen}
-					aria-label="toggle this block's links"
-					disabled={base.busy}
-					onclick={() => base.toggleLinks(node.block.ID)}
-				>
-					∞
-				</button>
 			</span>
 		{/if}
 
 		<!-- History is allowed on ghosts too: it is how a pending deletion is
-		     inspected or undone before review, unlike edit/target/links which stay
+		     inspected or undone before review, unlike edit/target which stay
 		     hidden until the block is restored. It therefore needs a gutter of its
 		     own rather than sharing the one above, which lives inside that guard;
 		     two adjacent flex containers lay out as one lane. -->
@@ -223,9 +209,6 @@
 			</button>
 		{/if}
 	</div>
-	{#if linksOpen}
-		<BlockLinks block={node.block} />
-	{/if}
 	{#if historyOpen}
 		<HistoryPanel block={node.block} />
 	{/if}

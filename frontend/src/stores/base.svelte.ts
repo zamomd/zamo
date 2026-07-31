@@ -1,11 +1,9 @@
 import { Events } from "@wailsio/runtime";
-import { SvelteMap, SvelteSet } from "svelte/reactivity";
-import {
-	type Block,
-	type LinkedBlock,
-	type OutlineChange,
-	Relation,
-	type Revision,
+import { SvelteSet } from "svelte/reactivity";
+import type {
+	Block,
+	OutlineChange,
+	Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
@@ -22,9 +20,6 @@ import {
 	topicOf,
 } from "../lib/tree";
 import { changes } from "./changes.svelte";
-
-// Debounce link search to avoid a backend call per keystroke.
-const linkQueryDebounceMs = 200;
 
 const generationProgressEvent = "generation:progress";
 
@@ -80,21 +75,10 @@ class BaseStore {
 	highlightID = $state<string | null>(null);
 	highlightNonce = $state(0);
 
-	openLinks = new SvelteSet<string>();
-	linksById = new SvelteMap<string, LinkedBlock[]>();
-
-	linkingID = $state<string | null>(null);
-	linkQuery = $state("");
-	linkResults = $state<Block[]>([]);
-	linkRelation = $state<Relation>(Relation.RelationRelated);
-
 	historyID = $state<string | null>(null);
 	revisions = $state<Revision[]>([]);
 
 	private pendingReveal: string | null = null;
-
-	private linkQueryTimer: ReturnType<typeof setTimeout> | null = null;
-	private linkQuerySeq = 0;
 
 	private historySeq = 0;
 
@@ -183,14 +167,6 @@ class BaseStore {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
 			this.focusID = null;
 		}
-		this.linksById.clear();
-		for (const id of [...this.openLinks]) {
-			if (findBlock(this.forest, id) === null) {
-				this.openLinks.delete(id);
-				continue;
-			}
-			await this.refreshLinks(id);
-		}
 		this.dropStaleHistory();
 		if (this.pendingReveal !== null) {
 			const id = this.pendingReveal;
@@ -216,12 +192,6 @@ class BaseStore {
 				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
 				this.focusID = null;
 			}
-			for (const id of [...this.openLinks]) {
-				if (findBlock(this.forest, id) === null) {
-					this.openLinks.delete(id);
-					this.linksById.delete(id);
-				}
-			}
 			this.dropStaleHistory();
 			return;
 		}
@@ -234,14 +204,6 @@ class BaseStore {
 		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
 			this.historyID = null;
 			this.revisions = [];
-		}
-	}
-
-	// clearLinkTimer cancels a debounced link query still waiting to fire.
-	private clearLinkTimer(): void {
-		if (this.linkQueryTimer !== null) {
-			clearTimeout(this.linkQueryTimer);
-			this.linkQueryTimer = null;
 		}
 	}
 
@@ -833,132 +795,6 @@ class BaseStore {
 
 	rejectPage(id: string): Promise<void> {
 		return this.review(() => App.RejectPage(id), "rejected page");
-	}
-
-	async toggleLinks(id: string): Promise<void> {
-		if (this.openLinks.has(id)) {
-			this.openLinks.delete(id);
-			if (this.linkingID === id) {
-				this.cancelLink();
-			}
-			this.linksById.delete(id);
-			return;
-		}
-		this.openLinks.add(id);
-		if (!this.linksById.has(id)) {
-			await this.refreshLinks(id);
-		}
-	}
-
-	async refreshLinks(id: string): Promise<void> {
-		try {
-			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-		}
-	}
-
-	async startLink(id: string): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.busy = true;
-		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
-		}
-		this.linkingID = id;
-		this.linkQuery = "";
-		this.linkResults = [];
-		this.linkRelation = Relation.RelationRelated;
-		this.linkQuerySeq++;
-		this.clearLinkTimer();
-		this.busy = false;
-	}
-
-	cancelLink(): void {
-		this.linkingID = null;
-		this.linkQuery = "";
-		this.linkResults = [];
-		this.linkQuerySeq++;
-		this.clearLinkTimer();
-	}
-
-	setLinkQuery(q: string): void {
-		this.linkQuery = q;
-		this.linkQuerySeq++;
-		this.linkResults = [];
-		this.clearLinkTimer();
-		if (q.trim() === "") {
-			return;
-		}
-		this.linkQueryTimer = setTimeout(() => {
-			this.linkQueryTimer = null;
-			void this.runLinkQuery();
-		}, linkQueryDebounceMs);
-	}
-
-	private async runLinkQuery(): Promise<void> {
-		const mine = ++this.linkQuerySeq;
-		const q = this.linkQuery.trim();
-		try {
-			const hits = (await App.Search(q)) ?? [];
-			if (mine !== this.linkQuerySeq) {
-				return;
-			}
-			this.linkResults = hits.filter((b) => b.ID !== this.linkingID);
-		} catch (err: unknown) {
-			if (mine !== this.linkQuerySeq) {
-				return;
-			}
-			this.error = messageFor(err);
-		}
-	}
-
-	async createLink(target: Block): Promise<void> {
-		if (this.linkingID === null || this.busy) {
-			return;
-		}
-		const from = this.linkingID;
-		this.busy = true;
-		this.error = "";
-		try {
-			await App.CreateLink(from, target.ID, this.linkRelation);
-			this.cancelLink();
-			await this.refreshLinks(from);
-			if (this.openLinks.has(target.ID)) {
-				await this.refreshLinks(target.ID);
-			}
-			this.status = "linked";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
-	}
-
-	async removeLink(id: string, link: LinkedBlock): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		const from = link.Outgoing ? id : link.Block.ID;
-		const to = link.Outgoing ? link.Block.ID : id;
-		this.busy = true;
-		this.error = "";
-		try {
-			await App.RemoveLink(from, to, link.Relation);
-			await this.refreshLinks(id);
-			if (this.openLinks.has(link.Block.ID)) {
-				await this.refreshLinks(link.Block.ID);
-			}
-			this.status = "unlinked";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
 	}
 
 	async toggleHistory(id: string): Promise<void> {

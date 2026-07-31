@@ -47,8 +47,8 @@
 </div>
 
 <style>
-	/* Indents under its row and stays quiet, matching BlockLinks: small text,
-	   grey-alpha accents, theme-neutral. */
+	/* Indents under its row and stays quiet: small text, grey-alpha accents,
+	   theme-neutral. */
 	.history {
 		margin: 0.1rem 0 0.25rem 1.25rem;
 		padding: 0.2rem 0.4rem;

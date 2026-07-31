@@ -1,4 +1,4 @@
-import type { Edge, UnreviewedBlock } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { UnreviewedBlock } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 
 // The unreviewed-change set shared by the whole window: the sidebar footer,
@@ -9,13 +9,11 @@ const POLL_MS = 5000;
 
 class ChangesStore {
 	blocks: UnreviewedBlock[] = $state([]);
-	edges: Edge[] = $state([]);
-	count = $derived(this.blocks.length + this.edges.length);
+	count = $derived(this.blocks.length);
 
 	async refresh(): Promise<void> {
 		const c = await App.Unreviewed();
 		this.blocks = c?.Blocks ?? [];
-		this.edges = c?.Edges ?? [];
 	}
 
 	start(): () => void {
