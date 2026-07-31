@@ -5,19 +5,15 @@ import (
 	"slices"
 )
 
-// validateAdds rejects a batch whose adds cannot resolve to distinct ids: an
-// add with no temp id would emit a blank BlockID, and two adds sharing a temp
-// id would collapse onto one generated id. Both mean malformed input (the
-// format requires every new block to carry a unique temp id), so prepareOps
-// refuses the whole batch rather than write something ambiguous to storage.
-func validateAdds(ops []Op) error {
+// validateDistinctTempIDs rejects a batch whose adds would collapse onto one
+// generated id. Per-op shape — including an add's temp id being present at all
+// — is Op.validate's, which prepareOps runs first; only distinctness needs the
+// whole batch in view.
+func validateDistinctTempIDs(ops []Op) error {
 	seen := make(map[string]bool)
 	for _, op := range ops {
 		if op.Kind != OpAdd {
 			continue
-		}
-		if op.TempID == "" {
-			return fmt.Errorf("add op with empty temp id: %w", ErrInvalidOps)
 		}
 		if seen[op.TempID] {
 			return fmt.Errorf("duplicate temp id %q: %w", op.TempID, ErrInvalidOps)
@@ -158,7 +154,7 @@ func prepareOps(ops []Op, newID IDGenerator) ([]Op, map[string]ID, error) {
 			return nil, nil, fmt.Errorf("op %d: %w", i, err)
 		}
 	}
-	if err := validateAdds(ops); err != nil {
+	if err := validateDistinctTempIDs(ops); err != nil {
 		return nil, nil, err
 	}
 	if hasCycle(ops) {

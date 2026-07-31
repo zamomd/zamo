@@ -217,7 +217,7 @@ func keyOrigin(cfg Config, o Overrides) Origin {
 	if o.LLM.Provider != "" {
 		provider = o.LLM.Provider
 	}
-	if envName := keyEnvName(provider); envName != "" && os.Getenv(envName) != "" {
+	if envName := KeyEnvName(provider); envName != "" && os.Getenv(envName) != "" {
 		return OriginEnv
 	}
 	if o.LLM.APIKey != "" {
@@ -241,7 +241,7 @@ func (r Resolved) APIKeySet() bool { return r.Origins.APIKey != OriginDefault }
 // is rewritten on each activation. When provider is empty (AI off), no
 // environment variable is consulted.
 func (r Resolved) APIKeyValue() (string, error) {
-	if envName := keyEnvName(r.Config.LLM.Provider); envName != "" {
+	if envName := KeyEnvName(r.Config.LLM.Provider); envName != "" {
 		if key := os.Getenv(envName); key != "" {
 			return key, nil
 		}

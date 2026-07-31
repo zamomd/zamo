@@ -15,11 +15,15 @@ import (
 	"github.com/cominddev/comind/internal/llm"
 )
 
+func staticKey(key string) llm.KeySource {
+	return func() (string, error) { return key, nil }
+}
+
 func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	c := New(llm.StaticKey("test-key"), "")
+	c := New(staticKey("test-key"), "")
 	c.baseURL = srv.URL
 	return c
 }
@@ -157,7 +161,7 @@ func TestPingMapsUnauthorized(t *testing.T) {
 }
 
 func TestGenerateEditMissingKeyIsUnavailable(t *testing.T) {
-	c := New(llm.StaticKey(""), "")
+	c := New(staticKey(""), "")
 	_, err := c.GenerateEdit(t.Context(), []knowledge.Block{{ID: "01A", Content: "x"}}, "do a thing")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -234,7 +238,7 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 }
 
 func TestGenerateTreeMissingKeyIsUnavailable(t *testing.T) {
-	c := New(llm.StaticKey(""), "")
+	c := New(staticKey(""), "")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -245,7 +249,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	c := New(llm.StaticKey("test-key"), "")
+	c := New(staticKey("test-key"), "")
 	c.baseURL = url
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")

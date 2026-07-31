@@ -125,7 +125,7 @@ func (c Config) DatabasePath() (string, error) {
 // then the inline api_key. Empty is allowed — local providers need no
 // key, and remote ones fail with a clear error on first use.
 func (l LLM) APIKeyValue() (string, error) {
-	if envName := keyEnvName(l.Provider); envName != "" {
+	if envName := KeyEnvName(l.Provider); envName != "" {
 		if key := os.Getenv(envName); key != "" {
 			return key, nil
 		}
@@ -144,10 +144,6 @@ func (l LLM) APIKeyValue() (string, error) {
 // empty when the provider has none. It is the single source of the mapping —
 // error messages that name the variable must use it too.
 func KeyEnvName(provider string) string {
-	return keyEnvName(provider)
-}
-
-func keyEnvName(provider string) string {
 	switch provider {
 	case ProviderOpenAICompat:
 		return "OPENAI_API_KEY"
