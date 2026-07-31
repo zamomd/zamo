@@ -44,22 +44,16 @@ ORDER BY COALESCE((SELECT p.position FROM blocks p WHERE p.id = blocks.parent_id
 	return blocks, nil
 }
 
-// GetSubtree implements knowledge.Repository. It collects the block and all its
-// descendants with a recursive CTE, then orders them pre-order (parents before
-// children, siblings by position) in Go. The CTE uses UNION, not UNION ALL: on a
-// database whose parent_id somehow became cyclic, UNION discards the repeated row
-// and terminates instead of looping forever (ARCHITECTURE.md §5.2). A missing root
-// yields ErrNotFound.
-func (r *Repo) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
-	const q = `
-WITH RECURSIVE subtree(id) AS (
-    SELECT id FROM blocks WHERE id = ?
-    UNION
-    SELECT b.id FROM blocks b JOIN subtree s ON b.parent_id = s.id
-)
+// subtreeQuery reads a root's whole subtree as blocks, unordered; callers run
+// preorder over the result.
+const subtreeQuery = subtreeCTE + `
 SELECT ` + blockColumns + ` FROM blocks WHERE id IN (SELECT id FROM subtree)`
 
-	rows, err := r.db.QueryContext(ctx, q, string(root))
+// GetSubtree implements knowledge.Repository. It collects the block and all its
+// descendants with a recursive CTE, then orders them pre-order (parents before
+// children, siblings by position) in Go. A missing root yields ErrNotFound.
+func (r *Repo) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error) {
+	rows, err := r.db.QueryContext(ctx, subtreeQuery, string(root))
 	if err != nil {
 		return nil, translate(err)
 	}

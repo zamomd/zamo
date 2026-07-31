@@ -17,6 +17,20 @@ const (
 	ProviderOpenAICompat = "openai-compatible"
 )
 
+// ValidateProvider accepts the known provider names and the empty string, which
+// means "no provider configured" — a supported state that turns AI features
+// off. Every layer that takes a provider name from outside checks it here, so
+// the accepted set and the message naming it live in one place.
+func ValidateProvider(provider string) error {
+	switch provider {
+	case "", ProviderAnthropic, ProviderOpenAICompat:
+		return nil
+	default:
+		return fmt.Errorf("unknown llm.provider %q (available: %s, %s)",
+			provider, ProviderAnthropic, ProviderOpenAICompat)
+	}
+}
+
 // Config is the root of config.toml.
 type Config struct {
 	// Database is the SQLite file path; empty means the platform data
@@ -91,11 +105,8 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	switch cfg.LLM.Provider {
-	case "", ProviderAnthropic, ProviderOpenAICompat:
-	default:
-		return cfg, fmt.Errorf("config %s: unknown llm.provider %q (available: %s, %s)",
-			path, cfg.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
+	if err := ValidateProvider(cfg.LLM.Provider); err != nil {
+		return cfg, fmt.Errorf("config %s: %w", path, err)
 	}
 	return cfg, nil
 }
@@ -125,7 +136,7 @@ func (c Config) DatabasePath() (string, error) {
 // then the inline api_key. Empty is allowed — local providers need no
 // key, and remote ones fail with a clear error on first use.
 func (l LLM) APIKeyValue() (string, error) {
-	if envName := keyEnvName(l.Provider); envName != "" {
+	if envName := KeyEnvName(l.Provider); envName != "" {
 		if key := os.Getenv(envName); key != "" {
 			return key, nil
 		}
@@ -144,10 +155,6 @@ func (l LLM) APIKeyValue() (string, error) {
 // empty when the provider has none. It is the single source of the mapping —
 // error messages that name the variable must use it too.
 func KeyEnvName(provider string) string {
-	return keyEnvName(provider)
-}
-
-func keyEnvName(provider string) string {
 	switch provider {
 	case ProviderOpenAICompat:
 		return "OPENAI_API_KEY"

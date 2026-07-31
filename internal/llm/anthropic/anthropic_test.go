@@ -15,11 +15,15 @@ import (
 	"github.com/cominddev/comind/internal/llm"
 )
 
+func staticKey(key string) llm.KeySource {
+	return func() (string, error) { return key, nil }
+}
+
 func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	c := New(llm.StaticKey("test-key"), "")
+	c := New(staticKey("test-key"), "")
 	c.baseURL = srv.URL
 	return c
 }
@@ -79,14 +83,16 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 
 func TestGenerateTreeReadsKeyPerRequest(t *testing.T) {
 	var gotKeys []string
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotKeys = append(gotKeys, r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"content\":\"root\"}"}]}`)
-	})
+	}))
+	t.Cleanup(srv.Close)
 
 	key := "old"
-	c.key = func() (string, error) { return key, nil }
+	c := New(func() (string, error) { return key, nil }, "")
+	c.baseURL = srv.URL
 
 	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
 		t.Fatal(err)
@@ -157,7 +163,7 @@ func TestPingMapsUnauthorized(t *testing.T) {
 }
 
 func TestGenerateEditMissingKeyIsUnavailable(t *testing.T) {
-	c := New(llm.StaticKey(""), "")
+	c := New(staticKey(""), "")
 	_, err := c.GenerateEdit(t.Context(), []knowledge.Block{{ID: "01A", Content: "x"}}, "do a thing")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -234,7 +240,7 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 }
 
 func TestGenerateTreeMissingKeyIsUnavailable(t *testing.T) {
-	c := New(llm.StaticKey(""), "")
+	c := New(staticKey(""), "")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -245,7 +251,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close()
-	c := New(llm.StaticKey("test-key"), "")
+	c := New(staticKey("test-key"), "")
 	c.baseURL = url
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")

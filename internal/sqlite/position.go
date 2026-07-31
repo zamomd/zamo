@@ -151,22 +151,10 @@ func precedingNeighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorI
 // deliberate exception to block_revisions being append-only; adding a revision
 // per bystander would expose storage maintenance as user-visible history.
 func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
-	rows, err := tx.QueryContext(ctx,
+	ids, err := queryIDs(ctx, tx,
 		`SELECT id FROM blocks WHERE parent_id IS ? ORDER BY position`, parent)
 	if err != nil {
-		return fmt.Errorf("renumber children: %w", translate(err))
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("renumber children: %w", translate(err))
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("renumber children: %w", translate(err))
+		return fmt.Errorf("renumber children: %w", err)
 	}
 	for i, id := range ids {
 		position := i * positionStride

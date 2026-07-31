@@ -18,6 +18,10 @@ import (
 const tree = `{"content":"# Go contexts","children":[` +
 	`{"content":"context.Context carries deadlines","children":[]}]}`
 
+func staticKey(key string) llm.KeySource {
+	return func() (string, error) { return key, nil }
+}
+
 func chatReply(content string) string {
 	return `{"choices":[{"message":{"role":"assistant","content":` + jsonString(content) + `}}]}`
 }
@@ -26,7 +30,7 @@ func newTestClient(t *testing.T, apiKey string, handler http.HandlerFunc) *Clien
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, llm.StaticKey(apiKey), "llama3")
+	return New(srv.URL, staticKey(apiKey), "llama3")
 }
 
 func TestGenerateTreeParsesReply(t *testing.T) {
@@ -128,7 +132,7 @@ func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL+"/", llm.StaticKey("test-key"), "llama3")
+	c := New(srv.URL+"/", staticKey("test-key"), "llama3")
 	if _, err := c.GenerateTree(t.Context(), "Go contexts", ""); err != nil {
 		t.Fatalf("GenerateTree with trailing slash: %v", err)
 	}
@@ -157,7 +161,7 @@ func TestPingChecksModelsEndpoint(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL+"/v1", llm.StaticKey("test-key"), "llama3")
+	c := New(srv.URL+"/v1", staticKey("test-key"), "llama3")
 	if err := c.Ping(t.Context()); err != nil {
 		t.Fatalf("Ping = %v, want nil", err)
 	}
@@ -178,7 +182,7 @@ func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL+"/v1", llm.StaticKey(""), "llama3")
+	c := New(srv.URL+"/v1", staticKey(""), "llama3")
 	if err := c.Ping(t.Context()); err != nil {
 		t.Fatalf("Ping = %v, want nil", err)
 	}
@@ -261,7 +265,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	url := srv.URL
 	srv.Close() // Do() now fails at the transport layer
 
-	c := New(url, llm.StaticKey("test-key"), "llama3")
+	c := New(url, staticKey("test-key"), "llama3")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
 	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)

@@ -186,9 +186,8 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 // empty provider is accepted too — it means "not overridden", not "AI off";
 // BuildClient is what turns an all-empty result into the disabled state.
 func (m *Manager) overrides(current config.Resolved, in In) (config.Overrides, error) {
-	if in.Provider != "" && in.Provider != config.ProviderAnthropic && in.Provider != config.ProviderOpenAICompat {
-		return config.Overrides{}, fmt.Errorf("unknown llm provider %q (available: %s, %s)",
-			in.Provider, config.ProviderAnthropic, config.ProviderOpenAICompat)
+	if err := config.ValidateProvider(in.Provider); err != nil {
+		return config.Overrides{}, err
 	}
 
 	o := config.Overrides{LLM: config.LLMOverrides{

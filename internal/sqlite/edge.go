@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/cominddev/comind/internal/knowledge"
@@ -53,30 +54,22 @@ ORDER BY relation, from_id, to_id`
 func (r *Repo) AddEdge(
 	ctx context.Context, from, to knowledge.ID, rel knowledge.Relation, meta knowledge.WriteMeta,
 ) error {
-	// _txlock=immediate (DSN) makes this a BEGIN IMMEDIATE, so the existence
-	// checks and the insert cannot deadlock on a lock upgrade under WAL.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("add edge %s->%s: %w", from, to, translate(err))
-	}
-	defer tx.Rollback()
-
-	if err := requireBlock(ctx, tx, knowledge.OpLink, string(from)); err != nil {
-		return err
-	}
-	if err := requireBlock(ctx, tx, knowledge.OpLink, string(to)); err != nil {
-		return err
-	}
-	reviewed := meta.Author == knowledge.AuthorOwner
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, reviewed, deleted, group_id, created_at)
-		VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
-		ON CONFLICT (from_id, to_id, relation)
-		DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
-		string(from), string(to), string(rel), string(meta.Author), reviewed, formatTime(r.now())); err != nil {
-		return fmt.Errorf("add edge %s->%s: %w", from, to, translate(err))
-	}
-	return tx.Commit()
+	return r.withTx(ctx, fmt.Sprintf("add edge %s->%s", from, to), func(tx *sql.Tx) error {
+		if err := requireBlock(ctx, tx, knowledge.OpLink, string(from)); err != nil {
+			return err
+		}
+		if err := requireBlock(ctx, tx, knowledge.OpLink, string(to)); err != nil {
+			return err
+		}
+		reviewed := meta.Author == knowledge.AuthorOwner
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO edges (from_id, to_id, relation, author, reviewed, deleted, group_id, created_at)
+			VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
+			ON CONFLICT (from_id, to_id, relation)
+			DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
+			string(from), string(to), string(rel), string(meta.Author), reviewed, formatTime(r.now()))
+		return translate(err)
+	})
 }
 
 // RemoveEdge implements knowledge.Repository: soft-deletes one edge by its

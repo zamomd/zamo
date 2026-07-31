@@ -145,14 +145,8 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 	}
 
 	if cfg.Declarative {
-		r := Resolved{Config: cfg}
-		r.Origins = Origins{
-			Provider: declaredOrigin(cfg.LLM.Provider != ""),
-			Model:    declaredOrigin(cfg.LLM.Model != ""),
-			BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
-		}
-		r.Origins.APIKey = keyOrigin(cfg, Overrides{})
-		return r, nil
+		// An empty overrides layer is exactly "settings.toml was never read".
+		return ResolveWith(cfg, Overrides{})
 	}
 
 	o, err := LoadOverrides(settingsPath)
@@ -191,11 +185,8 @@ func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	}
 	r.Origins.APIKey = keyOrigin(cfg, o)
 
-	switch r.Config.LLM.Provider {
-	case "", ProviderAnthropic, ProviderOpenAICompat:
-	default:
-		return Resolved{}, fmt.Errorf("unknown llm.provider %q (available: %s, %s)",
-			r.Config.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
+	if err := ValidateProvider(r.Config.LLM.Provider); err != nil {
+		return Resolved{}, err
 	}
 	return r, nil
 }
@@ -217,7 +208,7 @@ func keyOrigin(cfg Config, o Overrides) Origin {
 	if o.LLM.Provider != "" {
 		provider = o.LLM.Provider
 	}
-	if envName := keyEnvName(provider); envName != "" && os.Getenv(envName) != "" {
+	if envName := KeyEnvName(provider); envName != "" && os.Getenv(envName) != "" {
 		return OriginEnv
 	}
 	if o.LLM.APIKey != "" {
@@ -241,7 +232,7 @@ func (r Resolved) APIKeySet() bool { return r.Origins.APIKey != OriginDefault }
 // is rewritten on each activation. When provider is empty (AI off), no
 // environment variable is consulted.
 func (r Resolved) APIKeyValue() (string, error) {
-	if envName := keyEnvName(r.Config.LLM.Provider); envName != "" {
+	if envName := KeyEnvName(r.Config.LLM.Provider); envName != "" {
 		if key := os.Getenv(envName); key != "" {
 			return key, nil
 		}

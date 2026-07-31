@@ -3,11 +3,12 @@ package sqlite
 // Revision helpers shared by writes and review operations.
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
@@ -166,37 +167,29 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 // DeleteRevision removes a revision and rebuilds the projection when the head
 // changes. Invalid projections roll back the transaction.
 func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
-	}
-	defer tx.Rollback()
-
-	var seq int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT seq FROM block_revisions WHERE id = ? AND block_id = ?`,
-		string(revID), string(blockID)).Scan(&seq); err != nil {
-		return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
-	}
-	var maxSeq int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(seq), 0) FROM block_revisions WHERE block_id = ?`,
-		string(blockID)).Scan(&maxSeq); err != nil {
-		return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM block_revisions WHERE id = ?`, string(revID)); err != nil {
-		return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
-	}
-	if seq == maxSeq {
-		if err := projectHead(ctx, tx, string(blockID)); err != nil {
-			return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
+	what := fmt.Sprintf("delete revision %s of %s", revID, blockID)
+	return r.withTx(ctx, what, func(tx *sql.Tx) error {
+		var seq int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT seq FROM block_revisions WHERE id = ? AND block_id = ?`,
+			string(revID), string(blockID)).Scan(&seq); err != nil {
+			return translate(err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("delete revision %s of %s: %w", revID, blockID, translate(err))
-	}
-	return nil
+		var maxSeq int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(seq), 0) FROM block_revisions WHERE block_id = ?`,
+			string(blockID)).Scan(&maxSeq); err != nil {
+			return translate(err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM block_revisions WHERE id = ?`, string(revID)); err != nil {
+			return translate(err)
+		}
+		if seq != maxSeq {
+			return nil
+		}
+		return translate(projectHead(ctx, tx, string(blockID)))
+	})
 }
 
 // RejectBlock implements knowledge.Repository: drops the block's unreviewed
@@ -204,19 +197,9 @@ func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) 
 // projection. A fully reviewed block — or an unknown one — has nothing past
 // its last reviewed revision to drop, so it is a no-op.
 func (r *Repo) RejectBlock(ctx context.Context, blockID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("reject block %s: %w", blockID, translate(err))
-	}
-	defer tx.Rollback()
-
-	if err := rejectBlockTx(ctx, tx, string(blockID)); err != nil {
-		return fmt.Errorf("reject block %s: %w", blockID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("reject block %s: %w", blockID, translate(err))
-	}
-	return nil
+	return r.withTx(ctx, fmt.Sprintf("reject block %s", blockID), func(tx *sql.Tx) error {
+		return rejectBlockTx(ctx, tx, string(blockID))
+	})
 }
 
 // trimUnreviewedRevisions deletes blockID's revisions past its last
@@ -278,35 +261,23 @@ func rejectBlockTx(ctx context.Context, tx *sql.Tx, blockID string) error {
 // global order satisfies every block; instead of computing one,
 // projectFixpoint discovers a working order by retrying.
 func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("reject page %s: %w", topicID, translate(err))
-	}
-	defer tx.Rollback()
-
-	ids, err := pageBlockIDs(ctx, tx, string(topicID))
-	if err != nil {
-		return fmt.Errorf("reject page %s: %w", topicID, err)
-	}
-
-	var toProject []string
-	for _, id := range ids {
-		trimmed, err := trimUnreviewedRevisions(ctx, tx, id)
+	return r.withTx(ctx, fmt.Sprintf("reject page %s", topicID), func(tx *sql.Tx) error {
+		ids, err := pageBlockIDs(ctx, tx, string(topicID))
 		if err != nil {
-			return fmt.Errorf("reject page %s: block %s: %w", topicID, id, translate(err))
+			return err
 		}
-		if trimmed {
-			toProject = append(toProject, id)
+		var toProject []string
+		for _, id := range ids {
+			trimmed, err := trimUnreviewedRevisions(ctx, tx, id)
+			if err != nil {
+				return fmt.Errorf("block %s: %w", id, translate(err))
+			}
+			if trimmed {
+				toProject = append(toProject, id)
+			}
 		}
-	}
-	if err := projectFixpoint(ctx, tx, toProject); err != nil {
-		return fmt.Errorf("reject page %s: %w", topicID, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("reject page %s: %w", topicID, translate(err))
-	}
-	return nil
+		return projectFixpoint(ctx, tx, toProject)
+	})
 }
 
 // undoableBlockIDs returns the affected blocks when a group can be removed
@@ -336,22 +307,10 @@ func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string
 			groupID, knowledge.ErrInvalidRollback)
 	}
 
-	rows, err := tx.QueryContext(ctx,
+	ids, err := queryIDs(ctx, tx,
 		`SELECT DISTINCT block_id FROM block_revisions WHERE group_id = ?`, groupID)
 	if err != nil {
-		return nil, translate(err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, translate(err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, translate(err)
+		return nil, err
 	}
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrNotFound)
@@ -361,32 +320,21 @@ func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string
 
 // UndoGroup removes a revision group and rebuilds its block projections.
 func (r *Repo) UndoGroup(ctx context.Context, groupID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
-	}
-	defer tx.Rollback()
-
-	ids, err := undoableBlockIDs(ctx, tx, string(groupID))
-	if err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM block_revisions WHERE group_id = ?`, string(groupID)); err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
-	}
-	if err := projectFixpoint(ctx, tx, ids); err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM revision_groups WHERE id = ?`, string(groupID)); err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("undo group %s: %w", groupID, translate(err))
-	}
-	return nil
+	return r.withTx(ctx, fmt.Sprintf("undo group %s", groupID), func(tx *sql.Tx) error {
+		ids, err := undoableBlockIDs(ctx, tx, string(groupID))
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM block_revisions WHERE group_id = ?`, string(groupID)); err != nil {
+			return translate(err)
+		}
+		if err := projectFixpoint(ctx, tx, ids); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM revision_groups WHERE id = ?`, string(groupID))
+		return translate(err)
+	})
 }
 
 // projectFixpoint calls projectHead for every id, retrying across passes:
@@ -433,33 +381,30 @@ func projectFixpoint(ctx context.Context, tx *sql.Tx, ids []string) error {
 // nothing live to find). A live head is unaffected: only the block's own
 // revisions are marked, as before.
 func (r *Repo) MarkBlockReviewed(ctx context.Context, blockID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
-	}
-	defer tx.Rollback()
-
-	ids := []string{string(blockID)}
-	head, ok, err := headRevision(ctx, tx, string(blockID))
-	if err != nil {
-		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
-	}
-	if ok && head.Deleted {
-		descendants, err := tombstoneDescendants(ctx, tx, string(blockID))
+	return r.withTx(ctx, fmt.Sprintf("mark block reviewed %s", blockID), func(tx *sql.Tx) error {
+		ids := []string{string(blockID)}
+		head, ok, err := headRevision(ctx, tx, string(blockID))
 		if err != nil {
-			return fmt.Errorf("mark block reviewed %s: %w", blockID, err)
+			return translate(err)
 		}
-		ids = append(ids, descendants...)
-	}
+		if ok && head.Deleted {
+			descendants, err := tombstoneDescendants(ctx, tx, string(blockID))
+			if err != nil {
+				return err
+			}
+			ids = append(ids, descendants...)
+		}
+		return markReviewed(ctx, tx, ids)
+	})
+}
 
+// markReviewed accepts every revision of each block.
+func markReviewed(ctx context.Context, tx *sql.Tx, ids []string) error {
 	for _, id := range ids {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE block_revisions SET reviewed = 1 WHERE block_id = ?`, id); err != nil {
-			return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
+			return fmt.Errorf("block %s: %w", id, translate(err))
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("mark block reviewed %s: %w", blockID, translate(err))
 	}
 	return nil
 }
@@ -522,50 +467,28 @@ func tombstoneChainReaches(ctx context.Context, tx *sql.Tx, id, root string) (bo
 // must not leave that link pending just because the accept happened at
 // the group, not the block, granularity.
 func (r *Repo) MarkGroupReviewed(ctx context.Context, groupID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
-		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE edges SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
-		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("mark group reviewed %s: %w", groupID, translate(err))
-	}
-	return nil
+	return r.withTx(ctx, fmt.Sprintf("mark group reviewed %s", groupID), func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
+			return translate(err)
+		}
+		_, err := tx.ExecContext(ctx,
+			`UPDATE edges SET reviewed = 1 WHERE group_id = ?`, string(groupID))
+		return translate(err)
+	})
 }
 
 // MarkPageReviewed implements knowledge.Repository: accepts every pending
 // block under topicID — the same live-plus-ghost collection RejectPage
 // uses, but review order does not matter, only membership.
 func (r *Repo) MarkPageReviewed(ctx context.Context, topicID knowledge.ID) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("mark page reviewed %s: %w", topicID, translate(err))
-	}
-	defer tx.Rollback()
-
-	ids, err := pageBlockIDs(ctx, tx, string(topicID))
-	if err != nil {
-		return fmt.Errorf("mark page reviewed %s: %w", topicID, err)
-	}
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE block_revisions SET reviewed = 1 WHERE block_id = ?`, id); err != nil {
-			return fmt.Errorf("mark page reviewed %s: block %s: %w", topicID, id, translate(err))
+	return r.withTx(ctx, fmt.Sprintf("mark page reviewed %s", topicID), func(tx *sql.Tx) error {
+		ids, err := pageBlockIDs(ctx, tx, string(topicID))
+		if err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("mark page reviewed %s: %w", topicID, translate(err))
-	}
-	return nil
+		return markReviewed(ctx, tx, ids)
+	})
 }
 
 // ListRevisions implements knowledge.Repository: full history, newest
@@ -637,11 +560,11 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].TopicID != out[j].TopicID {
-			return out[i].TopicID < out[j].TopicID
+	slices.SortStableFunc(out, func(a, b knowledge.UnreviewedBlock) int {
+		if c := cmp.Compare(a.TopicID, b.TopicID); c != 0 {
+			return c
 		}
-		return out[i].Head.BlockID < out[j].Head.BlockID
+		return cmp.Compare(a.Head.BlockID, b.Head.BlockID)
 	})
 
 	// An unreviewed edge is a pending change: a pending addition (deleted = 0)
@@ -677,20 +600,7 @@ ORDER BY relation, from_id, to_id`
 // least one unreviewed revision (not necessarily the head — see
 // ListUnreviewed's doc).
 func unreviewedBlockIDs(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT block_id FROM block_revisions WHERE reviewed = 0`)
-	if err != nil {
-		return nil, translate(err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, translate(err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, translate(rows.Err())
+	return queryIDs(ctx, db, `SELECT DISTINCT block_id FROM block_revisions WHERE reviewed = 0`)
 }
 
 // topicOf walks blockID's parent chain up to the topic root: preferring the
@@ -757,47 +667,16 @@ func pageBlockIDs(ctx context.Context, tx *sql.Tx, topicID string) ([]string, er
 
 // liveSubtreeIDs returns the ids of topicID and every live descendant.
 func liveSubtreeIDs(ctx context.Context, tx *sql.Tx, root string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `
-WITH RECURSIVE subtree(id) AS (
-    SELECT id FROM blocks WHERE id = ?
-    UNION
-    SELECT b.id FROM blocks b JOIN subtree s ON b.parent_id = s.id
-)
+	return queryIDs(ctx, tx, subtreeCTE+`
 SELECT id FROM subtree`, root)
-	if err != nil {
-		return nil, translate(err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, translate(err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, translate(rows.Err())
 }
 
 // unreviewedGhostIDs returns every block whose current head revision is an
 // unreviewed tombstone: a pending delete, absent from blocks, that
 // ListUnreviewed and page-scoped review ops must still surface.
 func unreviewedGhostIDs(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `
+	return queryIDs(ctx, tx, `
 SELECT block_id FROM block_revisions r1
 WHERE r1.deleted = 1 AND r1.reviewed = 0
   AND r1.seq = (SELECT MAX(seq) FROM block_revisions r2 WHERE r2.block_id = r1.block_id)`)
-	if err != nil {
-		return nil, translate(err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, translate(err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, translate(rows.Err())
 }

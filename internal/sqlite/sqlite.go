@@ -101,6 +101,63 @@ func NewRepo(db *sql.DB, now func() time.Time, newID func() knowledge.ID) *Repo 
 	return &Repo{db: db, now: now, newID: newID}
 }
 
+// queryer is the multi-row read surface shared by *sql.DB and *sql.Tx, so a
+// helper works standalone or inside a write transaction.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// queryIDs runs a single-column query and collects that column. Errors come
+// back already translated; the caller adds its own context.
+func queryIDs(ctx context.Context, q queryer, query string, args ...any) ([]string, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, translate(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, translate(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, translate(rows.Err())
+}
+
+// withTx runs fn in one transaction, committing when it returns nil and rolling
+// back otherwise. _txlock=immediate (DSN, see Open) makes this a BEGIN
+// IMMEDIATE: the write lock is taken up front, so a read-then-write body cannot
+// deadlock on a lock upgrade under WAL. what prefixes every error the call
+// produces; fn returns its errors already translated.
+func (r *Repo) withTx(ctx context.Context, what string, fn func(tx *sql.Tx) error) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, translate(err))
+	}
+	defer tx.Rollback()
+
+	if err := fn(tx); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: %w", what, translate(err))
+	}
+	return nil
+}
+
+// subtreeCTE selects a root and every live descendant into a subtree(id)
+// relation. UNION, not UNION ALL: on a database whose parent_id somehow became
+// cyclic, UNION discards the repeated row and terminates instead of looping
+// forever (ARCHITECTURE.md §5.2).
+const subtreeCTE = `
+WITH RECURSIVE subtree(id) AS (
+    SELECT id FROM blocks WHERE id = ?
+    UNION
+    SELECT b.id FROM blocks b JOIN subtree s ON b.parent_id = s.id
+)`
+
 // timeLayout is the on-disk format for revision and block timestamps:
 // fixed-width, zero-padded RFC3339 nanoseconds in UTC. Fixed width keeps
 // lexicographic order equal to chronological order — which ORDER BY on a
@@ -123,6 +180,22 @@ type batch struct {
 	now      string
 }
 
+// revision builds the snapshot row for one touched block, filling in the
+// provenance the whole batch shares. The caller supplies what is the block's
+// own: its identity, sequence, and the content/parent/position the op leaves
+// it with — a revision is a full snapshot, not a diff.
+func (b batch) revision(id knowledge.ID, op knowledge.Op, seq int, snap knowledge.Revision) knowledge.Revision {
+	snap.ID = id
+	snap.Seq = seq
+	snap.Author = b.meta.Author
+	snap.Source = b.meta.Source
+	snap.Origin = op.Origin
+	snap.Rationale = op.Rationale
+	snap.Reviewed = b.reviewed
+	snap.GroupID = b.groupID
+	return snap
+}
+
 // ApplyOps implements knowledge.Repository. It applies the domain's ready,
 // ordered op list in one immediate transaction: one revision row per touched
 // block plus the blocks projection, and one revision_groups row tying them
@@ -131,15 +204,6 @@ type batch struct {
 // writes. The apply is atomic: any error rolls the whole transaction back,
 // so search and the tree never observe a half-applied batch.
 func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op) error {
-	// _txlock=immediate (DSN) makes this a BEGIN IMMEDIATE: the write lock is
-	// taken up front, so a read-then-write apply cannot deadlock on a lock
-	// upgrade under WAL.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
-	}
-	defer tx.Rollback()
-
 	b := batch{
 		groupID: groupID,
 		meta:    meta,
@@ -148,12 +212,21 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		// Changes queue until the human accepts them (Task 4).
 		reviewed: meta.Author == knowledge.AuthorOwner,
 	}
+	// Not withTx: applyOp's errors already name the op and the block, and a
+	// second "apply ops group …" in front of them would say nothing.
+	// _txlock=immediate (DSN) makes this a BEGIN IMMEDIATE, so a read-then-write
+	// apply cannot deadlock on a lock upgrade under WAL.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
+	}
+	defer tx.Rollback()
+
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO revision_groups (id, title, source, created_at) VALUES (?, ?, ?, ?)`,
 		string(groupID), meta.Title, string(meta.Source), b.now); err != nil {
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
-
 	for _, op := range ops {
 		if err := r.applyOp(ctx, tx, op, b); err != nil {
 			return err
@@ -262,20 +335,12 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		string(op.BlockID), parent, pos, op.Content, string(payload), b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
-	rev := knowledge.Revision{
-		ID:        r.newID(),
-		BlockID:   op.BlockID,
-		Seq:       1,
-		Content:   op.Content,
-		ParentID:  knowledge.ID(op.Parent),
-		Position:  pos,
-		Author:    b.meta.Author,
-		Source:    b.meta.Source,
-		Origin:    op.Origin,
-		Rationale: op.Rationale,
-		Reviewed:  b.reviewed,
-		GroupID:   b.groupID,
-	}
+	rev := b.revision(r.newID(), op, 1, knowledge.Revision{
+		BlockID:  op.BlockID,
+		Content:  op.Content,
+		ParentID: knowledge.ID(op.Parent),
+		Position: pos,
+	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
@@ -296,20 +361,12 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
 	}
-	rev := knowledge.Revision{
-		ID:        r.newID(),
-		BlockID:   op.BlockID,
-		Seq:       seq,
-		Content:   op.Content,
-		ParentID:  knowledge.ID(parent.String),
-		Position:  pos,
-		Author:    b.meta.Author,
-		Source:    b.meta.Source,
-		Origin:    op.Origin,
-		Rationale: op.Rationale,
-		Reviewed:  b.reviewed,
-		GroupID:   b.groupID,
-	}
+	rev := b.revision(r.newID(), op, seq, knowledge.Revision{
+		BlockID:  op.BlockID,
+		Content:  op.Content,
+		ParentID: knowledge.ID(parent.String),
+		Position: pos,
+	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
@@ -353,20 +410,12 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))
 	}
-	rev := knowledge.Revision{
-		ID:        r.newID(),
-		BlockID:   op.BlockID,
-		Seq:       seq,
-		Content:   content,
-		ParentID:  knowledge.ID(op.Parent),
-		Position:  pos,
-		Author:    b.meta.Author,
-		Source:    b.meta.Source,
-		Origin:    op.Origin,
-		Rationale: op.Rationale,
-		Reviewed:  b.reviewed,
-		GroupID:   b.groupID,
-	}
+	rev := b.revision(r.newID(), op, seq, knowledge.Revision{
+		BlockID:  op.BlockID,
+		Content:  content,
+		ParentID: knowledge.ID(op.Parent),
+		Position: pos,
+	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
@@ -496,21 +545,13 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 		if err != nil {
 			return fmt.Errorf("apply delete %s: next seq: %w", blk.ID, translate(err))
 		}
-		rev := knowledge.Revision{
-			ID:        r.newID(),
-			BlockID:   blk.ID,
-			Seq:       seq,
-			Content:   blk.Content,
-			ParentID:  blk.ParentID,
-			Position:  blk.Position,
-			Deleted:   true,
-			Author:    b.meta.Author,
-			Source:    b.meta.Source,
-			Origin:    op.Origin,
-			Rationale: op.Rationale,
-			Reviewed:  b.reviewed,
-			GroupID:   b.groupID,
-		}
+		rev := b.revision(r.newID(), op, seq, knowledge.Revision{
+			BlockID:  blk.ID,
+			Content:  blk.Content,
+			ParentID: blk.ParentID,
+			Position: blk.Position,
+			Deleted:  true,
+		})
 		if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 			return fmt.Errorf("apply delete %s: %w", blk.ID, translate(err))
 		}
@@ -526,15 +567,7 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 // a read through r.db might land on a different pooled connection and miss
 // this transaction's uncommitted writes.
 func subtreePreorder(ctx context.Context, tx *sql.Tx, root knowledge.ID) ([]knowledge.Block, error) {
-	const q = `
-WITH RECURSIVE subtree(id) AS (
-    SELECT id FROM blocks WHERE id = ?
-    UNION
-    SELECT b.id FROM blocks b JOIN subtree s ON b.parent_id = s.id
-)
-SELECT ` + blockColumns + ` FROM blocks WHERE id IN (SELECT id FROM subtree)`
-
-	rows, err := tx.QueryContext(ctx, q, string(root))
+	rows, err := tx.QueryContext(ctx, subtreeQuery, string(root))
 	if err != nil {
 		return nil, translate(err)
 	}
