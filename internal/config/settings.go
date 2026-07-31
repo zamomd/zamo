@@ -145,14 +145,8 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 	}
 
 	if cfg.Declarative {
-		r := Resolved{Config: cfg}
-		r.Origins = Origins{
-			Provider: declaredOrigin(cfg.LLM.Provider != ""),
-			Model:    declaredOrigin(cfg.LLM.Model != ""),
-			BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
-		}
-		r.Origins.APIKey = keyOrigin(cfg, Overrides{})
-		return r, nil
+		// An empty overrides layer is exactly "settings.toml was never read".
+		return ResolveWith(cfg, Overrides{})
 	}
 
 	o, err := LoadOverrides(settingsPath)
@@ -191,11 +185,8 @@ func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	}
 	r.Origins.APIKey = keyOrigin(cfg, o)
 
-	switch r.Config.LLM.Provider {
-	case "", ProviderAnthropic, ProviderOpenAICompat:
-	default:
-		return Resolved{}, fmt.Errorf("unknown llm.provider %q (available: %s, %s)",
-			r.Config.LLM.Provider, ProviderAnthropic, ProviderOpenAICompat)
+	if err := ValidateProvider(r.Config.LLM.Provider); err != nil {
+		return Resolved{}, err
 	}
 	return r, nil
 }
