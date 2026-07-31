@@ -83,14 +83,16 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 
 func TestGenerateTreeReadsKeyPerRequest(t *testing.T) {
 	var gotKeys []string
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotKeys = append(gotKeys, r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"content\":\"root\"}"}]}`)
-	})
+	}))
+	t.Cleanup(srv.Close)
 
 	key := "old"
-	c.key = func() (string, error) { return key, nil }
+	c := New(func() (string, error) { return key, nil }, "")
+	c.baseURL = srv.URL
 
 	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
 		t.Fatal(err)
