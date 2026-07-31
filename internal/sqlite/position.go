@@ -10,14 +10,13 @@ import (
 
 // positionStride spaces sibling positions so a block can be inserted between
 // two neighbours by taking the midpoint, without touching either of them.
-// That matters because position is part of every revision snapshot and
-// projectHead restores it verbatim (see revision.go): a neighbour shifted in
-// the blocks table but not re-revisioned would be restored to a position it
-// no longer holds. Ordering only ever compares positions (see read.go's
-// preorder), so gaps are free.
+// Position is part of every revision snapshot and projectHead restores it
+// verbatim (see revision.go), so renumber keeps the projection and history in
+// the same coordinate system. Ordering only ever compares positions (see
+// read.go's preorder), so gaps are free.
 //
 // The size buys headroom against renumber, which is the one case that does
-// break the revision/table agreement (see there): a gap survives as many
+// rewrite existing revision positions (see there): a gap survives as many
 // midpoint inserts as the stride has halvings, so 1<<30 tolerates a run of 30
 // lines typed into one gap where 1<<16 tolerated 16. Nothing counts positions,
 // so the only ceiling is int64: even a million siblings appended at this
@@ -145,17 +144,12 @@ func precedingNeighbourhood(ctx context.Context, tx *sql.Tx, parent any, anchorI
 }
 
 // renumber respaces every child of parent at positionStride intervals,
-// keeping their order, so an exhausted gap gets room again. It writes
-// positions without writing revisions: every sibling of parent then holds a
-// position its own head revision does not remember, so rolling back any one
-// of them — including a block the user never touched — lands it one slot off.
-// Accepted deliberately, but only as far as the stride buys room: it fires on
-// the 31st consecutive insert anchored into the same gap, because each Enter
-// anchors on the block the caret just landed in and that gap halves with every
-// insert. So this is reachable by typing a run of thirty-one lines between two
-// existing blocks — unusual but not pathological, which is why the stride was
-// raised from 1<<16 (where the same gesture needed only seventeen lines) rather
-// than left alone. The result is a reordering, not a loss.
+// keeping their order, so an exhausted gap gets room again. It also rewrites
+// every revision position for each child: respacing changes the coordinate
+// system rather than the block's historical placement, and projectHead may
+// restore any surviving revision after a rejection or deletion. This is the
+// deliberate exception to block_revisions being append-only; adding a revision
+// per bystander would expose storage maintenance as user-visible history.
 func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM blocks WHERE parent_id IS ? ORDER BY position`, parent)
@@ -175,9 +169,22 @@ func renumber(ctx context.Context, tx *sql.Tx, parent any) error {
 		return fmt.Errorf("renumber children: %w", translate(err))
 	}
 	for i, id := range ids {
+		position := i * positionStride
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE blocks SET position = ? WHERE id = ?`, i*positionStride, id); err != nil {
+			`UPDATE blocks SET position = ? WHERE id = ?`, position, id); err != nil {
 			return fmt.Errorf("renumber %s: %w", id, translate(err))
+		}
+		result, err := tx.ExecContext(ctx,
+			`UPDATE block_revisions SET position = ? WHERE block_id = ?`, position, id)
+		if err != nil {
+			return fmt.Errorf("renumber revisions of %s: %w", id, translate(err))
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("renumber revisions of %s: %w", id, translate(err))
+		}
+		if updated == 0 {
+			return fmt.Errorf("renumber revisions of %s: %w", id, knowledge.ErrNotFound)
 		}
 	}
 	return nil
