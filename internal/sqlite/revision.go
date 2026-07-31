@@ -128,6 +128,9 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blocks WHERE id = ?`, blockID); err != nil {
 			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 		}
+		if err := putRefs(ctx, tx, knowledge.ID(blockID), ""); err != nil {
+			return fmt.Errorf("project head of %s: %w", blockID, err)
+		}
 		return nil
 	}
 	if head.ParentID != "" {
@@ -162,6 +165,9 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		blockID, parent, head.Position, head.Content, titleKey(parent, head.Content),
 		first, formatTime(head.CreatedAt)); err != nil {
 		return fmt.Errorf("project head of %s: %w", blockID, translate(err))
+	}
+	if err := putRefs(ctx, tx, knowledge.ID(blockID), head.Content); err != nil {
+		return fmt.Errorf("project head of %s: %w", blockID, err)
 	}
 	return nil
 }

@@ -29,6 +29,20 @@ CREATE INDEX idx_blocks_parent ON blocks(parent_id, position);
 -- yields no name, and the index tolerates any number of those.
 CREATE UNIQUE INDEX idx_topic_title ON blocks(title_key) WHERE parent_id IS NULL;
 
+-- refs is derived from block content and rebuilt on every write; it is an
+-- index, never a second source of truth. A topic reference stores the
+-- normalized name and resolves by joining blocks.title_key, so creating or
+-- deleting a topic needs no maintenance here. A block reference stores the
+-- target id.
+CREATE TABLE refs (
+    source_id  TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('topic', 'block')),
+    target_key TEXT NOT NULL,
+    PRIMARY KEY (source_id, kind, target_key)
+);
+
+CREATE INDEX idx_refs_target ON refs(target_key);
+
 CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,
     block_id   TEXT NOT NULL,

@@ -367,6 +367,9 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
+	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
+		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
+	}
 	return nil
 }
 
@@ -401,6 +404,9 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
 		op.Content, titleKey(parentArg, op.Content), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+	}
+	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
 	}
 	return nil
 }
@@ -511,6 +517,9 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blocks WHERE id = ?`, string(blk.ID)); err != nil {
 			return fmt.Errorf("apply delete %s: %w", blk.ID, translate(err))
+		}
+		if err := putRefs(ctx, tx, blk.ID, ""); err != nil {
+			return fmt.Errorf("apply delete %s: %w", blk.ID, err)
 		}
 	}
 	return nil
