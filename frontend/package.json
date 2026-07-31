@@ -15,7 +15,7 @@
 		"format": "biome format --write ."
 	},
 	"dependencies": {
-		"@wailsio/runtime": "^3.0.0-alpha2.117",
+		"@wailsio/runtime": "^3.0.0-alpha.97",
 		"entities": "^8.0.0",
 		"markdown-it": "^14.3.0"
 	},

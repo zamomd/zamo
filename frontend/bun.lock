@@ -5,7 +5,7 @@
     "": {
       "name": "frontend",
       "dependencies": {
-        "@wailsio/runtime": "^3.0.0-alpha2.117",
+        "@wailsio/runtime": "^3.0.0-alpha.97",
         "entities": "^8.0.0",
         "markdown-it": "^14.3.0",
       },
@@ -174,7 +174,7 @@
 
     "@vitest/utils": ["@vitest/utils@4.1.10", "", { "dependencies": { "@vitest/pretty-format": "4.1.10", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA=="],
 
-    "@wailsio/runtime": ["@wailsio/runtime@3.0.0-alpha2.117", "", {}, "sha512-RZr6cncIXjdTbn2IqJ6AZXPm9WooaZEsNlNfaUH+Ru/YlH5sKDDeRdWpbcvsgoMLh4AJ+O8aBzZEiTYWDipGxw=="],
+    "@wailsio/runtime": ["@wailsio/runtime@3.0.0-alpha.97", "", {}, "sha512-alvEG6B0YqW7AcBcNaUWNMD9q8JWqx5AO6BPOZpijBeq4ZjhQxSom3jvvq8Z1mWSMKPEjSvlFirKIh9NLI3ajA=="],
 
     "acorn": ["acorn@8.17.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg=="],
 
