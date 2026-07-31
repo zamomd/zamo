@@ -63,13 +63,15 @@
 		return `${e.From} ${e.To} ${e.Relation}`;
 	}
 
-	async function acceptEdge(e: Edge): Promise<void> {
+	// reviewEdge decides one link. Busy is tracked per edge, not globally: the
+	// rows are independent and each keeps its own buttons disabled.
+	async function reviewEdge(e: Edge, decide: () => Promise<void>): Promise<void> {
 		const key = edgeKey(e);
 		if (edgeBusy.has(key)) return;
 		edgeBusy.add(key);
 		edgeError = "";
 		try {
-			await App.AcceptEdge(e.From, e.To, e.Relation);
+			await decide();
 			await changes.refresh();
 		} catch (err: unknown) {
 			edgeError = messageFor(err);
@@ -78,19 +80,12 @@
 		}
 	}
 
-	async function rejectEdge(e: Edge): Promise<void> {
-		const key = edgeKey(e);
-		if (edgeBusy.has(key)) return;
-		edgeBusy.add(key);
-		edgeError = "";
-		try {
-			await App.RejectEdge(e.From, e.To, e.Relation);
-			await changes.refresh();
-		} catch (err: unknown) {
-			edgeError = messageFor(err);
-		} finally {
-			edgeBusy.delete(key);
-		}
+	function acceptEdge(e: Edge): Promise<void> {
+		return reviewEdge(e, () => App.AcceptEdge(e.From, e.To, e.Relation));
+	}
+
+	function rejectEdge(e: Edge): Promise<void> {
+		return reviewEdge(e, () => App.RejectEdge(e.From, e.To, e.Relation));
 	}
 </script>
 

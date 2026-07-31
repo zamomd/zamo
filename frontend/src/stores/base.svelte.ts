@@ -191,10 +191,7 @@ class BaseStore {
 			}
 			await this.refreshLinks(id);
 		}
-		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
-			this.historyID = null;
-			this.revisions = [];
-		}
+		this.dropStaleHistory();
 		if (this.pendingReveal !== null) {
 			const id = this.pendingReveal;
 			this.pendingReveal = null;
@@ -225,13 +222,27 @@ class BaseStore {
 					this.linksById.delete(id);
 				}
 			}
-			if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
-				this.historyID = null;
-				this.revisions = [];
-			}
+			this.dropStaleHistory();
 			return;
 		}
 		this.forest[i] = tree;
+	}
+
+	// dropStaleHistory closes the history panel once its block has left the
+	// forest: the panel must not outlive the block it describes.
+	private dropStaleHistory(): void {
+		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
+			this.historyID = null;
+			this.revisions = [];
+		}
+	}
+
+	// clearLinkTimer cancels a debounced link query still waiting to fire.
+	private clearLinkTimer(): void {
+		if (this.linkQueryTimer !== null) {
+			clearTimeout(this.linkQueryTimer);
+			this.linkQueryTimer = null;
+		}
 	}
 
 	private async refresh(topic: string | null): Promise<void> {
@@ -783,7 +794,10 @@ class BaseStore {
 		return true;
 	}
 
-	async accept(id: string): Promise<void> {
+	// review runs one review gesture: refuse while busy, commit the open edit,
+	// apply, then re-read the forest because a decision can add or remove rows
+	// anywhere. The four below differ only in the call and what they report.
+	private async review(op: () => Promise<void>, done: string): Promise<void> {
 		if (this.busy) {
 			return;
 		}
@@ -794,9 +808,9 @@ class BaseStore {
 		}
 		this.error = "";
 		try {
-			await App.AcceptBlock(id);
+			await op();
 			await this.reload();
-			this.status = "accepted";
+			this.status = done;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
@@ -805,70 +819,20 @@ class BaseStore {
 		}
 	}
 
-	async reject(id: string): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.busy = true;
-		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
-		}
-		this.error = "";
-		try {
-			await App.RejectBlock(id);
-			await this.reload();
-			this.status = "rejected";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
+	accept(id: string): Promise<void> {
+		return this.review(() => App.AcceptBlock(id), "accepted");
 	}
 
-	async acceptPage(id: string): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.busy = true;
-		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
-		}
-		this.error = "";
-		try {
-			await App.AcceptPage(id);
-			await this.reload();
-			this.status = "accepted page";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
+	reject(id: string): Promise<void> {
+		return this.review(() => App.RejectBlock(id), "rejected");
 	}
 
-	async rejectPage(id: string): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.busy = true;
-		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
-		}
-		this.error = "";
-		try {
-			await App.RejectPage(id);
-			await this.reload();
-			this.status = "rejected page";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
+	acceptPage(id: string): Promise<void> {
+		return this.review(() => App.AcceptPage(id), "accepted page");
+	}
+
+	rejectPage(id: string): Promise<void> {
+		return this.review(() => App.RejectPage(id), "rejected page");
 	}
 
 	async toggleLinks(id: string): Promise<void> {
@@ -908,10 +872,7 @@ class BaseStore {
 		this.linkResults = [];
 		this.linkRelation = Relation.RelationRelated;
 		this.linkQuerySeq++;
-		if (this.linkQueryTimer !== null) {
-			clearTimeout(this.linkQueryTimer);
-			this.linkQueryTimer = null;
-		}
+		this.clearLinkTimer();
 		this.busy = false;
 	}
 
@@ -920,20 +881,14 @@ class BaseStore {
 		this.linkQuery = "";
 		this.linkResults = [];
 		this.linkQuerySeq++;
-		if (this.linkQueryTimer !== null) {
-			clearTimeout(this.linkQueryTimer);
-			this.linkQueryTimer = null;
-		}
+		this.clearLinkTimer();
 	}
 
 	setLinkQuery(q: string): void {
 		this.linkQuery = q;
 		this.linkQuerySeq++;
 		this.linkResults = [];
-		if (this.linkQueryTimer !== null) {
-			clearTimeout(this.linkQueryTimer);
-			this.linkQueryTimer = null;
-		}
+		this.clearLinkTimer();
 		if (q.trim() === "") {
 			return;
 		}

@@ -81,49 +81,39 @@
 		return { provider: submittedProvider, model: submittedModel, baseUrl: submittedBaseUrl, apiKey, clearApiKey: false };
 	}
 
-	async function save(): Promise<void> {
+	// submit runs one settings action, reporting done on success. Every action
+	// on this screen answers in the same status line, so they share the guard.
+	async function submit(op: () => Promise<void>, done: string): Promise<void> {
 		busy = true;
 		status = "";
 		error = "";
 		try {
+			await op();
+			status = done;
+		} catch (e) {
+			error = messageFor(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	function save(): Promise<void> {
+		return submit(async () => {
 			await App.SaveSettings(input());
 			await load();
-			status = "Saved. The change is already in effect.";
-		} catch (e) {
-			error = messageFor(e);
-		} finally {
-			busy = false;
-		}
+		}, "Saved. The change is already in effect.");
 	}
 
-	async function check(): Promise<void> {
-		busy = true;
-		status = "";
-		error = "";
-		try {
-			await App.CheckSettings(input());
-			status = "The provider answered.";
-		} catch (e) {
-			error = messageFor(e);
-		} finally {
-			busy = false;
-		}
+	function check(): Promise<void> {
+		return submit(() => App.CheckSettings(input()), "The provider answered.");
 	}
 
-	async function clearKey(): Promise<void> {
-		busy = true;
-		status = "";
-		error = "";
-		try {
+	function clearKey(): Promise<void> {
+		return submit(async () => {
 			const { provider: p, model: m, baseUrl: b } = input();
 			await App.SaveSettings({ provider: p, model: m, baseUrl: b, apiKey: "", clearApiKey: true });
 			await load();
-			status = "GUI key override removed.";
-		} catch (e) {
-			error = messageFor(e);
-		} finally {
-			busy = false;
-		}
+		}, "GUI key override removed.");
 	}
 
 	function requestReset(): void {
@@ -134,20 +124,12 @@
 		resetConfirming = false;
 	}
 
-	async function confirmReset(): Promise<void> {
+	function confirmReset(): Promise<void> {
 		resetConfirming = false;
-		busy = true;
-		status = "";
-		error = "";
-		try {
+		return submit(async () => {
 			await App.SaveSettings({ provider: "", model: "", baseUrl: "", apiKey: "", clearApiKey: true });
 			await load();
-			status = "Reset to config.toml.";
-		} catch (e) {
-			error = messageFor(e);
-		} finally {
-			busy = false;
-		}
+		}, "Reset to config.toml.");
 	}
 
 	onMount(() => {
