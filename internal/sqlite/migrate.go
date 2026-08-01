@@ -97,11 +97,12 @@ END;
 `,
 }
 
-// ErrSchemaTooOld reports a database written before inline references replaced
-// semantic links. migrations[0] was rewritten in place rather than followed by
-// a second migration, so such a file already reports the current schema version
-// and no migration can bring it forward. The message names the only remedy,
-// because it is what the user reads when the app refuses to start.
+// ErrSchemaTooOld reports a database whose schema predates some part of the
+// current migrations[0]. It was rewritten in place rather than followed by a
+// second migration, so such a file already reports the current schema version
+// and no migration can bring it forward — whether it comes from an earlier
+// release or from an earlier state of this branch. The message names the only
+// remedy, because it is what the user reads when the app refuses to start.
 var ErrSchemaTooOld = errors.New(
 	"this database was created before inline references and cannot be upgraded: " +
 		"delete the database file to start fresh")
@@ -120,21 +121,34 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 }
 
+// schemaFeatures are the pieces migrations[0] gained after it started being
+// edited in place, each with the query that finds it. Every in-place edit adds
+// one: a database created between two such edits reports the current version
+// and carries some of the list but not all, so the probe has to be the whole
+// list rather than whichever piece came last.
+var schemaFeatures = []struct {
+	what  string
+	probe string
+}{
+	{"refs", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`},
+	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
+	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
+}
+
 // checkCurrent verifies that a database already at the current schema version
-// carries the current schema. A base from an earlier release passes the version
-// check and then opens and reads perfectly well — the tree renders — while
-// every write and every backlink query hits a missing refs table or title_key
-// column. Probing here turns that into one legible refusal at startup instead
-// of an unexplained failure on the first edit.
+// carries the current schema. Such a base opens and reads perfectly well — the
+// tree renders — while writes and queries hit whatever it is missing, which
+// reaches the user as the catch-all "Something went wrong". Probing here turns
+// that into one legible refusal at startup instead.
 func checkCurrent(ctx context.Context, db *sql.DB) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`,
-	).Scan(&exists); err != nil {
-		return fmt.Errorf("check schema: %w", err)
-	}
-	if !exists {
-		return ErrSchemaTooOld
+	for _, f := range schemaFeatures {
+		var exists bool
+		if err := db.QueryRowContext(ctx, f.probe).Scan(&exists); err != nil {
+			return fmt.Errorf("check schema for %s: %w", f.what, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w (schema has no %s)", ErrSchemaTooOld, f.what)
+		}
 	}
 	return nil
 }

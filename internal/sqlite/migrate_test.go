@@ -44,6 +44,66 @@ func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
 	}
 }
 
+// Every in-place edit of migrations[0] leaves a shape behind: a base created
+// mid-branch reports the current version and carries part of the schema. It
+// opens and renders, then fails on the first write with an untranslated driver
+// error the user reads as "Something went wrong".
+func TestOpenRefusesAMidBranchDatabase(t *testing.T) {
+	schemas := map[string]string{
+		"no refs table": `
+			CREATE TABLE blocks (id TEXT PRIMARY KEY, title_key TEXT);
+			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, atomic INTEGER NOT NULL DEFAULT 0)`,
+		"no blocks.title_key": `
+			CREATE TABLE blocks (id TEXT PRIMARY KEY);
+			CREATE TABLE refs (source_id TEXT NOT NULL);
+			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, atomic INTEGER NOT NULL DEFAULT 0)`,
+		"no revision_groups.atomic": `
+			CREATE TABLE blocks (id TEXT PRIMARY KEY, title_key TEXT);
+			CREATE TABLE refs (source_id TEXT NOT NULL);
+			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, title TEXT NOT NULL)`,
+	}
+	for name, schema := range schemas {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "mid.db")
+
+			old, err := sql.Open("sqlite", "file:"+path)
+			if err != nil {
+				t.Fatalf("open raw database: %v", err)
+			}
+			if _, err := old.ExecContext(ctx, schema+"; PRAGMA user_version = 1"); err != nil {
+				t.Fatalf("build the partial schema: %v", err)
+			}
+			if err := old.Close(); err != nil {
+				t.Fatalf("close raw database: %v", err)
+			}
+
+			db, err := Open(ctx, path)
+			if err == nil {
+				db.Close()
+				t.Fatal("Open succeeded on a partial schema, want a refusal")
+			}
+			if !errors.Is(err, ErrSchemaTooOld) {
+				t.Fatalf("error = %v, want ErrSchemaTooOld", err)
+			}
+		})
+	}
+}
+
+// A database the current migration built carries every feature the probe knows
+// about, so the list cannot drift into refusing fresh bases.
+func TestCurrentSchemaPassesEveryProbe(t *testing.T) {
+	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "fresh.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	if err := checkCurrent(t.Context(), db); err != nil {
+		t.Errorf("checkCurrent on a freshly migrated database: %v", err)
+	}
+}
+
 func TestMigrateConcurrentStarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "race.db")
 
