@@ -104,6 +104,25 @@ func TestTopicEdgesDropSelfLoops(t *testing.T) {
 	}
 }
 
+func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N1", Parent: "01ZIG", Content: "Zig has no borrow checker."},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N2", Parent: "01RUST", Content: "Rust has a borrow checker."},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
+	if len(g.Edges) != 0 {
+		t.Errorf("edges = %v, want none: two populated topics with no references between them", g.Edges)
+	}
+}
+
 func TestTopicEdgesCollapseMultiplicityAndDirection(t *testing.T) {
 	repo := testRepo(t)
 	if err := ownerOps(t, repo, "01G1",
