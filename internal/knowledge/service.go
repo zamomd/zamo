@@ -275,20 +275,31 @@ func referencesTopic(content, key string) bool {
 	return slices.Contains(ParseRefs(content), Ref{Kind: RefTopic, TargetKey: key})
 }
 
-// renamesIn reports the name changes a batch makes, in batch order: an edit of
-// a topic root whose key (TopicKey) changes to a different one, empty included.
+// renamesIn reports the name changes a batch makes: one per edited topic root,
+// from the name references resolve by today to the one the batch leaves it with.
 // Only a root has a name to rename, and a root that had none has nothing for a
 // reference to have resolved by, so it is not a rename.
+//
+// It is the batch's last edit of a block that decides its content, as it does on
+// apply, so a root edited several times yields a single rename over the whole
+// batch — never one per op, which would rewrite the backlinks to a name only an
+// intermediate op held. A root taken back to the name it started with changes
+// nothing and is no rename at all.
 //
 // A name a reference cannot carry — one holding a bracket — keys as empty, so
 // taking a topic to such a name is the same transition as unnaming it: there is
 // nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var edited []ID
-	for _, op := range ops {
-		if op.Kind == OpEdit && op.BlockID != "" {
+	final := make(map[ID]int) // block id → index in ops of the edit that decides its content
+	for i, op := range ops {
+		if op.Kind != OpEdit || op.BlockID == "" {
+			continue
+		}
+		if _, seen := final[op.BlockID]; !seen {
 			edited = append(edited, op.BlockID)
 		}
+		final[op.BlockID] = i
 	}
 	if len(edited) == 0 {
 		return nil, nil
@@ -298,20 +309,18 @@ func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 		return nil, err
 	}
 	var out []rename
-	for _, op := range ops {
-		if op.Kind != OpEdit {
-			continue
-		}
-		block, ok := blocks[op.BlockID]
+	for _, id := range edited {
+		block, ok := blocks[id]
 		if !ok || !block.IsTopic() {
 			continue
 		}
-		oldKey, newKey := TopicKey(block.Content), TopicKey(op.Content)
+		content := ops[final[id]].Content
+		oldKey, newKey := TopicKey(block.Content), TopicKey(content)
 		if oldKey == "" || oldKey == newKey {
 			continue
 		}
 		out = append(out, rename{
-			id: op.BlockID, oldKey: oldKey, newKey: newKey, newName: TopicName(op.Content),
+			id: id, oldKey: oldKey, newKey: newKey, newName: TopicName(content),
 		})
 	}
 	return out, nil

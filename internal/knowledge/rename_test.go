@@ -653,6 +653,82 @@ func TestTwoRenamesInOneBatchChainOntoOneRewrite(t *testing.T) {
 	}
 }
 
+// A root edited several times in one batch is renamed once, from the name the
+// backlinks resolve by to the one the batch finally leaves it with. A rewrite
+// per edit would take them to a name only an intermediate op held, and no topic
+// would answer to it once the batch landed.
+func TestSeveralEditsOfOneRootRewriteReferencesOnce(t *testing.T) {
+	cases := []struct {
+		name     string
+		root     string   // the root's stored content
+		edits    []string // the successive contents the batch writes to it
+		wantRoot []string // the content each of those edits carries once expanded
+		wantRest []Op     // the ops after the root's own edits
+		lookup   string   // the key the backlinks were looked up by, "" for no lookup
+	}{
+		{
+			name:     "renamed twice",
+			root:     "Local-first",
+			edits:    []string{"Offline-first", "Final"},
+			wantRoot: []string{"Offline-first", "Final"},
+			wantRest: []Op{{Kind: OpEdit, BlockID: "01NOTE", Content: "We use [[Final]]."}},
+			lookup:   "local-first",
+		},
+		{
+			name:     "renamed, then edited again without touching the name",
+			root:     "Local-first",
+			edits:    []string{"Offline-first", "Offline-first\nWith a body."},
+			wantRoot: []string{"Offline-first", "Offline-first\nWith a body."},
+			wantRest: []Op{{Kind: OpEdit, BlockID: "01NOTE", Content: "We use [[Offline-first]]."}},
+			lookup:   "local-first",
+		},
+		{
+			name:     "renamed back to the name it started with",
+			root:     "Local-first",
+			edits:    []string{"Offline-first", "Local-first"},
+			wantRoot: []string{"Offline-first", "Local-first"},
+			lookup:   "",
+		},
+		{
+			name:     "renamed twice while naming itself",
+			root:     "Local-first\nSee also [[Local-first]].",
+			edits:    []string{"Offline-first\nSee also [[Local-first]].", "Final\nSee also [[Local-first]]."},
+			wantRoot: []string{"Offline-first\nSee also [[Local-first]].", "Final\nSee also [[Final]]."},
+			wantRest: []Op{{Kind: OpEdit, BlockID: "01NOTE", Content: "We use [[Final]]."}},
+			lookup:   "local-first",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := blk("01ROOT", "", 0, tc.root)
+			repo := renameRepo(root, root, blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+			svc := NewService(nil, repo, seqIDs(), nil)
+
+			ops := make([]Op, len(tc.edits))
+			for i, content := range tc.edits {
+				ops[i] = Op{Kind: OpEdit, BlockID: "01ROOT", Content: content}
+			}
+			if _, err := svc.ApplyOps(t.Context(), ownerMeta(), ops); err != nil {
+				t.Fatalf("ApplyOps: %v", err)
+			}
+			if repo.gotReferencingKey != tc.lookup {
+				t.Errorf("backlinks looked up by %q, want %q", repo.gotReferencingKey, tc.lookup)
+			}
+			if len(repo.applyOps) < len(tc.wantRoot) {
+				t.Fatalf("ops = %+v, want the root's %d edits", repo.applyOps, len(tc.wantRoot))
+			}
+			for i, want := range tc.wantRoot {
+				if got := repo.applyOps[i]; got.Kind != OpEdit || got.BlockID != "01ROOT" || got.Content != want {
+					t.Errorf("op %d = %+v, want the root's edit carrying %q", i, got, want)
+				}
+			}
+			if got := repo.applyOps[len(tc.wantRoot):]; !slices.Equal(got, tc.wantRest) {
+				t.Errorf("ops after the root's edits = %+v, want %+v", got, tc.wantRest)
+			}
+		})
+	}
+}
+
 func TestRenameOntoATakenNameFails(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
