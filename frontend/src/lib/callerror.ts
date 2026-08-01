@@ -41,6 +41,8 @@ const readable: Record<string, string> = {
 	invalid_ops: "That change is malformed and can't be applied.",
 	empty_ops: "There's nothing to apply.",
 	invalid_rollback: "That version can't be rolled back to.",
+	group_written_over:
+		"One of these blocks has been edited since this batch, so it can't be rolled back any more. Accept it and edit the blocks instead.",
 	duplicate_topic: "A topic with that name already exists.",
 	unreferenceable_topic:
 		"Other blocks link to this topic by name, so it can't be left with a name nothing can link to — an empty one, or one containing [ or ].",

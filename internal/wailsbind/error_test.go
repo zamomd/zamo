@@ -31,6 +31,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrInvalidOps, "invalid_ops"},
 		{knowledge.ErrEmptyOps, "empty_ops"},
 		{knowledge.ErrInvalidRollback, "invalid_rollback"},
+		{knowledge.ErrGroupWrittenOver, "group_written_over"},
 		{knowledge.ErrDuplicateTopic, "duplicate_topic"},
 		{knowledge.ErrUnreferenceableTopic, "unreferenceable_topic"},
 		{knowledge.ErrAtomicGroup, "atomic_group"},

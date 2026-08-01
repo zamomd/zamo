@@ -348,6 +348,32 @@ func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
 	})
 }
 
+// An owner edit landing on one member of a rename batch leaves it with no
+// reject route at all: a per-block reject would split the group, and the
+// batch-wide undo would pull revisions out from under the newer edit. Nothing
+// can be rolled back from there, so what the user gets has to name the reason
+// and the way out — accepting the batch, which still works — rather than the
+// generic "that version can't be rolled back to".
+func TestARenameWrittenOverSaysWhyItCannotBeRejected(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	group := aiRename(t, repo)
+	if err := ownerOps(t, repo, "01G3",
+		knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by hand."}); err != nil {
+		t.Fatalf("owner edit: %v", err)
+	}
+
+	if err := repo.RejectBlock(t.Context(), "01LOCAL"); !errors.Is(err, knowledge.ErrAtomicGroup) {
+		t.Errorf("RejectBlock = %v, want ErrAtomicGroup", err)
+	}
+	if err := repo.UndoGroup(t.Context(), group); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Errorf("UndoGroup = %v, want ErrGroupWrittenOver", err)
+	}
+	if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
+		t.Fatalf("accepting the batch is the route the message names: %v", err)
+	}
+}
+
 // A page that happens to hold the whole group splits nothing, so it goes
 // through: the rule is about leaving half a group behind, not about pages.
 func TestAPageHoldingAWholeRenameIsAccepted(t *testing.T) {

@@ -25,6 +25,15 @@ describe("messageFor", () => {
 		expect(messageFor(err)).toMatch(/Other blocks link to this topic/);
 	});
 
+	// The only batch-wide refusal with no control left to try, so the sentence
+	// has to name the way out rather than just say no.
+	it("names the way out of a batch that can no longer be rolled back", () => {
+		const err = new Error("x", {
+			cause: { code: "group_written_over", message: "batch was written over by a later change" },
+		});
+		expect(messageFor(err)).toMatch(/Accept it and edit the blocks instead/);
+	});
+
 	it("points at the batch when a rename is reviewed piecemeal", () => {
 		const err = new Error("x", {
 			cause: { code: "atomic_group", message: "change must be reviewed as one group" },

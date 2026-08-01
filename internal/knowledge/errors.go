@@ -24,6 +24,15 @@ var (
 	// removal that would orphan live children.
 	ErrInvalidRollback = errors.New("rollback would leave an inconsistent tree")
 
+	// ErrGroupWrittenOver reports a batch that cannot be rolled back because
+	// one of its blocks has been written again since. Removing the batch's
+	// revisions from under a later one would silently change what that later
+	// change was made against, so the batch can only be accepted from here and
+	// the blocks edited afterwards. Distinct from ErrInvalidRollback, which is
+	// about the tree a rollback would leave, so the user can be told which of
+	// the two stopped them.
+	ErrGroupWrittenOver = errors.New("batch was written over by a later change")
+
 	// ErrDuplicateTopic reports a write that would give two topic roots the
 	// same name. Names are how [[Topic]] references resolve, so they must
 	// stay unique.

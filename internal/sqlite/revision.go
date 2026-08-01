@@ -389,7 +389,7 @@ func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string
 		return nil, translate(err)
 	}
 	if buried {
-		return nil, fmt.Errorf("group %s: written over since: %w", groupID, knowledge.ErrInvalidRollback)
+		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrGroupWrittenOver)
 	}
 
 	ids, err := queryIDs(ctx, tx,

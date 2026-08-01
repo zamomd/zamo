@@ -794,8 +794,8 @@ func TestUndoGroupRefusesAGroupWithNewerRevisions(t *testing.T) {
 
 	err := repo.UndoGroup(ctx, "grp-2")
 
-	if !errors.Is(err, knowledge.ErrInvalidRollback) {
-		t.Fatalf("UndoGroup of a buried group = %v, want ErrInvalidRollback", err)
+	if !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Fatalf("UndoGroup of a buried group = %v, want ErrGroupWrittenOver", err)
 	}
 	if _, _, content, ok := blockRow(t, repo, "b1"); !ok || content != "v3" {
 		t.Errorf("b1 after refused undo = content=%q ok=%v, want v3/true", content, ok)
