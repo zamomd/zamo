@@ -376,10 +376,12 @@ class BaseStore {
 		}
 	}
 
-	// createTopic asks the AI to expand a brand-new topic titled name. It is
-	// the untargeted half of askAI, reachable without going through the
-	// command box — how clicking an unresolved [[Topic]] reference in the
-	// tree offers to create the target.
+	// createTopic makes an empty topic named name and selects it — how clicking
+	// an unresolved [[Topic]] reference in the tree offers to create its
+	// target. Deliberately not an AI expansion: the provider has no default, so
+	// routing this through the model would make creating a topic impossible on
+	// a fresh install. Expanding a topic with the AI stays its own gesture, the
+	// untargeted half of askAI.
 	async createTopic(name: string): Promise<void> {
 		if (this.busy) {
 			return;
@@ -391,7 +393,13 @@ class BaseStore {
 		}
 		this.error = "";
 		try {
-			await this.expandNewTopic(name);
+			const id = await App.CreateTopic(name);
+			await this.reload();
+			if (this.forest.some((t) => t.block.ID === id)) {
+				this.selectedTopicID = id;
+				this.focusID = null;
+			}
+			this.status = `created "${name}"`;
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";

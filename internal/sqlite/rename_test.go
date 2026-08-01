@@ -133,6 +133,40 @@ func TestAIRenameKeepsReferencesResolving(t *testing.T) {
 	}
 }
 
+// The point of CreateTopic: the reference the user clicked must resolve
+// afterwards, which only holds because the name is written verbatim and
+// title_key is derived from exactly that text.
+func TestCreateTopicResolvesTheReferenceThatAskedForIt(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	svc := renameService(repo)
+
+	id, err := svc.CreateTopic(t.Context(), "Nothing to see here")
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if got, want := titleKeyOf(t, repo, id), "nothing to see here"; got != want {
+		t.Fatalf("title_key = %q, want %q", got, want)
+	}
+
+	// 01OTHER's text is a plain sentence, so a reference to it resolves only
+	// once a topic of that exact name exists.
+	if err := svc.EditBlockContent(t.Context(), "01OTHER", "See [[Nothing to see here]]."); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	links, err := repo.GetBacklinks(t.Context(), id)
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(links) != 1 || links[0].Block.ID != "01OTHER" {
+		t.Errorf("backlinks = %v, want the reference resolving to the created topic", links)
+	}
+
+	if _, err := svc.CreateTopic(t.Context(), "nothing to SEE here"); !errors.Is(err, knowledge.ErrDuplicateTopic) {
+		t.Errorf("second CreateTopic = %v, want ErrDuplicateTopic", err)
+	}
+}
+
 // reviewedHead reports the review state of a block's most recent revision.
 func reviewedHead(t *testing.T, repo *Repo, id string) bool {
 	t.Helper()

@@ -68,6 +68,26 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 	return Applied{GroupID: groupID, IDs: ids}, nil
 }
 
+// CreateTopic adds an empty topic root named name. Owner-authored, so it is
+// born reviewed, and it needs no LLM — the provider has no default, so an AI
+// expansion is not a path a fresh install can rely on to make a topic exist.
+// The name is written verbatim, which is what makes the new root's title_key
+// exactly the key the [[Topic]] reference that asked for it resolves by.
+//
+// A name that normalizes to nothing is refused rather than creating an
+// unaddressable root, and a name already taken reports ErrDuplicateTopic.
+func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
+	if NormalizeTitle(name) == "" {
+		return "", fmt.Errorf("create topic %q: a topic needs a name: %w", name, ErrInvalidOps)
+	}
+	const temp = "topic"
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpAdd, TempID: temp, Content: name}})
+	if err != nil {
+		return "", err
+	}
+	return applied.IDs[temp], nil
+}
+
 // ExpandTopic expands a topic into a block tree and writes it directly,
 // awaiting review.
 func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied, error) {

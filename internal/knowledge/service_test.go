@@ -263,6 +263,57 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	}
 }
 
+func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	id, err := svc.CreateTopic(t.Context(), "Local-first")
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if id == "" {
+		t.Error("CreateTopic returned no id, want the new root's")
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want a single add", repo.applyOps)
+	}
+	op := repo.applyOps[0]
+	if op.Kind != OpAdd || op.Parent != "" || op.BlockID != id {
+		t.Errorf("op = %+v, want an add of a root with the returned id", op)
+	}
+	// Verbatim: the title_key storage derives from it is what the [[Topic]]
+	// reference that asked for this topic resolves by.
+	if op.Content != "Local-first" {
+		t.Errorf("content = %q, want the name written verbatim", op.Content)
+	}
+	if repo.applyMeta.Author != AuthorOwner {
+		t.Errorf("author = %q, want an owner write born reviewed", repo.applyMeta.Author)
+	}
+}
+
+func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	for _, name := range []string{"", "   ", "###"} {
+		if _, err := svc.CreateTopic(t.Context(), name); !errors.Is(err, ErrInvalidOps) {
+			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
+		}
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a nameless topic reached storage: %d calls", repo.applyCalls)
+	}
+}
+
+func TestCreateTopicReportsATakenName(t *testing.T) {
+	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Local-first"); !errors.Is(err, ErrDuplicateTopic) {
+		t.Errorf("error = %v, want ErrDuplicateTopic", err)
+	}
+}
+
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
 	svc := NewService(nil, repo, seqIDs(), nil)

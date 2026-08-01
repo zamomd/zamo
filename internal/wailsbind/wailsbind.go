@@ -75,6 +75,12 @@ func (a *App) TopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
 	return a.svc.TopicGraph(ctx)
 }
 
+// CreateTopic passes the call to knowledge.Service: a new, empty topic named by
+// the user, written without the AI and reporting the new root's id.
+func (a *App) CreateTopic(ctx context.Context, name string) (knowledge.ID, error) {
+	return a.svc.CreateTopic(ctx, name)
+}
+
 // ExpandTopic passes the call to knowledge.Service.
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
 	return a.svc.ExpandTopic(a.withProgress(ctx), topic, hint)
@@ -159,8 +165,8 @@ func (a *App) ExportMarkdown(ctx context.Context, dir string) error {
 	return a.svc.ExportMarkdown(ctx, dir)
 }
 
-// Unreviewed passes the call to knowledge.Service: the AI-authored blocks and
-// edges still awaiting a human decision.
+// Unreviewed passes the call to knowledge.Service: the AI-authored blocks
+// still awaiting a human decision.
 func (a *App) Unreviewed(ctx context.Context) (knowledge.UnreviewedChanges, error) {
 	return a.svc.Unreviewed(ctx)
 }

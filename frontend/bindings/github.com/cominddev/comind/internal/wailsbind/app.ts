@@ -65,6 +65,14 @@ export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
 }
 
 /**
+ * CreateTopic passes the call to knowledge.Service: a new, empty topic named by
+ * the user, written without the AI and reporting the new root's id.
+ */
+export function CreateTopic(name: string): $CancellablePromise<knowledge$0.ID> {
+    return $Call.ByID(3007216784, name);
+}
+
+/**
  * DeleteBlock removes a block and everything under it. Meant for a childless
  * empty block the owner deletes.
  */
@@ -224,8 +232,8 @@ export function UndoGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * Unreviewed passes the call to knowledge.Service: the AI-authored blocks and
- * edges still awaiting a human decision.
+ * Unreviewed passes the call to knowledge.Service: the AI-authored blocks
+ * still awaiting a human decision.
  */
 export function Unreviewed(): $CancellablePromise<knowledge$0.UnreviewedChanges> {
     return $Call.ByID(1571825863);
