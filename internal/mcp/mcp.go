@@ -18,10 +18,11 @@ type Searcher interface {
 	Search(ctx context.Context, query string) ([]knowledge.Block, error)
 }
 
-// TreeReader serves the topic map (base overview) and subtrees.
+// TreeReader serves the topic map (base overview), subtrees, and backlinks.
 type TreeReader interface {
 	TopicMap(ctx context.Context) ([]knowledge.Block, error)
 	GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error)
+	Backlinks(ctx context.Context, id knowledge.ID) ([]knowledge.Backlink, error)
 }
 
 // Writer applies a write batch directly — the only write path over MCP.
@@ -74,6 +75,10 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 		Name:        "topic_map",
 		Description: "The map of the base: root topics and their first level, for orientation.",
 	}, s.topicMap)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "get_backlinks",
+		Description: "Every block referencing this block or topic, with the topic each one lives under.",
+	}, s.getBacklinks)
 	return srv
 }
 
@@ -135,6 +140,45 @@ func (s *Server) topicMap(
 		return nil, blocksOutput{}, err
 	}
 	return nil, toBlocksOutput(blocks), nil
+}
+
+type backlinksInput struct {
+	ID string `json:"id" jsonschema:"the id of the block or topic to find references to"`
+}
+
+// backlinkView is the shape of one incoming reference exposed over MCP: the
+// referencing block plus the topic it lives under, which is the context a
+// caller needs to place it without a second lookup.
+type backlinkView struct {
+	ID         string `json:"id"`
+	Parent     string `json:"parent,omitempty"`
+	Content    string `json:"content"`
+	TopicID    string `json:"topic_id"`
+	TopicTitle string `json:"topic_title"`
+}
+
+type backlinksOutput struct {
+	Backlinks []backlinkView `json:"backlinks"`
+}
+
+func (s *Server) getBacklinks(
+	ctx context.Context, _ *mcpsdk.CallToolRequest, in backlinksInput,
+) (*mcpsdk.CallToolResult, backlinksOutput, error) {
+	links, err := s.tree.Backlinks(ctx, knowledge.ID(in.ID))
+	if err != nil {
+		return nil, backlinksOutput{}, err
+	}
+	views := make([]backlinkView, len(links))
+	for i, l := range links {
+		views[i] = backlinkView{
+			ID:         string(l.Block.ID),
+			Parent:     string(l.Block.ParentID),
+			Content:    l.Block.Content,
+			TopicID:    string(l.TopicID),
+			TopicTitle: l.TopicTitle,
+		}
+	}
+	return nil, backlinksOutput{Backlinks: views}, nil
 }
 
 // originMCP marks operations that arrived over MCP. The server stamps it

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +22,10 @@ type fakeBase struct {
 	subtree     []knowledge.Block
 	topic       []knowledge.Block
 	treeErr     error
+
+	backlinksID     knowledge.ID
+	backlinksResult []knowledge.Backlink
+	backlinksErr    error
 
 	writeMeta    knowledge.WriteMeta
 	writeOps     []knowledge.Op
@@ -41,6 +46,11 @@ func (f *fakeBase) TopicMap(context.Context) ([]knowledge.Block, error) {
 func (f *fakeBase) GetSubtree(_ context.Context, root knowledge.ID) ([]knowledge.Block, error) {
 	f.subtreeRoot = root
 	return f.subtree, f.treeErr
+}
+
+func (f *fakeBase) Backlinks(_ context.Context, id knowledge.ID) ([]knowledge.Backlink, error) {
+	f.backlinksID = id
+	return f.backlinksResult, f.backlinksErr
 }
 
 func (f *fakeBase) ApplyOps(
@@ -246,6 +256,52 @@ func TestTopicMapTool(t *testing.T) {
 	}
 }
 
+func TestBacklinksTool(t *testing.T) {
+	srcContent := "Go uses ((01JT4X9K2M8P0QRSTVWXYZ2340|contexts)) for cancellation."
+	fake := &fakeBase{backlinksResult: []knowledge.Backlink{
+		{
+			Block: knowledge.Block{
+				ID: "01JT4X9K2M8P0QRSTVWXYZ2345", ParentID: "01JT4X9K2M8P0QRSTVWXYZ2346", Content: srcContent,
+			},
+			TopicID:    "01JT4X9K2M8P0QRSTVWXYZ2346",
+			TopicTitle: "Go",
+		},
+	}}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_backlinks",
+		Arguments: map[string]any{"id": "01JT4X9K2M8P0QRSTVWXYZ2340"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("get_backlinks reported a tool error: %+v", res.Content)
+	}
+	if fake.backlinksID != "01JT4X9K2M8P0QRSTVWXYZ2340" {
+		t.Errorf("id forwarded = %q, want the requested id", fake.backlinksID)
+	}
+	var out backlinksOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode get_backlinks output: %v", err)
+	}
+	if len(out.Backlinks) != 1 {
+		t.Fatalf("backlinks = %+v, want exactly one", out.Backlinks)
+	}
+	got := out.Backlinks[0]
+	if got.ID != "01JT4X9K2M8P0QRSTVWXYZ2345" {
+		t.Errorf("referencing block id = %q, want 01JT4X9K2M8P0QRSTVWXYZ2345", got.ID)
+	}
+	if !strings.Contains(got.Content, "contexts") {
+		t.Errorf("content = %q, want the referencing block's own content", got.Content)
+	}
+	if got.TopicID != "01JT4X9K2M8P0QRSTVWXYZ2346" || got.TopicTitle != "Go" {
+		t.Errorf("topic = %+v, want the topic the referencing block lives under", got)
+	}
+}
+
 func TestToolSurface(t *testing.T) {
 	fake := &fakeBase{}
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
@@ -260,7 +316,7 @@ func TestToolSurface(t *testing.T) {
 		}
 		got[tool.Name] = true
 	}
-	want := []string{"write_blocks", "search", "get_subtree", "topic_map"}
+	want := []string{"write_blocks", "search", "get_subtree", "topic_map", "get_backlinks"}
 	if len(got) != len(want) {
 		t.Errorf("tools = %v, want exactly %v (no extra write tools)", got, want)
 	}
@@ -282,6 +338,11 @@ func TestReadToolsNeverWrite(t *testing.T) {
 	callBlocks(t, cs, "search", map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	callBlocks(t, cs, "topic_map", map[string]any{})
+	if _, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "get_backlinks", Arguments: map[string]any{"id": "01T"},
+	}); err != nil {
+		t.Fatalf("CallTool get_backlinks: %v", err)
+	}
 
 	if fake.writeCalls != 0 {
 		t.Errorf("read tools called ApplyOps %d times, want 0", fake.writeCalls)
@@ -298,6 +359,7 @@ func TestToolSurfacesDomainError(t *testing.T) {
 		{"search", &fakeBase{searchErr: boom}, map[string]any{"query": "x"}},
 		{"get_subtree", &fakeBase{treeErr: boom}, map[string]any{"root": "01A"}},
 		{"topic_map", &fakeBase{treeErr: boom}, map[string]any{}},
+		{"get_backlinks", &fakeBase{backlinksErr: boom}, map[string]any{"id": "01A"}},
 		{"write_blocks", &fakeBase{writeErr: boom}, map[string]any{
 			"title": "t", "ops": []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
 		}},
