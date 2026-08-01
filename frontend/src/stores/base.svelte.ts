@@ -172,13 +172,7 @@ class BaseStore {
 			this.focusID = null;
 		}
 		this.backlinksById.clear();
-		for (const id of [...this.openBacklinks]) {
-			if (findBlock(this.forest, id) === null) {
-				this.openBacklinks.delete(id);
-				continue;
-			}
-			await this.refreshBacklinks(id);
-		}
+		await this.syncBacklinks();
 		this.dropStaleHistory();
 		if (this.pendingReveal !== null) {
 			const id = this.pendingReveal;
@@ -204,16 +198,29 @@ class BaseStore {
 				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
 				this.focusID = null;
 			}
-			for (const id of [...this.openBacklinks]) {
-				if (findBlock(this.forest, id) === null) {
-					this.openBacklinks.delete(id);
-					this.backlinksById.delete(id);
-				}
-			}
+			await this.syncBacklinks();
 			this.dropStaleHistory();
 			return;
 		}
 		this.forest[i] = tree;
+		await this.syncBacklinks();
+	}
+
+	// syncBacklinks brings every open "Linked references" panel back in line
+	// with the forest just read: a panel whose block is gone closes, and the
+	// rest are re-read. Both halves matter after any write — typing [[Zig]]
+	// into a block and blurring reaches here through reloadTopic, and the panel
+	// that exists to list that reference would otherwise keep the count it had
+	// before the edit.
+	private async syncBacklinks(): Promise<void> {
+		for (const id of [...this.openBacklinks]) {
+			if (findBlock(this.forest, id) === null) {
+				this.openBacklinks.delete(id);
+				this.backlinksById.delete(id);
+				continue;
+			}
+			await this.refreshBacklinks(id);
+		}
 	}
 
 	// dropStaleHistory closes the history panel once its block has left the

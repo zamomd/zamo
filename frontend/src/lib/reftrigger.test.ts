@@ -12,6 +12,15 @@ describe("triggerAt", () => {
 		["caret before the trigger", "See [[Zig", 3, null],
 		["no trigger", "Just prose", 10, null],
 		["newline ends a trigger", "See [[Zig\nmore", 14, null],
+		// Editing inside a reference that is already closed: the popup must
+		// stay away, or accepting would leave the old tail behind.
+		["caret inside a closed topic reference", "[[Local-first]]", 7, null],
+		["caret inside a closed block reference", "((claim|a label))", 12, null],
+		["caret between the two closing brackets", "[[Local]]", 8, null],
+		["caret between the two closing parens", "((claim))", 8, null],
+		// The closer ahead belongs to a later reference, so this one is open.
+		["a closed reference after an open one", "[[Loc[[Other]]", 5, { kind: "topic", query: "Loc", start: 0 }],
+		["a closed reference on the next line", "See [[Zig\nand [[Rust]]", 9, { kind: "topic", query: "Zig", start: 4 }],
 	])("%s", (_name, text, caret, want) => {
 		expect(triggerAt(text, caret)).toEqual(want);
 	});

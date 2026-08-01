@@ -6,20 +6,30 @@ import { topicName } from "./refs";
 // RefAutocomplete.svelte.
 export type Trigger = { kind: "topic" | "block"; query: string; start: number };
 
-const openers: Record<string, "topic" | "block"> = { "[[": "topic", "((": "block" };
-const closers: Record<"topic" | "block", string> = { topic: "]]", block: "))" };
+const kinds = ["topic", "block"] as const;
+const opener: Record<"topic" | "block", string> = { topic: "[[", block: "((" };
+const closer: Record<"topic" | "block", string> = { topic: "]]", block: "))" };
 
 // triggerAt scans backwards from caret to the nearest "[[" or "((" on the
-// same line. A closing "]]"/"))" between that opener and caret means the
-// reference is already complete — not a trigger — and the scan does not look
-// past it for an earlier, enclosing opener.
+// same line. A closer between that opener and caret means the reference is
+// already complete — not a trigger — and the scan does not look past it for an
+// earlier, enclosing opener.
+//
+// It looks forward as well, because an opener behind the caret is not enough:
+// with the caret after "Local" in "[[Local-first]]" the backwards scan finds
+// the opener and sees no closer before the caret, yet the reference is closed
+// further along. Accepting there replaces [start, caret) and leaves the old
+// tail behind — "[[Chosen]]-first]]" out of an ordinary editing gesture. So a
+// closer straddling the caret, or one ahead of it with no fresh opener of the
+// same kind in between, refuses too; an opener first means that closer belongs
+// to a later reference and this one really is unterminated.
 export function triggerAt(text: string, caret: number): Trigger | null {
 	const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
 	let start = -1;
 	let kind: "topic" | "block" | null = null;
 	for (let i = caret - 2; i >= lineStart; i--) {
 		const two = text.slice(i, i + 2);
-		const found = openers[two];
+		const found = kinds.find((k) => opener[k] === two);
 		if (found !== undefined) {
 			start = i;
 			kind = found;
@@ -30,7 +40,15 @@ export function triggerAt(text: string, caret: number): Trigger | null {
 		return null;
 	}
 	const query = text.slice(start + 2, caret);
-	if (query.includes(closers[kind])) {
+	if (query.includes(closer[kind])) {
+		return null;
+	}
+	const lineEnd = text.indexOf("\n", caret);
+	// From caret - 1, so a closer the caret sits in the middle of counts too.
+	const ahead = text.slice(caret - 1, lineEnd < 0 ? text.length : lineEnd);
+	const close = ahead.indexOf(closer[kind]);
+	const reopen = ahead.indexOf(opener[kind]);
+	if (close >= 0 && (reopen < 0 || close < reopen)) {
 		return null;
 	}
 	return { kind, query, start };
