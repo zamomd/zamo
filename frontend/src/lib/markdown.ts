@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import { blockRefAt, normalizeTitle, type Ref, topicRefAt } from "./refs";
+import { blockRefAt, normalizeTitle, type Ref, topicName, topicRefAt } from "./refs";
 
 // Block content is authored by an LLM, so it is untrusted. `html: false` makes
 // markdown-it escape any raw HTML in the source and never emit input-derived
@@ -34,38 +34,39 @@ md.renderer.rules.link_open = (tokens, idx, options, _env, self) => {
 // still leaves a readable sentence.
 export type RefResolver = (ref: Ref) => string | null;
 
-// noResolver treats every reference as unresolved, so rendering always shows
-// the written text and never a live lookup. It is the default for callers
-// that need a stable mapping from source to rendered text independent of
-// what the store currently holds — caret.ts's caret-position arithmetic.
+// noResolver treats every reference as unresolved. It backstops env.resolve
+// below: state.env is typed `any` by markdown-it, so nothing enforces that a
+// caller of the parser's own APIs (bypassing renderMarkdown) supplies one.
+// This is not renderMarkdown's default — renderMarkdown requires resolve, so
+// every real caller's choice of "what does unresolved look like here" stays
+// visible at its call site rather than silently substituted.
 const noResolver: RefResolver = () => null;
 
 // refAt finds a [[Topic]] or ((ULID|label)) reference starting at pos, plus
 // the fallback text to show when it does not resolve. The search is bounded
 // to the current line: state.src can join several source lines with "\n" (a
 // soft break inside one paragraph), and, like the Go parser, a reference
-// never crosses that boundary.
-function refAt(src: string, pos: number): { ref: Ref; fallback: string; end: number } | null {
+// never crosses that boundary. It is also bounded to posMax, matching the
+// span markdown-it itself considers in play for this state.
+function refAt(src: string, pos: number, posMax: number): { ref: Ref; fallback: string; end: number } | null {
 	const nl = src.indexOf("\n", pos);
-	const line = nl < 0 ? src : src.slice(0, nl);
+	const boundary = nl < 0 ? posMax : Math.min(nl, posMax);
+	const line = src.slice(0, boundary);
 
 	const topic = topicRefAt(line, pos);
 	if (topic !== null) {
 		return {
 			ref: { kind: "topic", targetKey: normalizeTitle(topic.body) },
-			fallback: topic.body.trim(),
+			fallback: topicName(topic.body),
 			end: topic.end,
 		};
 	}
 
 	const block = blockRefAt(line, pos);
 	if (block !== null) {
-		const body = line.slice(pos + 2, block.end - 2);
-		const pipe = body.indexOf("|");
-		const label = pipe >= 0 ? body.slice(pipe + 1).trim() : "";
 		return {
 			ref: { kind: "block", targetKey: block.target },
-			fallback: label !== "" ? label : block.target,
+			fallback: block.label !== "" ? block.label : block.target,
 			end: block.end,
 		};
 	}
@@ -134,13 +135,13 @@ md.inline.ruler.at("text", (state, silent) => {
 // already escapes content. Registered before "text" so it claims a "(" or
 // "[" position first, per the terminator set above.
 md.inline.ruler.before("text", "ref", (state, silent) => {
-	const match = refAt(state.src, state.pos);
+	const match = refAt(state.src, state.pos, state.posMax);
 	if (match === null) {
 		return false;
 	}
 	if (!silent) {
-		const { resolve } = state.env as { resolve: RefResolver };
-		const resolved = resolve(match.ref);
+		const { resolve } = state.env as { resolve?: RefResolver };
+		const resolved = (resolve ?? noResolver)(match.ref);
 		const classes = ["ref", `ref-${match.ref.kind}`];
 		if (resolved === null) {
 			classes.push("ref-missing");
@@ -158,8 +159,11 @@ md.inline.ruler.before("text", "ref", (state, silent) => {
 
 // renderMarkdown turns one block's markdown source into sanitized HTML ready for
 // {@html}. The raw source is never mutated — it stays the edit round-trip value.
-// resolve defaults to treating every reference as unresolved, for callers that
-// only need the written text back rather than a live lookup.
-export function renderMarkdown(src: string, resolve: RefResolver = noResolver): string {
+// resolve is required, not defaulted: a caller that renders the same source
+// twice with two different notions of "unresolved" (the live DOM vs. a
+// caret-position mapping computed separately, say) produces two different
+// strings, and a hidden default is how that divergence goes unnoticed. See
+// caret.ts's renderedText/sourceOffset, which take resolve for this reason.
+export function renderMarkdown(src: string, resolve: RefResolver): string {
 	return md.render(src, { resolve });
 }

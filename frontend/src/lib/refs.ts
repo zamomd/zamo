@@ -84,14 +84,19 @@ export function topicRefAt(line: string, i: number): { body: string; end: number
 }
 
 // blockRefAt reports the ((ULID|label)) reference starting at i: its
-// upper-cased target id and the offset just past the closing parens, or null
+// upper-cased target id, its label (trimmed, "" if omitted — a bare
+// ((ULID)) is valid), and the offset just past the closing parens, or null
 // if there is none. A body whose target is not a ULID is plain text, and the
 // scan continues inside it.
 //
 // The label is free text — it may hold brackets and pipes — so the span is
 // skipped whole by every caller: a [[Topic]] written inside a label is
-// neither indexed nor rendered as a link.
-export function blockRefAt(line: string, i: number): { target: string; end: number } | null {
+// neither indexed nor rendered as a link. It is returned (unlike Go's
+// blockRefAt, which only ParseRefs calls) because the markdown-it plugin
+// needs it too, for the fallback text an unresolved reference falls back to;
+// deriving it a second time there would split the ((...)) grammar across two
+// places.
+export function blockRefAt(line: string, i: number): { target: string; label: string; end: number } | null {
 	if (i + 1 >= line.length || line[i] !== "(" || line[i + 1] !== "(") {
 		return null;
 	}
@@ -101,11 +106,12 @@ export function blockRefAt(line: string, i: number): { target: string; end: numb
 	}
 	const pipe = u.body.indexOf("|");
 	const raw = pipe >= 0 ? u.body.slice(0, pipe) : u.body;
+	const label = pipe >= 0 ? u.body.slice(pipe + 1).trim() : "";
 	const target = raw.trim().toUpperCase();
 	if (!validULID(target)) {
 		return null;
 	}
-	return { target, end: u.end };
+	return { target, label, end: u.end };
 }
 
 // until returns the text between start and the next occurrence of closer,

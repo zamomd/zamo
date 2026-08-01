@@ -121,7 +121,7 @@
 		const raw = node.block.Content;
 		const rendered =
 			contentEl === undefined ? null : renderedOffsetFromPoint(contentEl, e.clientX, e.clientY);
-		const caret = rendered === null ? raw.length : sourceOffset(raw, rendered);
+		const caret = rendered === null ? raw.length : sourceOffset(raw, rendered, resolveRef);
 		void base.startEdit(node.block, caret);
 	}
 	function editFromKey(e: KeyboardEvent): void {

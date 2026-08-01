@@ -31,7 +31,7 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			return reloadFixture.subtrees[id] ?? [];
 		},
 		ExpandTopic: async () => {},
-		EditWithAI: async () => {},
+		EditWithAI: vi.fn(async () => {}),
 		EditBlockContent: vi.fn(async () => {
 			if (reloadFixture.writeGate !== null) {
 				await reloadFixture.writeGate;
@@ -407,6 +407,20 @@ describe("askAI's selection", () => {
 		await base.askAI();
 
 		expect(base.selectedTopicID).toBe("go");
+	});
+
+	it("reloads the tree after a scoped edit, not just after an untargeted expansion", async () => {
+		base.forest = [node("go", ""), node("sqlite", "")];
+		base.selectedTopicID = "go";
+		base.scopeID = "go";
+		base.command = "restructure this";
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", ""), block("fresh", "go")], sqlite: [block("sqlite", "")] };
+
+		await base.askAI();
+
+		expect(App.EditWithAI).toHaveBeenCalledWith("go", "restructure this");
+		expect(findNode(base.forest, "fresh")?.block.ID).toBe("fresh");
 	});
 });
 

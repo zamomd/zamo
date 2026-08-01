@@ -345,6 +345,7 @@ class BaseStore {
 			} else {
 				this.status = "asking the AI to restructure…";
 				await App.EditWithAI(scope, text);
+				await this.reload();
 				this.status = "changes applied, awaiting review";
 			}
 			this.command = "";

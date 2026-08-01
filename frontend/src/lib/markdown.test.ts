@@ -65,8 +65,14 @@ describe("renderMarkdown references", () => {
 		expect(html).toContain("[[Zig]]");
 	});
 
-	it("defaults to unresolved when no resolver is passed", () => {
-		const html = renderMarkdown("[[Local-first]]");
-		expect(html).toContain('<span class="ref ref-topic ref-missing" data-target="local-first">Local-first</span>');
+	it("escapes an attribute value the same way as content", () => {
+		const html = renderMarkdown('[[a" onmouseover=x]]', () => null);
+		expect(html).toContain('data-target="a&quot; onmouseover=x"');
+		expect(html).not.toContain('data-target="a" onmouseover=x"');
+	});
+
+	it("strips the topic's own markdown markers from the unresolved fallback, matching its key", () => {
+		const html = renderMarkdown("[[## Foo]]", () => null);
+		expect(html).toContain('<span class="ref ref-topic ref-missing" data-target="foo">Foo</span>');
 	});
 });
