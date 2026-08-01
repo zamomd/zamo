@@ -543,8 +543,8 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 		t.Errorf("writer got dir %q, want the dir passed to ExportMarkdown", writer.dir)
 	}
 	want := []ExportFile{
-		{Name: "alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
-		{Name: "beta.md", Content: "- # Beta\n"},
+		{Name: "Alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
+		{Name: "Beta.md", Content: "- # Beta\n"},
 	}
 	if !slices.Equal(writer.files, want) {
 		t.Errorf("writer got files %+v, want %+v", writer.files, want)

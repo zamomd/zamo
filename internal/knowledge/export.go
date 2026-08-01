@@ -3,7 +3,6 @@ package knowledge
 import (
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // ExportFile is one rendered markdown document: a filename (unique within an
@@ -13,17 +12,22 @@ type ExportFile struct {
 	Content string
 }
 
-// untitledSlug is the filename base for a topic whose content yields no
-// slug-able characters. Deduplication keeps concurrent fallbacks distinct.
-const untitledSlug = "untitled"
+// untitledName is the filename base for a topic whose first line yields no
+// usable name. Deduplication keeps concurrent fallbacks distinct.
+const untitledName = "Untitled"
+
+// illegalInFilename is the union of the characters POSIX, macOS and Windows
+// refuse in a filename. Everything else — spaces, case, punctuation, any
+// script — survives, because the filename carries the topic's name.
+const illegalInFilename = `/\:*?"<>|`
 
 // RenderMarkdown renders each topic subtree into a portable markdown document.
 // Every subtree is the pre-order block walk of one topic (root first, parents
 // before children), exactly as Repository.GetSubtree returns it. Blocks become
 // a Logseq-style nested bullet list — two spaces of indent per level — that
-// Obsidian reads with the hierarchy intact. Filenames are slugged from the
-// topic content and de-duplicated within the returned set so no file is
-// overwritten. Content is assumed to be clean markdown with no service markup.
+// Obsidian reads with the hierarchy intact. Each file is named after its topic
+// and de-duplicated within the returned set so no file is overwritten. Content
+// is assumed to be clean markdown with no service markup.
 func RenderMarkdown(subtrees [][]Block) []ExportFile {
 	files := make([]ExportFile, 0, len(subtrees))
 	taken := make(map[string]bool, len(subtrees))
@@ -31,7 +35,7 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 		if len(sub) == 0 {
 			continue
 		}
-		name := uniqueName(topicSlug(sub[0].Content), taken)
+		name := uniqueName(topicFileBase(sub[0].Content), taken)
 		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub)})
 	}
 	return files
@@ -61,41 +65,48 @@ func renderSubtree(sub []Block) string {
 	return b.String()
 }
 
-// topicSlug turns a topic's content into a filename base: the first line,
-// lowercased, with every run of non-letter/non-digit runes collapsed to a
-// single hyphen. Unicode letters survive, so a base in any language keeps a
-// readable name. An empty result signals the caller to fall back.
-func topicSlug(content string) string {
-	firstLine, _, _ := strings.Cut(content, "\n")
+// topicFileBase turns a topic's content into its filename base: the topic's
+// name — the very text a [[Topic]] reference carries — with only the characters
+// a filesystem refuses replaced by a hyphen.
+//
+// In Obsidian and Logseq the filename *is* the page name, and Obsidian resolves
+// a wikilink by exact basename, so an exported [[Go Contexts]] finds its page
+// only in "Go Contexts.md". A slug would break every wikilink in the export.
+// The one case a link still cannot resolve is a name carrying a replaced
+// character, and no choice of filename could rescue that.
+//
+// Leading and trailing dots and spaces go too: Windows strips them silently and
+// POSIX hides a leading dot, either of which would turn a page into a file the
+// reader never sees. An empty result signals the caller to fall back.
+func topicFileBase(content string) string {
 	var b strings.Builder
-	pendingHyphen := false
-	for _, r := range firstLine {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if pendingHyphen && b.Len() > 0 {
-				b.WriteByte('-')
-			}
-			b.WriteRune(unicode.ToLower(r))
-			pendingHyphen = false
+	for _, r := range TopicName(content) {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(illegalInFilename, r) {
+			b.WriteByte('-')
 			continue
 		}
-		pendingHyphen = true
+		b.WriteRune(r)
 	}
-	return b.String()
+	return strings.Trim(b.String(), ". ")
 }
 
 // uniqueName appends the ".md" extension and disambiguates against names
-// already taken with a numeric suffix (name.md, name-2.md, name-3.md …). It
-// checks the final filename, not the base slug, so a suffixed name can never
-// collide with another topic's base name and overwrite its file. An empty slug
-// falls back to a fixed base first.
-func uniqueName(slug string, taken map[string]bool) string {
-	if slug == "" {
-		slug = untitledSlug
+// already taken with a numeric suffix (Name.md, Name-2.md, Name-3.md …). It
+// checks the final filename, not the base, so a suffixed name can never
+// collide with another topic's base name and overwrite its file. Matching is
+// case-insensitive because the files land on the user's disk, where macOS and
+// Windows treat two names differing only in case as one — a pair the unique
+// index on title_key already keeps out of the base, so this only has to hold
+// for input that never reached storage. An empty base falls back to a fixed
+// name first.
+func uniqueName(base string, taken map[string]bool) string {
+	if base == "" {
+		base = untitledName
 	}
-	name := slug + ".md"
-	for n := 2; taken[name]; n++ {
-		name = slug + "-" + strconv.Itoa(n) + ".md"
+	name := base + ".md"
+	for n := 2; taken[strings.ToLower(name)]; n++ {
+		name = base + "-" + strconv.Itoa(n) + ".md"
 	}
-	taken[name] = true
+	taken[strings.ToLower(name)] = true
 	return name
 }

@@ -30,28 +30,45 @@ func TestRenderMarkdownNestsByDepth(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdownSlugsFilenameFromTopic(t *testing.T) {
-	files := RenderMarkdown([][]Block{{blk("t1", "", 0, "# Go Contexts")}})
-	if files[0].Name != "go-contexts.md" {
-		t.Errorf("name = %q, want go-contexts.md", files[0].Name)
+// Obsidian resolves a wikilink by exact basename, so the filename has to be
+// the topic's name for an exported [[Topic]] to work at all.
+func TestRenderMarkdownNamesFileAfterTopic(t *testing.T) {
+	cases := []struct {
+		content string
+		want    string
+	}{
+		{"# Go Contexts", "Go Contexts.md"},
+		{"Café Résumé", "Café Résumé.md"},
+		{"Local-first architecture", "Local-first architecture.md"},
+		{"C++ vs Rust", "C++ vs Rust.md"},
+		// Only what a filesystem refuses is replaced.
+		{"TCP/IP", "TCP-IP.md"},
+		{`Who? What: "Why"`, "Who- What- -Why-.md"},
+		// A leading dot would hide the page; a trailing one Windows drops.
+		{".hidden", "hidden.md"},
+		{"Etc.", "Etc.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.content, func(t *testing.T) {
+			files := RenderMarkdown([][]Block{{blk("t1", "", 0, tc.content)}})
+			if files[0].Name != tc.want {
+				t.Errorf("name = %q, want %q", files[0].Name, tc.want)
+			}
+		})
 	}
 }
 
-func TestRenderMarkdownKeepsUnicodeInSlug(t *testing.T) {
-	files := RenderMarkdown([][]Block{{blk("t1", "", 0, "Café Résumé")}})
-	if files[0].Name != "café-résumé.md" {
-		t.Errorf("name = %q, want café-résumé.md", files[0].Name)
-	}
-}
-
-func TestRenderMarkdownDedupesCollidingSlugs(t *testing.T) {
+func TestRenderMarkdownDedupesCollidingNames(t *testing.T) {
+	// Two topic names differing only in case cannot both exist — the unique
+	// index on title_key refuses the second — but on a case-insensitive
+	// filesystem they would be one file, so the export refuses to rely on that.
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "# Go Contexts")},
 		{blk("t2", "", 0, "Go contexts!")},
 		{blk("t3", "", 0, "GO CONTEXTS")},
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
-	want := []string{"go-contexts.md", "go-contexts-2.md", "go-contexts-3.md"}
+	want := []string{"Go Contexts.md", "Go contexts!.md", "GO CONTEXTS-2.md"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
@@ -75,13 +92,16 @@ func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdownFallsBackOnEmptySlug(t *testing.T) {
+func TestRenderMarkdownFallsBackOnAnUnusableName(t *testing.T) {
 	files := RenderMarkdown([][]Block{
 		{blk("t1", "", 0, "###")},
 		{blk("t2", "", 0, "   ")},
+		{blk("t3", "", 0, "...")},
 	})
-	if files[0].Name != "untitled.md" || files[1].Name != "untitled-2.md" {
-		t.Errorf("names = %q,%q, want untitled.md, untitled-2.md", files[0].Name, files[1].Name)
+	got := []string{files[0].Name, files[1].Name, files[2].Name}
+	want := []string{"Untitled.md", "Untitled-2.md", "Untitled-3.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("names = %v, want %v", got, want)
 	}
 }
 
