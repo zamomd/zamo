@@ -136,87 +136,141 @@ type rename struct {
 
 // expandRenames appends to ops the reference rewrites its topic renames imply,
 // and names the batch after them when the caller had nothing more specific to
-// say. An edit that drops a still-referenced root's name has no rewrite to make
-// and is refused instead (see refuseOrphaning).
+// say. An edit that takes a still-referenced root to a name nothing can
+// reference has no rewrite to make and is refused instead (see refuseOrphaning).
 //
-// The batch is authoritative over every block it already names: such a block
-// keeps the content its own op writes and gets no rewrite. Otherwise the
-// author's text would be silently replaced by a rewrite of the content it was
-// about to supersede — which is also why the renamed root's own edit survives
-// a self-reference — and two ops could target one block in a single batch.
-// Rewrites this call appends are not the caller's, so a second rename in the
-// same batch chains onto them rather than emitting a duplicate.
+// Rewrites are made against the text the batch will actually store, which is
+// what the reader will see: an edit's own content supersedes what storage holds,
+// a move carries none so the stored text stands, and a delete leaves nothing to
+// rewrite. Only text that no longer carries the old name is left alone — that is
+// what makes a batch of "rename a topic and move a block referencing it" come
+// out true, and what makes the renamed root's own self-reference follow the
+// rename rather than go stale.
 func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) ([]Op, error) {
 	renames, err := s.renamesIn(ctx, ops)
 	if err != nil || len(renames) == 0 {
 		return ops, err
 	}
-	named := make(map[ID]bool, len(ops))
-	for _, op := range ops {
-		if op.BlockID != "" {
-			named[op.BlockID] = true
-		}
-	}
-	out := slices.Clone(ops)
-	at := make(map[ID]int) // block id → index of the rewrite already appended for it
+	e := newExpansion(ops)
 	for _, r := range renames {
 		sources, err := s.repo.BlocksReferencingTopic(ctx, r.oldKey)
 		if err != nil {
 			return nil, fmt.Errorf("rename topic %s: %w", r.id, err)
 		}
 		if r.newKey == "" {
-			if err := refuseOrphaning(r, sources, named); err != nil {
+			if err := e.refuseOrphaning(r, sources); err != nil {
 				return nil, err
 			}
 			continue
 		}
 		for _, src := range sources {
-			if named[src.ID] {
-				continue
-			}
-			i, pending := at[src.ID]
-			content := src.Content
-			if pending {
-				content = out[i].Content
-			}
-			rewritten := RewriteTopicRef(content, r.oldKey, r.newName)
-			switch {
-			case rewritten == content:
-			case pending:
-				out[i].Content = rewritten
-			default:
-				at[src.ID] = len(out)
-				out = append(out, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
-			}
+			e.rewrite(src, r)
 		}
 	}
-	if len(at) > 0 {
+	if len(e.rewrote) > 0 {
 		// The rewrites are only true alongside the rename that caused them, so
 		// the batch they share becomes one reviewable unit.
 		meta.Atomic = true
 	}
-	retitleRename(meta, len(at))
-	return out, nil
+	retitleRename(meta, len(e.rewrote))
+	return e.ops, nil
 }
 
-// refuseOrphaning rejects an edit that would leave a topic root unnamed while
-// blocks still reference the name it is dropping. There is nothing to rewrite
-// those references to — [[]] resolves to nothing — so the only honest answers
-// are refusing the edit or orphaning every backlink silently.
+// expansion is the batch a rename is being expanded into. It answers what text
+// the batch will store for a block and where that text lives, which is what
+// keeps one block to one written content: a rewrite lands on the op that already
+// carries it — the caller's edit, or an earlier rewrite — and a block whose ops
+// carry no content at all gets one appended edit and no more.
+type expansion struct {
+	ops     []Op
+	carrier map[ID]int  // block id → index in ops of the op writing its content
+	gone    map[ID]bool // block id → the batch deletes it
+	rewrote map[ID]bool // block id → a rename changed its text
+}
+
+// newExpansion reads the caller's batch without taking it over: ops is cloned,
+// so nothing here is written through to the slice the caller still holds.
+func newExpansion(ops []Op) *expansion {
+	e := &expansion{
+		ops:     slices.Clone(ops),
+		carrier: make(map[ID]int),
+		gone:    make(map[ID]bool),
+		rewrote: make(map[ID]bool),
+	}
+	for i, op := range ops {
+		if op.BlockID == "" {
+			continue
+		}
+		switch op.Kind {
+		case OpDelete:
+			e.gone[op.BlockID] = true
+		case OpEdit:
+			// A later edit of the same block wins, as it does on apply.
+			e.carrier[op.BlockID] = i
+		}
+	}
+	return e
+}
+
+// content reports the text the batch leaves in src and whether the block
+// survives it at all.
+func (e *expansion) content(src Block) (string, bool) {
+	if e.gone[src.ID] {
+		return "", false
+	}
+	if i, ok := e.carrier[src.ID]; ok {
+		return e.ops[i].Content, true
+	}
+	return src.Content, true
+}
+
+// rewrite makes r's new name true in src. It writes through the op that carries
+// src's content, appending an edit only when no op does — a moved or untouched
+// block — so no block is ever given two ops that write content.
+func (e *expansion) rewrite(src Block, r rename) {
+	content, live := e.content(src)
+	if !live {
+		return
+	}
+	rewritten := RewriteTopicRef(content, r.oldKey, r.newName)
+	if rewritten == content {
+		return
+	}
+	e.rewrote[src.ID] = true
+	if i, ok := e.carrier[src.ID]; ok {
+		e.ops[i].Content = rewritten
+		return
+	}
+	e.carrier[src.ID] = len(e.ops)
+	e.ops = append(e.ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+}
+
+// refuseOrphaning rejects an edit that would leave a topic root with a name no
+// reference can reach while blocks still reference the name it is dropping.
+// There is nothing to rewrite those references to — [[]] resolves to nothing —
+// so the only honest answers are refusing the edit or orphaning every backlink
+// silently.
 //
-// A source the batch already names is not counted: the batch is authoritative
-// over the blocks it writes (see expandRenames), and that is also how the
-// root's own self-reference is excluded. An unreferenced root may still become
-// unnamed, which the design allows.
-func refuseOrphaning(r rename, sources []Block, named map[ID]bool) error {
+// What counts is the text the batch will store: a source it deletes, or edits
+// into something that no longer names the topic, orphans nothing. That is also
+// how the root's own self-reference is excluded when the same edit drops it. An
+// unreferenced root may still become unnamed, which the design allows.
+func (e *expansion) refuseOrphaning(r rename, sources []Block) error {
 	for _, src := range sources {
-		if named[src.ID] {
+		content, live := e.content(src)
+		if !live || !referencesTopic(content, r.oldKey) {
 			continue
 		}
 		return fmt.Errorf("unname topic %s still referenced by %s: %w",
 			r.id, src.ID, ErrUnreferenceableTopic)
 	}
 	return nil
+}
+
+// referencesTopic reports whether content carries a reference resolving by key,
+// read through the grammar that built the index rather than a second one.
+func referencesTopic(content, key string) bool {
+	return slices.Contains(ParseRefs(content), Ref{Kind: RefTopic, TargetKey: key})
 }
 
 // renamesIn reports the name changes a batch makes, in batch order: an edit of

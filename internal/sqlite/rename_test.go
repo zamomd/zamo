@@ -133,6 +133,43 @@ func TestAIRenameKeepsReferencesResolving(t *testing.T) {
 	}
 }
 
+// "Rename a topic and move a block referencing it" arrives as one batch from
+// write_blocks. The move carries no content, so the stored text keeps the old
+// name unless the rename appends the rewrite next to it — and both ops touching
+// one block has to survive the apply.
+func TestRenameRewritesABlockTheBatchOnlyMoves(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	svc := renameService(repo)
+
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename and move"}
+	if _, err := svc.ApplyOps(t.Context(), meta, []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"},
+		{Kind: knowledge.OpMove, BlockID: "01NOTE", Parent: "01OTHER"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+
+	parent, _, content, ok := blockRow(t, repo, "01NOTE")
+	want := "We use [[Offline-first]] and [[Offline-first]] daily."
+	if !ok || content != want {
+		t.Errorf("moved block = %q (present %v), want %q", content, ok, want)
+	}
+	if parent != "01OTHER" {
+		t.Errorf("parent = %q, want the move applied too", parent)
+	}
+	links, err := repo.GetBacklinks(t.Context(), "01LOCAL")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
+		t.Errorf("backlinks = %v, want the reference still resolving after the batch", links)
+	}
+	if got := headGroup(t, repo, "01LOCAL"); got != headGroup(t, repo, "01NOTE") {
+		t.Errorf("rename and rewrite landed in different groups (%q), want one reviewable group", got)
+	}
+}
+
 // The point of CreateTopic: the reference the user clicked must resolve
 // afterwards, which only holds because the name is written verbatim and
 // title_key is derived from exactly that text.

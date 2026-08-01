@@ -332,6 +332,55 @@ func TestUnnamingATopicTheBatchAlreadyRewritesIsAllowed(t *testing.T) {
 	}
 }
 
+// Naming a source in the batch is not enough to excuse the unnaming: what
+// decides is whether the text the batch stores still points at the topic.
+func TestUnnamingATopicTheBatchStillReferencesIsRefused(t *testing.T) {
+	cases := []struct {
+		name string
+		op   Op
+	}{
+		{
+			name: "the batch edits the source but keeps the reference",
+			op:   Op{Kind: OpEdit, BlockID: "01NOTE", Content: "Still about [[Local-first]]."},
+		},
+		{
+			name: "the batch only moves the source, so its text stands",
+			op:   Op{Kind: OpMove, BlockID: "01NOTE", Parent: "01OTHER"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+				blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+			svc := NewService(nil, repo, seqIDs(), nil)
+
+			ops := []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "###"}, tc.op}
+			_, err := svc.ApplyOps(t.Context(), ownerMeta(), ops)
+			if !errors.Is(err, ErrUnreferenceableTopic) {
+				t.Errorf("error = %v, want ErrUnreferenceableTopic", err)
+			}
+			if repo.applyCalls != 0 {
+				t.Errorf("a batch was applied despite the refusal: %d calls", repo.applyCalls)
+			}
+		})
+	}
+}
+
+// The root's own body dropping the reference is the same case as any other
+// source dropping it, and is what lets a topic be unnamed at all.
+func TestUnnamingATopicWhoseOnlyReferenceIsItsOwnBodyIsAllowed(t *testing.T) {
+	root := blk("01ROOT", "", 0, "Local-first\nSee also [[Local-first]].")
+	repo := renameRepo(root, root)
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "###\nNo reference left."); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Errorf("ops = %+v, want the root edit alone", repo.applyOps)
+	}
+}
+
 // A bracketed name cannot be written inside [[...]], so taking a topic to one
 // is the same transition as unnaming it: the backlinks have nothing to point
 // at. What is refused is that transition, not the name — see the sibling test.
@@ -363,7 +412,9 @@ func TestRenamingAnUnreferencedTopicToABracketedNameIsAllowed(t *testing.T) {
 	}
 }
 
-func TestRenameSkipsTheRootsOwnSelfReference(t *testing.T) {
+// The root's body naming its own topic by the old name is as stale as any other
+// block's, and it is the rename's own op that would leave it so.
+func TestRenameFollowsTheRootsOwnSelfReference(t *testing.T) {
 	root := blk("01ROOT", "", 0, "Local-first\nSee also [[Local-first]].")
 	repo := renameRepo(root, root)
 	svc := NewService(nil, repo, seqIDs(), nil)
@@ -374,8 +425,9 @@ func TestRenameSkipsTheRootsOwnSelfReference(t *testing.T) {
 	if len(repo.applyOps) != 1 {
 		t.Fatalf("ops = %+v, want the root's edit alone and never a second edit of it", repo.applyOps)
 	}
-	if repo.applyOps[0].Content != "Offline-first\nSee also [[Local-first]]." {
-		t.Errorf("root content = %q, want the caller's text untouched", repo.applyOps[0].Content)
+	want := "Offline-first\nSee also [[Offline-first]]."
+	if got := repo.applyOps[0].Content; got != want {
+		t.Errorf("root content = %q, want %q: the rewrite lands on the rename's own op", got, want)
 	}
 }
 
@@ -475,38 +527,94 @@ func TestAIRenameExpandsTheSameWayTheOwnersDoes(t *testing.T) {
 	}
 }
 
-func TestRenameLeavesBlocksTheBatchAlreadyNamesToTheirOwnOps(t *testing.T) {
-	referencing := blk("01NOTE", "01ZIG", 0, "We use [[Local-first]].")
+// A rename is expanded against the text the batch will actually store, so a
+// block the batch already names is skipped only when there is nothing left to
+// rewrite in it. Anything else leaves an accepted [[Local-first]] pointing at a
+// topic that no longer exists.
+func TestRenameRewritesTheContentTheBatchWillStore(t *testing.T) {
 	cases := []struct {
 		name string
 		op   Op
+		want []Op // the ops after the root's own rename op
 	}{
 		{
-			name: "the batch edits the referencing block itself",
+			name: "an edit that keeps the reference is rewritten in place",
 			op:   Op{Kind: OpEdit, BlockID: "01NOTE", Content: "Rewritten by the author, still [[Local-first]]."},
+			want: []Op{{Kind: OpEdit, BlockID: "01NOTE", Content: "Rewritten by the author, still [[Offline-first]]."}},
 		},
 		{
-			name: "the batch deletes the referencing block",
+			name: "an edit that drops the reference is left alone",
+			op:   Op{Kind: OpEdit, BlockID: "01NOTE", Content: "Rewritten by the author, no reference left."},
+			want: []Op{{Kind: OpEdit, BlockID: "01NOTE", Content: "Rewritten by the author, no reference left."}},
+		},
+		{
+			// A move carries no content, so the stored text stands — and stays
+			// stale unless the rewrite is appended alongside it.
+			name: "a move gets the rewrite the batch cannot carry",
+			op:   Op{Kind: OpMove, BlockID: "01NOTE", Parent: "01OTHER"},
+			want: []Op{
+				{Kind: OpMove, BlockID: "01NOTE", Parent: "01OTHER"},
+				{Kind: OpEdit, BlockID: "01NOTE", Content: "We use [[Offline-first]]."},
+			},
+		},
+		{
+			name: "a delete has nothing to rewrite",
 			op:   Op{Kind: OpDelete, BlockID: "01NOTE"},
+			want: []Op{{Kind: OpDelete, BlockID: "01NOTE"}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"), referencing)
+			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+				blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
 			svc := NewService(nil, repo, seqIDs(), nil)
 
-			meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename and edit"}
+			meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename and more"}
 			ops := []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}
 			if _, err := svc.ApplyOps(t.Context(), meta, ops); err != nil {
 				t.Fatalf("ApplyOps: %v", err)
 			}
-			if len(repo.applyOps) != 2 {
-				t.Fatalf("ops = %+v, want the batch's own two ops and no third op for 01NOTE", repo.applyOps)
+			if got := repo.applyOps[0]; got.BlockID != "01ROOT" || got.Content != "Offline-first" {
+				t.Errorf("op 0 = %+v, want the rename itself", got)
 			}
-			if got := repo.applyOps[1]; got != tc.op {
-				t.Errorf("op 1 = %+v, want the author's op untouched", got)
+			if got := repo.applyOps[1:]; !slices.Equal(got, tc.want) {
+				t.Errorf("ops after the rename = %+v, want %+v", got, tc.want)
+			}
+			if !slices.Equal(ops, []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}) {
+				t.Errorf("the caller's slice was rewritten under it: %+v", ops)
 			}
 		})
+	}
+}
+
+// One block, one written content: a rewrite lands on the op the batch already
+// writes it through instead of adding a second one.
+func TestRenameWritesEachBlocksContentThroughOneOp(t *testing.T) {
+	note := blk("01NOTE", "01ZIG", 0, "Both [[Alpha]] and [[Beta]].")
+	repo := &fakeRepo{
+		blocks: map[ID]Block{
+			"01A":    blk("01A", "", 0, "Alpha"),
+			"01B":    blk("01B", "", 1, "Beta"),
+			"01NOTE": note,
+		},
+		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {note}},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename both topics"}
+	if _, err := svc.ApplyOps(t.Context(), meta, []Op{
+		{Kind: OpEdit, BlockID: "01A", Content: "Alpha prime"},
+		{Kind: OpEdit, BlockID: "01B", Content: "Beta prime"},
+		{Kind: OpEdit, BlockID: "01NOTE", Content: "Still both [[Alpha]] and [[Beta]]."},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	if len(repo.applyOps) != 3 {
+		t.Fatalf("ops = %+v, want the author's three ops and no fourth for 01NOTE", repo.applyOps)
+	}
+	want := "Still both [[Alpha prime]] and [[Beta prime]]."
+	if got := repo.applyOps[2]; got.BlockID != "01NOTE" || got.Content != want {
+		t.Errorf("op 2 = %+v, want the author's edit carrying both new names (%q)", got, want)
 	}
 }
 
