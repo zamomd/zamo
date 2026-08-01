@@ -51,8 +51,9 @@ export function parseRefs(content: string): Ref[] {
 
 // scanLine reports every reference on one line.
 function scanLine(line: string, add: (ref: Ref) => void): void {
+	const esc = new EscapeState();
 	for (let i = 0; i < line.length; i++) {
-		if (escapedAt(line, i)) {
+		if (!esc.step(line[i])) {
 			continue;
 		}
 		const topic = topicRefAt(line, i);
@@ -69,13 +70,25 @@ function scanLine(line: string, add: (ref: Ref) => void): void {
 	}
 }
 
-// escapedAt reports whether the punctuation at i is escaped in Markdown.
-function escapedAt(line: string, i: number): boolean {
-	let n = 0;
-	for (i--; i >= 0 && line[i] === "\\"; i--) {
-		n++;
+// EscapeState follows Markdown's backslash escaping along one line: an odd run
+// of backslashes escapes the character after it, an even run leaves a literal
+// backslash and an active character. The Go parser steps the same state over
+// the same bytes (internal/knowledge/refs.go), which is what keeps the two
+// readings of a block identical.
+class EscapeState {
+	private escaped = false;
+
+	// step advances over c and reports whether it is active: able to open a
+	// reference, rather than a backslash or the character one escapes.
+	step(c: string): boolean {
+		if (c === "\\") {
+			this.escaped = !this.escaped;
+			return false;
+		}
+		const active = !this.escaped;
+		this.escaped = false;
+		return active;
 	}
-	return n % 2 === 1;
 }
 
 // topicRefAt reports the [[Topic]] reference starting at i: its raw body and

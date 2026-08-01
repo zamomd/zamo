@@ -101,10 +101,12 @@ func TestRenameTopicRewritesReferencesInOneGroup(t *testing.T) {
 	}
 }
 
+// concurrentRenameRepo lands one write between the moment a rename reads the
+// reference index and the moment it applies — the window the guards exist for.
 type concurrentRenameRepo struct {
 	*Repo
-	t   *testing.T
-	add bool
+	t  *testing.T
+	op knowledge.Op
 }
 
 func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key string) ([]knowledge.Block, error) {
@@ -112,15 +114,8 @@ func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key s
 	if err != nil {
 		return nil, err
 	}
-	op := knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "A concurrent [[Local-first]] edit."}
-	if r.add {
-		op = knowledge.Op{
-			Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01ZIG",
-			Content: "A new [[Local-first]] reference.",
-		}
-	}
-	if err := r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent edit"), []knowledge.Op{op}); err != nil {
-		r.t.Fatalf("concurrent edit: %v", err)
+	if err := r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent write"), []knowledge.Op{r.op}); err != nil {
+		r.t.Fatalf("concurrent write: %v", err)
 	}
 	return blocks, nil
 }
@@ -128,7 +123,10 @@ func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key s
 func TestRenameRefusesANewConcurrentReference(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
-	concurrent := &concurrentRenameRepo{Repo: repo, t: t, add: true}
+	concurrent := &concurrentRenameRepo{Repo: repo, t: t, op: knowledge.Op{
+		Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01ZIG",
+		Content: "A new [[Local-first]] reference.",
+	}}
 	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
@@ -146,7 +144,10 @@ func TestRenameRefusesANewConcurrentReference(t *testing.T) {
 func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
-	svc := knowledge.NewService(nil, &concurrentRenameRepo{Repo: repo, t: t}, func() knowledge.ID { return "rename" }, nil)
+	concurrent := &concurrentRenameRepo{Repo: repo, t: t, op: knowledge.Op{
+		Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "A concurrent [[Local-first]] edit.",
+	}}
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
 	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
@@ -157,6 +158,27 @@ func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
 	}
 	if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != "A concurrent [[Local-first]] edit." {
 		t.Errorf("source content = %q, want the concurrent edit preserved", content)
+	}
+}
+
+// A guarded block that is gone was written over just as surely as one holding
+// different text, and the caller's answer to both is the same: prepare the
+// rename again. Reporting ErrNotFound instead would send it looking for a block
+// it never named.
+func TestRenameReportsAConcurrentlyDeletedBlockAsAConcurrentWrite(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	concurrent := &concurrentRenameRepo{Repo: repo, t: t, op: knowledge.Op{
+		Kind: knowledge.OpDelete, BlockID: "01LOCAL",
+	}}
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
+
+	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
+	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
+		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "01LOCAL"); ok {
+		t.Error("the topic is back, want the concurrent delete preserved")
 	}
 }
 

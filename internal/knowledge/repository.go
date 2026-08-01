@@ -21,6 +21,13 @@ type Repository interface {
 
 	// ApplyOps applies a prepared, ordered batch in one transaction,
 	// writing one revision per touched block plus the projection.
+	//
+	// An op may carry an optimistic guard — Op.ExpectedContent, and for a
+	// rename Op.ExpectedTopicRefs — stating what the domain read while
+	// preparing the batch. An implementation must check every guard inside
+	// that same transaction and refuse the batch with ErrConcurrentWrite
+	// when the base has moved on, or a rename silently overwrites the write
+	// that landed between the preparation and the apply.
 	ApplyOps(ctx context.Context, groupID ID, meta WriteMeta, ops []Op) error
 
 	ListRevisions(ctx context.Context, blockID ID) ([]Revision, error)

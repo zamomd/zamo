@@ -1,21 +1,21 @@
 package knowledge
 
 import (
+	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"testing"
 )
 
+// equalPublicOps compares ops by everything a caller writes, ignoring the
+// guards an expansion attaches. Marshalling is the comparison because it drops
+// exactly those fields, for the reason they are unexported: a guard is one
+// expansion's reading of the base and never travels.
 func equalPublicOps(a, b []Op) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	return slices.EqualFunc(a, b, func(a, b Op) bool {
-		a.expectedContent, b.expectedContent = nil, nil
-		a.expectedTopicKey, b.expectedTopicKey = "", ""
-		a.expectedRefIDs, b.expectedRefIDs = nil, nil
-		return reflect.DeepEqual(a, b)
+	return slices.EqualFunc(a, b, func(x, y Op) bool {
+		jx, _ := json.Marshal(x)
+		jy, _ := json.Marshal(y)
+		return string(jx) == string(jy)
 	})
 }
 
@@ -306,6 +306,57 @@ func TestMovingAnUnreferencedTopicUnderAnotherBlockIsAllowed(t *testing.T) {
 	}
 	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpMove {
 		t.Errorf("ops = %+v, want the move applied unchanged", repo.applyOps)
+	}
+}
+
+// A move that unnames a topic writes no content, so nothing in the batch would
+// notice the root being renamed under it — and the refusal it may raise was
+// decided against a name that is no longer there.
+func TestMovingATopicGuardsAgainstAConcurrentRename(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
+		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	got, ok := repo.applyOps[0].ExpectedContent()
+	if !ok || got != "Local-first" {
+		t.Errorf("guard = %q (set %v), want the name the refusal was decided against", got, ok)
+	}
+}
+
+// Two renames in one batch share a source block, so the reference index is read
+// twice and a concurrent writer can land between the reads. The rewrite is
+// computed from the first read, so the guard has to stay on it: moved to the
+// second, it would pass against text the batch is about to overwrite with a
+// rewrite of what that text replaced.
+func TestGuardKeepsTheTextTheRewriteWasComputedFrom(t *testing.T) {
+	note := blk("01NOTE", "01ZIG", 0, "We use [[Alpha]] and [[Beta]].")
+	concurrent := blk("01NOTE", "01ZIG", 0, "Rewritten by someone else, still [[Alpha]] and [[Beta]].")
+	repo := &fakeRepo{
+		blocks: map[ID]Block{
+			"01A": blk("01A", "", 0, "Alpha"),
+			"01B": blk("01B", "", 1, "Beta"),
+		},
+		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {concurrent}},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
+		{Kind: OpEdit, BlockID: "01A", Content: "Alpha renamed"},
+		{Kind: OpEdit, BlockID: "01B", Content: "Beta renamed"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	i := slices.IndexFunc(repo.applyOps, func(op Op) bool { return op.BlockID == "01NOTE" })
+	if i < 0 {
+		t.Fatalf("ops = %+v, want a rewrite of 01NOTE", repo.applyOps)
+	}
+	got, ok := repo.applyOps[i].ExpectedContent()
+	if !ok || got != note.Content {
+		t.Errorf("guard = %q (set %v), want %q", got, ok, note.Content)
 	}
 }
 

@@ -227,9 +227,10 @@ func (b batch) revision(id knowledge.ID, op knowledge.Op, seq int, snap knowledg
 // ordered op list in one immediate transaction: one revision row per touched
 // block plus the blocks projection, and one revision_groups row tying them
 // together. Ops carry final identifiers (BlockID is the target block — the
-// new block for add; Parent/From/To are resolved ids), so storage only
-// writes. The apply is atomic: any error rolls the whole transaction back,
-// so search and the tree never observe a half-applied batch.
+// new block for add; Parent/From/To are resolved ids), so the only reading
+// storage does on its own account is the optimistic guard an op may carry (see
+// guard). The apply is atomic: any error rolls the whole transaction back, so
+// search and the tree never observe a half-applied batch.
 func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op) error {
 	b := batch{
 		groupID: groupID,
@@ -248,38 +249,8 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	defer tx.Rollback()
-	for _, op := range ops {
-		expected, guarded := op.ExpectedContent()
-		if !guarded {
-			continue
-		}
-		var current string
-		err := tx.QueryRowContext(ctx,
-			`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&current)
-		if err != nil {
-			return fmt.Errorf("guard apply %s %s: %w", op.Kind, op.BlockID, translate(err))
-		}
-		if current != expected {
-			return fmt.Errorf("guard apply %s %s: %w", op.Kind, op.BlockID, knowledge.ErrConcurrentWrite)
-		}
-	}
-	for _, op := range ops {
-		key, expected, guarded := op.ExpectedTopicRefs()
-		if !guarded {
-			continue
-		}
-		current, err := queryIDs(ctx, tx, `
-SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY source_id`, key)
-		if err != nil {
-			return fmt.Errorf("guard topic references %q: %w", key, err)
-		}
-		want := make([]string, len(expected))
-		for i, id := range expected {
-			want[i] = string(id)
-		}
-		if !slices.Equal(current, want) {
-			return fmt.Errorf("guard topic references %q: %w", key, knowledge.ErrConcurrentWrite)
-		}
+	if err := guard(ctx, tx, ops); err != nil {
+		return err
 	}
 
 	if _, err := tx.ExecContext(ctx,
@@ -293,6 +264,47 @@ SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY sour
 		}
 	}
 	return tx.Commit()
+}
+
+// guard checks the optimistic preconditions a rename expansion attached to the
+// batch (see knowledge.Op.ExpectedContent and ExpectedTopicRefs). It runs inside
+// the apply transaction, which is what makes the check hold: BEGIN IMMEDIATE has
+// the write lock already, so nothing can land between the check and the writes
+// it clears the way for.
+//
+// A guarded block that is gone was written over as surely as one holding other
+// text, so both answer ErrConcurrentWrite — what the caller has to do, prepare
+// the rename again, is the same either way.
+func guard(ctx context.Context, tx *sql.Tx, ops []knowledge.Op) error {
+	for _, op := range ops {
+		if expected, guarded := op.ExpectedContent(); guarded {
+			var current string
+			err := tx.QueryRowContext(ctx,
+				`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&current)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("guard %s %s: %w", op.Kind, op.BlockID, translate(err))
+			}
+			if err != nil || current != expected {
+				return fmt.Errorf("guard %s %s: %w", op.Kind, op.BlockID, knowledge.ErrConcurrentWrite)
+			}
+		}
+		key, expected, guarded := op.ExpectedTopicRefs()
+		if !guarded {
+			continue
+		}
+		// Ordered by source_id to compare against BlocksReferencingTopic,
+		// which orders the sources it hands the domain by block id.
+		current, err := queryIDs(ctx, tx, `
+SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY source_id`, key)
+		if err != nil {
+			return fmt.Errorf("guard topic references %q: %w", key, err)
+		}
+		same := func(id string, want knowledge.ID) bool { return id == string(want) }
+		if !slices.EqualFunc(current, expected, same) {
+			return fmt.Errorf("guard topic references %q: %w", key, knowledge.ErrConcurrentWrite)
+		}
+	}
+	return nil
 }
 
 // applyOp applies one resolved operation inside the apply transaction.

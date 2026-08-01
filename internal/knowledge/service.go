@@ -187,6 +187,7 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 type expansion struct {
 	ops     []Op
 	carrier map[ID]int  // block id → index in ops of the op writing its content
+	first   map[ID]int  // block id → index in ops of the first op naming it
 	gone    map[ID]bool // block id → the batch deletes it
 	rewrote map[ID]bool // block id → a rename changed its text
 	split   bool        // a rewrite landed on a block other than the renamed root
@@ -198,12 +199,16 @@ func newExpansion(ops []Op) *expansion {
 	e := &expansion{
 		ops:     slices.Clone(ops),
 		carrier: make(map[ID]int),
+		first:   make(map[ID]int),
 		gone:    make(map[ID]bool),
 		rewrote: make(map[ID]bool),
 	}
 	for i, op := range ops {
 		if op.BlockID == "" {
 			continue
+		}
+		if _, seen := e.first[op.BlockID]; !seen {
+			e.first[op.BlockID] = i
 		}
 		switch op.Kind {
 		case OpDelete:
@@ -240,43 +245,46 @@ func (e *expansion) rewrite(src Block, r rename) {
 	if rewritten == content {
 		return
 	}
-	e.expect(src.ID, src.Content)
 	e.rewrote[src.ID] = true
 	e.split = e.split || src.ID != r.id
 	if i, ok := e.carrier[src.ID]; ok {
 		e.ops[i].Content = rewritten
-		return
+	} else {
+		e.carrier[src.ID] = len(e.ops)
+		e.ops = append(e.ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
 	}
-	e.carrier[src.ID] = len(e.ops)
-	op := Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten}
-	op.expectContent(src.Content)
-	e.ops = append(e.ops, op)
+	e.expect(src.ID, src.Content)
 }
 
+// expect records the stored text a rename was worked out from, on the op that
+// will write the block — or, for a block the batch only moves, on the move,
+// which writes nothing but was still decided against that text. Storage refuses
+// the batch if the text is no longer there. The op keeps the first text it is
+// given: a batch renaming two topics reads the base once per rename, and it is
+// the read the rewrite was computed from that has to still hold.
 func (e *expansion) expect(id ID, content string) {
 	if i, ok := e.carrier[id]; ok {
 		e.ops[i].expectContent(content)
 		return
 	}
-	for i := range e.ops {
-		if e.ops[i].BlockID == id {
-			e.ops[i].expectContent(content)
-			return
-		}
+	if i, ok := e.first[id]; ok {
+		e.ops[i].expectContent(content)
 	}
 }
 
+// expectRefs records which blocks referenced the topic when the rename read the
+// index, so a source that arrives meanwhile — one no rewrite in this batch keeps
+// true — is caught on apply rather than silently orphaned.
 func (e *expansion) expectRefs(id ID, key string, sources []Block) {
+	i, ok := e.first[id]
+	if !ok {
+		return
+	}
 	ids := make([]ID, len(sources))
-	for i, source := range sources {
-		ids[i] = source.ID
+	for j, source := range sources {
+		ids[j] = source.ID
 	}
-	for i := range e.ops {
-		if e.ops[i].BlockID == id {
-			e.ops[i].expectTopicRefs(key, ids)
-			return
-		}
-	}
+	e.ops[i].expectTopicRefs(key, ids)
 }
 
 // refuseOrphaning rejects an edit that would leave a topic root with a name no
@@ -323,21 +331,24 @@ func referencesTopic(content, key string) bool {
 // nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var changed []ID
+	seen := make(map[ID]bool)
 	final := make(map[ID]int)     // block id → index in ops of the edit that decides its content
 	parent := make(map[ID]string) // block id → parent left by its last move
 	for i, op := range ops {
-		if (op.Kind != OpEdit && op.Kind != OpMove) || op.BlockID == "" {
+		if op.BlockID == "" {
 			continue
 		}
-		if _, seen := final[op.BlockID]; !seen {
-			if _, moved := parent[op.BlockID]; !moved {
-				changed = append(changed, op.BlockID)
-			}
-		}
-		if op.Kind == OpEdit {
+		switch op.Kind {
+		case OpEdit:
 			final[op.BlockID] = i
-		} else {
+		case OpMove:
 			parent[op.BlockID] = op.Parent
+		default:
+			continue
+		}
+		if !seen[op.BlockID] {
+			seen[op.BlockID] = true
+			changed = append(changed, op.BlockID)
 		}
 	}
 	if len(changed) == 0 {

@@ -90,7 +90,7 @@
   },
   {
     "name": "a backslash escapes a topic reference",
-    "content": "\\[[Zig]] is still indexed.",
+    "content": "\\[[Zig]] is literal text.",
     "refs": []
   },
   {
@@ -102,6 +102,21 @@
     "name": "two backslashes leave a topic reference active",
     "content": "\\\\[[Zig]]",
     "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "an escaped bracket does not swallow the reference behind it",
+    "content": "\\[[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a reference does not carry its escaping past itself",
+    "content": "[[Rust]] and \\[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "a backslash inside a block-reference label does not split it",
+    "content": "((01JT4X9K2M8P0QRSTVWXYZ2345|a \\) label))",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
   },
   {
     "name": "mixed kinds keep source order",

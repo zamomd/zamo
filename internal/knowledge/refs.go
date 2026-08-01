@@ -47,8 +47,9 @@ func ParseRefs(content string) []Ref {
 func scanLine(line string, add func(Ref)) {
 	// Not a range loop: a matched reference advances i past its whole span,
 	// which a range variable would discard.
+	var esc escapeState
 	for i := 0; i < len(line); i++ {
-		if escapedAt(line, i) {
+		if !esc.step(line[i]) {
 			continue
 		}
 		if body, end, ok := topicRefAt(line, i); ok {
@@ -63,15 +64,23 @@ func scanLine(line string, add func(Ref)) {
 	}
 }
 
-// escapedAt reports whether the punctuation at i is escaped in Markdown. An
-// odd run of backslashes escapes it; an even run leaves a literal backslash
-// followed by active punctuation.
-func escapedAt(line string, i int) bool {
-	n := 0
-	for i--; i >= 0 && line[i] == '\\'; i-- {
-		n++
+// escapeState follows Markdown's backslash escaping along one line: an odd run
+// of backslashes escapes the character after it, an even run leaves a literal
+// backslash and an active character. The single definition of an escape — the
+// reader steps it over the line it scans, the rewriter over the line it copies,
+// and neither can drift from the other.
+type escapeState struct{ escaped bool }
+
+// step advances over c and reports whether it is active: able to open a
+// reference, rather than a backslash or the character one escapes.
+func (e *escapeState) step(c byte) bool {
+	if c == '\\' {
+		e.escaped = !e.escaped
+		return false
 	}
-	return n%2 == 1
+	active := !e.escaped
+	e.escaped = false
+	return active
 }
 
 // topicRefAt reports the [[Topic]] reference starting at i: its raw body and
@@ -147,8 +156,9 @@ func RewriteTopicRef(content, oldKey, newName string) string {
 // rewriteLine rewrites matching topic references on one line.
 func rewriteLine(line, oldKey, newName string) string {
 	var b strings.Builder
+	var esc escapeState
 	for i := 0; i < len(line); i++ {
-		if escapedAt(line, i) {
+		if !esc.step(line[i]) {
 			b.WriteByte(line[i])
 			continue
 		}
