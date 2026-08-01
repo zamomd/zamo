@@ -5,6 +5,13 @@
 // it, or a reference resolves differently depending on which side read the
 // text. Rewriting references on rename is a Go-only concern with no GUI
 // affordance, so RewriteTopicRef has no port here.
+//
+// The parity is bounded by character set, not absolute. Go's strings.Fields
+// splits on unicode.IsSpace, which counts U+0085 and not U+FEFF, while JS's \s
+// is the reverse; strings.ToLower maps U+0130 to "i" where JS toLowerCase maps
+// it to "i" plus U+0307. A topic name carrying one of those would index under
+// one key and resolve against another. Judged not worth a normalization layer
+// on both sides — recorded so the next person does not have to rediscover it.
 
 // RefKind distinguishes the two reference forms found in block content.
 export type RefKind = "topic" | "block";
@@ -152,29 +159,66 @@ function* fencedLines(content: string): Generator<[line: string, fenced: boolean
 	}
 }
 
-// stripInlineCode replaces the contents of every closed backtick span with
-// spaces, preserving offsets so the caller can scan the line as-is.
+// stripInlineCode replaces every closed backtick span with spaces, preserving
+// offsets so the caller can scan the line as-is.
+//
+// Spans are matched by backtick run, as CommonMark and therefore markdown-it
+// do: a run of n backticks opens a span that the next run of exactly n closes,
+// and a run with no matching closer is literal text the scan continues past.
+// Counting runs is what makes ``[[Zig]]`` code to the reader and to the index
+// alike — the single-backtick reading indexed it and left a backlink pointing
+// into a code sample nobody could see.
+//
+// The grammar stops there. It has no escape mechanism, so a backslash before
+// [[ escapes the bracket for markdown's renderer but not here, and \[[Zig]]
+// still indexes: matching markdown's escaping too would mean a second markdown
+// implementation in two languages, and the reference forms are rare enough
+// characters that quoting them in code — which is handled — is how they
+// actually turn up.
 function stripInlineCode(line: string): string {
-	let open = line.indexOf("`");
-	if (open < 0) {
-		return line;
-	}
 	const chars = line.split("");
-	while (open >= 0 && open < chars.length - 1) {
-		const closeIdx = chars.indexOf("`", open + 1);
-		if (closeIdx < 0) {
-			break;
+	let i = 0;
+	while (i < chars.length) {
+		if (chars[i] !== "`") {
+			i++;
+			continue;
 		}
-		for (let i = open; i <= closeIdx; i++) {
-			chars[i] = " ";
+		const open = i;
+		i = runEnd(chars, i);
+		const closeEnd = matchingRun(chars, i, i - open);
+		if (closeEnd >= 0) {
+			for (let k = open; k < closeEnd; k++) {
+				chars[k] = " ";
+			}
+			i = closeEnd;
 		}
-		const next = chars.indexOf("`", closeIdx + 1);
-		if (next < 0) {
-			break;
-		}
-		open = next;
 	}
 	return chars.join("");
+}
+
+// runEnd returns the offset just past the backtick run starting at i.
+function runEnd(chars: string[], i: number): number {
+	while (i < chars.length && chars[i] === "`") {
+		i++;
+	}
+	return i;
+}
+
+// matchingRun finds the next backtick run of exactly n after from, returning
+// the offset just past it, or -1 when there is none.
+function matchingRun(chars: string[], from: number, n: number): number {
+	for (let i = from; i < chars.length; ) {
+		if (chars[i] !== "`") {
+			i++;
+			continue;
+		}
+		const run = runEnd(chars, i);
+		if (run - i === n) {
+			return run;
+		}
+		i = run;
+	}
+	return -1;
 }
 
 // validULID reports whether s is 26 Crockford base32 characters.

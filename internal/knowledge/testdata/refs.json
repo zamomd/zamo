@@ -88,6 +88,36 @@
     "refs": [{"kind": "topic", "targetKey": "rust"}]
   },
   {
+    "name": "a double-backtick code span is ignored",
+    "content": "Write ``[[Zig]]`` to link. Then [[Rust]].",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "a shorter run inside a longer span does not close it",
+    "content": "a `` b ` c `` d [[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a longer run inside a shorter span does not close it",
+    "content": "`a``b` [[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a backtick run with no matching closer is text",
+    "content": "``not a span ` [[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a backslash does not escape a topic reference",
+    "content": "\\[[Zig]] is still indexed.",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a backslash does not escape a block reference",
+    "content": "\\((01JT4X9K2M8P0QRSTVWXYZ2345|x))",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
     "name": "unclosed fence swallows the rest",
     "content": "text\n```\n[[Zig]]",
     "refs": []

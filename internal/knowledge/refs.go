@@ -214,30 +214,65 @@ func fencedLines(content string) iter.Seq2[string, bool] {
 	}
 }
 
-// stripInlineCode replaces the contents of every closed backtick span with
-// spaces, preserving offsets so the caller can scan the line as-is.
+// stripInlineCode replaces every closed backtick span with spaces, preserving
+// offsets so the caller can scan the line as-is.
+//
+// Spans are matched by backtick run, as CommonMark and therefore markdown-it
+// do: a run of n backticks opens a span that the next run of exactly n closes,
+// and a run with no matching closer is literal text the scan continues past.
+// Counting runs is what makes a reference inside a two-backtick span code to
+// the reader and to the index alike — the single-backtick reading indexed it
+// and left a backlink pointing into a code sample nobody could see.
+//
+// The grammar stops there. It has no escape mechanism, so a backslash before
+// [[ escapes the bracket for markdown's renderer but not here, and \[[Zig]]
+// still indexes: matching markdown's escaping too would mean a second markdown
+// implementation in two languages, and the reference forms are rare enough
+// characters that quoting them in code — which is handled — is how they
+// actually turn up.
 func stripInlineCode(line string) string {
-	open := strings.IndexByte(line, '`')
-	if open < 0 {
-		return line
-	}
 	b := []byte(line)
-	for open >= 0 && open < len(b)-1 {
-		closeIdx := strings.IndexByte(string(b[open+1:]), '`')
-		if closeIdx < 0 {
-			break
+	i := 0
+	for i < len(b) {
+		if b[i] != '`' {
+			i++
+			continue
 		}
-		closeIdx += open + 1
-		for i := open; i <= closeIdx; i++ {
-			b[i] = ' '
+		open := i
+		i = runEnd(b, i)
+		if closeEnd, ok := matchingRun(b, i, i-open); ok {
+			for k := open; k < closeEnd; k++ {
+				b[k] = ' '
+			}
+			i = closeEnd
 		}
-		next := strings.IndexByte(string(b[closeIdx+1:]), '`')
-		if next < 0 {
-			break
-		}
-		open = closeIdx + 1 + next
 	}
 	return string(b)
+}
+
+// runEnd returns the offset just past the backtick run starting at i.
+func runEnd(b []byte, i int) int {
+	for i < len(b) && b[i] == '`' {
+		i++
+	}
+	return i
+}
+
+// matchingRun finds the next backtick run of exactly n after from, returning
+// the offset just past it.
+func matchingRun(b []byte, from, n int) (end int, ok bool) {
+	for i := from; i < len(b); {
+		if b[i] != '`' {
+			i++
+			continue
+		}
+		run := runEnd(b, i)
+		if run-i == n {
+			return run, true
+		}
+		i = run
+	}
+	return 0, false
 }
 
 // validULID reports whether s is 26 Crockford base32 characters. The domain
