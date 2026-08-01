@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
+	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
@@ -18,6 +19,7 @@
 	const hasChildren = $derived(node.children.length > 0);
 	const expanded = $derived(!base.collapsed.has(node.block.ID));
 	const editing = $derived(base.editingID === node.block.ID);
+	const backlinksOpen = $derived(base.openBacklinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
 	const unreviewed = $derived(node.block.Unreviewed);
 	const ghost = $derived(base.ghosts.has(node.block.ID));
@@ -209,6 +211,18 @@
 				>
 					⌖
 				</button>
+				<button
+					type="button"
+					class="backlinks-toggle"
+					class:open={backlinksOpen}
+					title="show blocks that link here"
+					aria-expanded={backlinksOpen}
+					aria-label="toggle linked references"
+					disabled={base.busy}
+					onclick={() => base.toggleBacklinks(node.block.ID)}
+				>
+					∞
+				</button>
 			</span>
 		{/if}
 
@@ -276,6 +290,9 @@
 			</button>
 		{/if}
 	</div>
+	{#if backlinksOpen}
+		<Backlinks block={node.block} />
+	{/if}
 	{#if historyOpen}
 		<HistoryPanel block={node.block} />
 	{/if}

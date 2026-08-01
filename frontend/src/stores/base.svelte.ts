@@ -1,6 +1,7 @@
 import { Events } from "@wailsio/runtime";
-import { SvelteSet } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type {
+	Backlink,
 	Block,
 	OutlineChange,
 	Revision,
@@ -74,6 +75,9 @@ class BaseStore {
 
 	highlightID = $state<string | null>(null);
 	highlightNonce = $state(0);
+
+	openBacklinks = new SvelteSet<string>();
+	backlinksById = new SvelteMap<string, Backlink[]>();
 
 	historyID = $state<string | null>(null);
 	revisions = $state<Revision[]>([]);
@@ -167,6 +171,14 @@ class BaseStore {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
 			this.focusID = null;
 		}
+		this.backlinksById.clear();
+		for (const id of [...this.openBacklinks]) {
+			if (findBlock(this.forest, id) === null) {
+				this.openBacklinks.delete(id);
+				continue;
+			}
+			await this.refreshBacklinks(id);
+		}
 		this.dropStaleHistory();
 		if (this.pendingReveal !== null) {
 			const id = this.pendingReveal;
@@ -191,6 +203,12 @@ class BaseStore {
 			if (this.selectedTopicID === topicID) {
 				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
 				this.focusID = null;
+			}
+			for (const id of [...this.openBacklinks]) {
+				if (findBlock(this.forest, id) === null) {
+					this.openBacklinks.delete(id);
+					this.backlinksById.delete(id);
+				}
 			}
 			this.dropStaleHistory();
 			return;
@@ -834,6 +852,26 @@ class BaseStore {
 
 	rejectPage(id: string): Promise<void> {
 		return this.review(() => App.RejectPage(id), "rejected page");
+	}
+
+	async toggleBacklinks(id: string): Promise<void> {
+		if (this.openBacklinks.has(id)) {
+			this.openBacklinks.delete(id);
+			this.backlinksById.delete(id);
+			return;
+		}
+		this.openBacklinks.add(id);
+		if (!this.backlinksById.has(id)) {
+			await this.refreshBacklinks(id);
+		}
+	}
+
+	async refreshBacklinks(id: string): Promise<void> {
+		try {
+			this.backlinksById.set(id, (await App.Backlinks(id)) ?? []);
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		}
 	}
 
 	async toggleHistory(id: string): Promise<void> {
