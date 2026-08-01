@@ -44,6 +44,7 @@ const readable: Record<string, string> = {
 	duplicate_topic: "A topic with that name already exists.",
 	unreferenceable_topic:
 		"That name can't be linked to. A topic name can't contain [ or ], and a topic other blocks link to can't be left unnamed.",
+	atomic_group: "This is part of a topic rename — accept or reject the whole batch on the Changes screen.",
 	busy: "The database is busy. Try again in a moment.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",

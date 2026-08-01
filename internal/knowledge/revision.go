@@ -39,6 +39,12 @@ type WriteMeta struct {
 	Author Author
 	Source Source
 	Title  string // shown in the Changes screen as the batch description
+	// Atomic marks a batch whose blocks are only true together — a topic
+	// rename and the reference rewrites it implies. Review then takes the
+	// whole group or refuses with ErrAtomicGroup: accepting a rewritten
+	// [[New name]] while rejecting the rename would leave it resolving to
+	// nothing.
+	Atomic bool
 }
 
 // Applied reports what an ApplyOps batch did: the group that ties its
@@ -57,11 +63,14 @@ type Applied struct {
 // the AI revision underneath it is what is actually awaiting review, so
 // GroupID can differ from Head.GroupID. "Accept batch" must key off GroupID,
 // not Head.GroupID, or it accepts the wrong — already-reviewed — batch.
+// Atomic says that group has to be reviewed whole (see WriteMeta.Atomic), so
+// the screen offers the batch's controls for this block and not its own.
 type UnreviewedBlock struct {
 	Head       Revision
 	TopicID    ID
 	GroupID    ID
 	GroupTitle string
+	Atomic     bool
 }
 
 // UnreviewedChanges is everything awaiting review.

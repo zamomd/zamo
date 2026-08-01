@@ -167,6 +167,156 @@ func TestCreateTopicResolvesTheReferenceThatAskedForIt(t *testing.T) {
 	}
 }
 
+// aiRename renames 01LOCAL through the AI path and returns the revision group
+// carrying the rename and the rewrite it implies.
+func aiRename(t *testing.T, repo *Repo) knowledge.ID {
+	t.Helper()
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename the topic"}
+	applied, err := renameService(repo).ApplyOps(t.Context(), meta,
+		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"}})
+	if err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	return applied.GroupID
+}
+
+// A rename and the references it rewrote are only true together. Reviewing one
+// block of the pair would leave the other saying something the base no longer
+// supports — an accepted [[Offline-first]] pointing at a topic still called
+// Local-first, or the reverse.
+func TestHalfARenameCannotBeReviewed(t *testing.T) {
+	cases := []struct {
+		name string
+		do   func(*Repo) error
+	}{
+		{"accept the rewritten reference", func(r *Repo) error {
+			return r.MarkBlockReviewed(t.Context(), "01NOTE")
+		}},
+		{"reject the rename itself", func(r *Repo) error {
+			return r.RejectBlock(t.Context(), "01LOCAL")
+		}},
+		{"accept the page the rewrite lives on", func(r *Repo) error {
+			return r.MarkPageReviewed(t.Context(), "01ZIG")
+		}},
+		{"reject the page the rewrite lives on", func(r *Repo) error {
+			return r.RejectPage(t.Context(), "01ZIG")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := testRepo(t)
+			renameBase(t, repo)
+			aiRename(t, repo)
+
+			if err := tc.do(repo); !errors.Is(err, knowledge.ErrAtomicGroup) {
+				t.Fatalf("got %v, want ErrAtomicGroup", err)
+			}
+			if reviewedHead(t, repo, "01LOCAL") || reviewedHead(t, repo, "01NOTE") {
+				t.Error("the refused decision reviewed something anyway")
+			}
+			want := "We use [[Offline-first]] and [[Offline-first]] daily."
+			if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != want {
+				t.Errorf("referencing block = %q, want %q: the refusal must write nothing", content, want)
+			}
+		})
+	}
+}
+
+func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
+	t.Run("accept the batch", func(t *testing.T) {
+		repo := testRepo(t)
+		renameBase(t, repo)
+		group := aiRename(t, repo)
+
+		if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
+			t.Fatalf("MarkGroupReviewed: %v", err)
+		}
+		if !reviewedHead(t, repo, "01LOCAL") || !reviewedHead(t, repo, "01NOTE") {
+			t.Error("the batch left something unreviewed")
+		}
+	})
+
+	t.Run("reject the batch", func(t *testing.T) {
+		repo := testRepo(t)
+		renameBase(t, repo)
+		group := aiRename(t, repo)
+
+		if err := repo.UndoGroup(t.Context(), group); err != nil {
+			t.Fatalf("UndoGroup: %v", err)
+		}
+		if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
+			t.Errorf("root = %q, want the rename rolled back", content)
+		}
+		want := "We use [[Local-first]] and [[local-first]] daily."
+		if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != want {
+			t.Errorf("referencing block = %q, want %q", content, want)
+		}
+	})
+}
+
+// A page that happens to hold the whole group splits nothing, so it goes
+// through: the rule is about leaving half a group behind, not about pages.
+func TestAPageHoldingAWholeRenameIsAccepted(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG", Content: "About [[Zig]] itself."},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename"}
+	if _, err := renameService(repo).ApplyOps(t.Context(), meta,
+		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01ZIG", Content: "Ziglang"}}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+
+	if err := repo.MarkPageReviewed(t.Context(), "01ZIG"); err != nil {
+		t.Fatalf("MarkPageReviewed: %v", err)
+	}
+	if !reviewedHead(t, repo, "01ZIG") || !reviewedHead(t, repo, "01NOTE") {
+		t.Error("the page left something unreviewed")
+	}
+}
+
+// The rule must not spread to batches that are merely large.
+func TestAnOrdinaryBatchIsStillReviewedPerBlock(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	if err := repo.ApplyOps(t.Context(), "01G2", aiMeta("two edits"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by the AI."},
+		{Kind: knowledge.OpEdit, BlockID: "01OTHER", Content: "Also rewritten."},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+
+	if err := repo.MarkBlockReviewed(t.Context(), "01NOTE"); err != nil {
+		t.Fatalf("MarkBlockReviewed: %v", err)
+	}
+	if !reviewedHead(t, repo, "01NOTE") || reviewedHead(t, repo, "01OTHER") {
+		t.Error("a plain batch should be reviewable one block at a time")
+	}
+}
+
+// The Changes screen decides which controls to offer from this flag.
+func TestUnreviewedReportsARenameGroupAsAtomic(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	aiRename(t, repo)
+
+	changes, err := repo.ListUnreviewed(t.Context())
+	if err != nil {
+		t.Fatalf("ListUnreviewed: %v", err)
+	}
+	if len(changes.Blocks) != 2 {
+		t.Fatalf("blocks = %+v, want the root and the rewritten reference", changes.Blocks)
+	}
+	for _, b := range changes.Blocks {
+		if !b.Atomic {
+			t.Errorf("block %s is not marked atomic, so the screen would offer per-block buttons", b.Head.BlockID)
+		}
+	}
+}
+
 // reviewedHead reports the review state of a block's most recent revision.
 func reviewedHead(t *testing.T, repo *Repo, id string) bool {
 	t.Helper()

@@ -206,12 +206,15 @@ export interface TopicNode {
  * the AI revision underneath it is what is actually awaiting review, so
  * GroupID can differ from Head.GroupID. "Accept batch" must key off GroupID,
  * not Head.GroupID, or it accepts the wrong — already-reviewed — batch.
+ * Atomic says that group has to be reviewed whole (see WriteMeta.Atomic), so
+ * the screen offers the batch's controls for this block and not its own.
  */
 export interface UnreviewedBlock {
     "Head": Revision;
     "TopicID": ID;
     "GroupID": ID;
     "GroupTitle": string;
+    "Atomic": boolean;
 }
 
 /**

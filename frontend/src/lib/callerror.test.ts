@@ -25,6 +25,13 @@ describe("messageFor", () => {
 		expect(messageFor(err)).toMatch(/can't be linked to/);
 	});
 
+	it("points at the batch when a rename is reviewed piecemeal", () => {
+		const err = new Error("x", {
+			cause: { code: "atomic_group", message: "change must be reviewed as one group" },
+		});
+		expect(messageFor(err)).toMatch(/whole batch/);
+	});
+
 	// The Go text is a wrapped, id-bearing developer string and must never reach
 	// the user, so an unmapped code falls back rather than passing it through.
 	it("never shows the developer text behind an unmapped code", () => {

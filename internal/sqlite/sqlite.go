@@ -258,8 +258,8 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO revision_groups (id, title, source, created_at) VALUES (?, ?, ?, ?)`,
-		string(groupID), meta.Title, string(meta.Source), b.now); err != nil {
+		`INSERT INTO revision_groups (id, title, source, atomic, created_at) VALUES (?, ?, ?, ?, ?)`,
+		string(groupID), meta.Title, string(meta.Source), meta.Atomic, b.now); err != nil {
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	for _, op := range ops {

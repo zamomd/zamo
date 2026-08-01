@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
@@ -217,6 +218,9 @@ func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) 
 // its last reviewed revision to drop, so it is a no-op.
 func (r *Repo) RejectBlock(ctx context.Context, blockID knowledge.ID) error {
 	return r.withTx(ctx, fmt.Sprintf("reject block %s", blockID), func(tx *sql.Tx) error {
+		if err := refuseSplitGroup(ctx, tx, []string{string(blockID)}); err != nil {
+			return err
+		}
 		return rejectBlockTx(ctx, tx, string(blockID))
 	})
 }
@@ -285,6 +289,9 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 		if err != nil {
 			return err
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		var toProject []string
 		for _, id := range ids {
 			trimmed, err := trimUnreviewedRevisions(ctx, tx, id)
@@ -297,6 +304,58 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 		}
 		return projectFixpoint(ctx, tx, toProject)
 	})
+}
+
+// refuseSplitGroup rejects a review decision that would cover only part of an
+// atomic group. ids are the blocks the decision touches; every block of such a
+// group with something still pending has to be among them.
+//
+// Group-wide operations — MarkGroupReviewed, UndoGroup — never need the check:
+// they are the whole group by construction, and they are what the frontend
+// offers instead of the per-block controls (see UnreviewedBlock.Atomic). A page
+// that happens to contain the entire group passes, since nothing is left split.
+func refuseSplitGroup(ctx context.Context, tx *sql.Tx, ids []string) error {
+	groups, err := pendingAtomicGroups(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	covered := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		covered[id] = true
+	}
+	for _, group := range groups {
+		members, err := queryIDs(ctx, tx,
+			`SELECT DISTINCT block_id FROM block_revisions WHERE group_id = ? AND reviewed = 0`, group)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			if !covered[m] {
+				return fmt.Errorf("group %s also changed block %s: %w", group, m, knowledge.ErrAtomicGroup)
+			}
+		}
+	}
+	return nil
+}
+
+// pendingAtomicGroups returns the atomic groups any of ids still has an
+// unreviewed revision in.
+func pendingAtomicGroups(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return queryIDs(ctx, tx, `
+SELECT DISTINCT r.group_id FROM block_revisions r
+JOIN revision_groups g ON g.id = r.group_id
+WHERE r.reviewed = 0 AND g.atomic = 1
+  AND r.block_id IN (`+strings.Repeat(",?", len(ids))[1:]+`)`, args...)
 }
 
 // undoableBlockIDs returns the affected blocks when a group can be removed
@@ -404,6 +463,9 @@ func (r *Repo) MarkBlockReviewed(ctx context.Context, blockID knowledge.ID) erro
 			}
 			ids = append(ids, descendants...)
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		return markReviewed(ctx, tx, ids)
 	})
 }
@@ -490,6 +552,9 @@ func (r *Repo) MarkPageReviewed(ctx context.Context, topicID knowledge.ID) error
 		if err != nil {
 			return err
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		return markReviewed(ctx, tx, ids)
 	})
 }
@@ -552,15 +617,16 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		// always head, e.g. a reviewed owner edit sitting on top of a still-
 		// unreviewed AI edit).
 		var groupID, title string
+		var atomic bool
 		if err := r.db.QueryRowContext(ctx, `
-			SELECT COALESCE(rv.group_id, ''), COALESCE(g.title, '') FROM block_revisions rv
+			SELECT COALESCE(rv.group_id, ''), COALESCE(g.title, ''), COALESCE(g.atomic, 0) FROM block_revisions rv
 			LEFT JOIN revision_groups g ON g.id = rv.group_id
 			WHERE rv.block_id = ? AND rv.reviewed = 0
-			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title); err != nil {
+			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title, &atomic); err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, translate(err))
 		}
 		out = append(out, knowledge.UnreviewedBlock{
-			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
+			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title, Atomic: atomic,
 		})
 	}
 	slices.SortStableFunc(out, func(a, b knowledge.UnreviewedBlock) int {

@@ -36,6 +36,11 @@ var (
 	// references that pointed at it would resolve to nothing, silently.
 	ErrUnreferenceableTopic = errors.New("topic name cannot be referenced")
 
+	// ErrAtomicGroup reports a review decision covering only part of a batch
+	// whose blocks are only true together (see WriteMeta.Atomic). Accepting
+	// or rejecting it has to cover the whole group.
+	ErrAtomicGroup = errors.New("change must be reviewed as one group")
+
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")

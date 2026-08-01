@@ -189,6 +189,11 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 			}
 		}
 	}
+	if len(at) > 0 {
+		// The rewrites are only true alongside the rename that caused them, so
+		// the batch they share becomes one reviewable unit.
+		meta.Atomic = true
+	}
 	retitleRename(meta, len(at))
 	return out, nil
 }

@@ -30,6 +30,7 @@ var codes = []struct {
 	{knowledge.ErrInvalidRollback, "invalid_rollback"},
 	{knowledge.ErrDuplicateTopic, "duplicate_topic"},
 	{knowledge.ErrUnreferenceableTopic, "unreferenceable_topic"},
+	{knowledge.ErrAtomicGroup, "atomic_group"},
 	{knowledge.ErrBusy, "busy"},
 	{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 	{knowledge.ErrLLMBadResponse, "llm_bad_response"},

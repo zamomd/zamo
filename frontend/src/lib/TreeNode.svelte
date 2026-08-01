@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
 	import { base } from "../stores/base.svelte";
+	import { changes } from "../stores/changes.svelte";
 	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
@@ -22,6 +23,7 @@
 	const backlinksOpen = $derived(base.openBacklinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
 	const unreviewed = $derived(node.block.Unreviewed);
+	const atomic = $derived(changes.atomic.has(node.block.ID));
 	const ghost = $derived(base.ghosts.has(node.block.ID));
 	const topicRoot = $derived(node.block.ParentID === "");
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
@@ -246,7 +248,12 @@
 			</button>
 		</span>
 
-		{#if unreviewed}
+		{#if unreviewed && atomic}
+			<!-- Part of a topic rename: the backend refuses a decision on this
+			     block alone, so the Changes screen's batch controls are named
+			     instead of offering a button that could only fail. -->
+			<span class="batch-only" title="part of a topic rename — decide on the whole batch in Changes">batch</span>
+		{:else if unreviewed}
 			<button
 				type="button"
 				class="accept"
@@ -679,6 +686,13 @@
 	.accept-page,
 	.reject-page {
 		font-size: var(--size-small);
+	}
+	/* Sits where accept/reject would, so an atomic block's row keeps its shape. */
+	.batch-only {
+		flex: none;
+		padding: 0 0.3rem;
+		font-size: var(--size-small);
+		color: var(--text-dim);
 	}
 	/* Every control on the title row — accept/reject and Accept all/Reject all as
 	   direct children of .row, plus the two gutters' icons — otherwise inherits

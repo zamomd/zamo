@@ -64,10 +64,13 @@ CREATE TABLE block_revisions (
 
 CREATE INDEX idx_revisions_unreviewed ON block_revisions(block_id) WHERE reviewed = 0;
 
+-- atomic marks a batch whose blocks are only true together: a topic rename
+-- and the reference rewrites it implies. Review takes such a group whole.
 CREATE TABLE revision_groups (
     id         TEXT PRIMARY KEY,
     title      TEXT NOT NULL,
     source     TEXT NOT NULL,
+    atomic     INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 

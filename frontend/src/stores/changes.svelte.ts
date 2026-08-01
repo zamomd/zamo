@@ -10,6 +10,11 @@ const POLL_MS = 5000;
 class ChangesStore {
 	blocks: UnreviewedBlock[] = $state([]);
 	count = $derived(this.blocks.length);
+	// atomic holds the blocks whose pending change is only true alongside the
+	// rest of its batch — a topic rename and the references it rewrote. The
+	// backend refuses a per-block decision on them, so the views that offer
+	// per-block controls read this and offer the batch instead.
+	atomic = $derived(new Set(this.blocks.filter((b) => b.Atomic).map((b) => b.Head.BlockID)));
 
 	async refresh(): Promise<void> {
 		const c = await App.Unreviewed();

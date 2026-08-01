@@ -20,7 +20,7 @@
 	});
 
 	const batches = $derived.by(() => {
-		const map = new Map<ID, { title: string; count: number }>();
+		const map = new Map<ID, { title: string; count: number; atomic: boolean }>();
 		for (const b of changes.blocks) {
 			const groupID = b.GroupID;
 			if (!groupID) continue;
@@ -28,21 +28,25 @@
 			if (entry) {
 				entry.count++;
 			} else {
-				map.set(groupID, { title: b.GroupTitle, count: 1 });
+				map.set(groupID, { title: b.GroupTitle, count: 1, atomic: b.Atomic });
 			}
 		}
 		return [...map.entries()];
 	});
 
-	async function acceptBatch(groupID: ID): Promise<void> {
+	// Accepting and rejecting a whole batch share everything but the call: both
+	// touch every block in it, so the screen and the tree are re-read after.
+	// Rejecting is UndoGroup — dropping an unreviewed batch's revisions is
+	// exactly what rolling the group back does.
+	async function reviewBatch(op: () => Promise<void>, done: string): Promise<void> {
 		if (base.busy) return;
 		base.busy = true;
 		base.error = "";
 		try {
-			await App.AcceptGroup(groupID);
+			await op();
 			await base.reload();
 			await changes.refresh();
-			base.status = "accepted batch";
+			base.status = done;
 		} catch (err: unknown) {
 			base.error = messageFor(err);
 			base.status = "";
@@ -70,15 +74,27 @@
 					{#each batches as [groupID, info] (groupID)}
 						<li class="row">
 							<code class="snippet">{info.title || groupID}</code>
-							<span class="meta">{info.count} block{info.count === 1 ? "" : "s"}</span>
+							<span class="meta">
+								{info.count} block{info.count === 1 ? "" : "s"}
+								{#if info.atomic}<mark class="atomic-tag">one change</mark>{/if}
+							</span>
 							<button
 								type="button"
 								class="accept"
 								title="accept every change in this batch"
 								disabled={base.busy}
-								onclick={() => acceptBatch(groupID)}
+								onclick={() => reviewBatch(() => App.AcceptGroup(groupID), "accepted batch")}
 							>
 								Accept batch
+							</button>
+							<button
+								type="button"
+								class="reject"
+								title="reject every change in this batch"
+								disabled={base.busy}
+								onclick={() => reviewBatch(() => App.UndoGroup(groupID), "rejected batch")}
+							>
+								Reject batch
 							</button>
 						</li>
 					{/each}
@@ -104,24 +120,30 @@
 									title="jump to this block in the base"
 									disabled={base.busy}
 									onclick={() => onjump(b.Head.BlockID)}>show</button>
-									<button
-										type="button"
-										class="accept"
-										title="accept this change"
-										disabled={base.busy}
-										onclick={() => base.accept(b.Head.BlockID)}
-									>
-										Accept
-									</button>
-									<button
-										type="button"
-										class="reject"
-										title={b.Head.Deleted ? "restore this block" : "reject: revert to the last reviewed version"}
-										disabled={base.busy}
-										onclick={() => base.reject(b.Head.BlockID)}
-									>
-										Reject
-									</button>
+									{#if b.Atomic}
+										<!-- Deciding on this block alone is refused below, so the
+										     buttons that would do it are not offered. -->
+										<span class="meta">use the batch above</span>
+									{:else}
+										<button
+											type="button"
+											class="accept"
+											title="accept this change"
+											disabled={base.busy}
+											onclick={() => base.accept(b.Head.BlockID)}
+										>
+											Accept
+										</button>
+										<button
+											type="button"
+											class="reject"
+											title={b.Head.Deleted ? "restore this block" : "reject: revert to the last reviewed version"}
+											disabled={base.busy}
+											onclick={() => base.reject(b.Head.BlockID)}
+										>
+											Reject
+										</button>
+									{/if}
 								</li>
 							{/each}
 						</ul>
@@ -173,6 +195,7 @@
 		font-size: var(--size-small);
 		opacity: 0.7;
 	}
+	.atomic-tag,
 	.deleted-tag {
 		border: 1px solid var(--hairline);
 		color: var(--text-dim);
