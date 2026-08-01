@@ -167,11 +167,11 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 			e.rewrite(src, r)
 		}
 	}
-	if len(e.rewrote) > 0 {
-		// The rewrites are only true alongside the rename that caused them, so
-		// the batch they share becomes one reviewable unit.
-		meta.Atomic = true
-	}
+	// A rewrite is only true alongside the rename that caused it, so a batch
+	// carrying one becomes a single reviewable unit — unless the rename's own
+	// op is what carries it, in which case there is nothing to decide on apart
+	// and the block keeps its ordinary controls.
+	meta.Atomic = e.split
 	retitleRename(meta, len(e.rewrote))
 	return e.ops, nil
 }
@@ -186,6 +186,7 @@ type expansion struct {
 	carrier map[ID]int  // block id → index in ops of the op writing its content
 	gone    map[ID]bool // block id → the batch deletes it
 	rewrote map[ID]bool // block id → a rename changed its text
+	split   bool        // a rewrite landed on a block other than the renamed root
 }
 
 // newExpansion reads the caller's batch without taking it over: ops is cloned,
@@ -237,6 +238,7 @@ func (e *expansion) rewrite(src Block, r rename) {
 		return
 	}
 	e.rewrote[src.ID] = true
+	e.split = e.split || src.ID != r.id
 	if i, ok := e.carrier[src.ID]; ok {
 		e.ops[i].Content = rewritten
 		return

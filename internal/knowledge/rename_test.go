@@ -257,6 +257,9 @@ func TestRenameTopicRewritesReferencesInOneBatch(t *testing.T) {
 	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Title != "Rename topic and rewrite references in 1 block" {
 		t.Errorf("meta = %+v, want an owner batch titled by the rename", repo.applyMeta)
 	}
+	if !repo.applyMeta.Atomic {
+		t.Error("the batch is not atomic, so the rename and the rewrite could be reviewed apart")
+	}
 }
 
 func TestRenameBatchTitleCountsTheBlocksItTouched(t *testing.T) {
@@ -428,6 +431,11 @@ func TestRenameFollowsTheRootsOwnSelfReference(t *testing.T) {
 	want := "Offline-first\nSee also [[Offline-first]]."
 	if got := repo.applyOps[0].Content; got != want {
 		t.Errorf("root content = %q, want %q: the rewrite lands on the rename's own op", got, want)
+	}
+	// One op writes both, so there is no half of it to accept and the block
+	// keeps the ordinary per-block controls.
+	if repo.applyMeta.Atomic {
+		t.Error("the batch is marked atomic though nothing in it can be decided on apart")
 	}
 }
 
