@@ -1,6 +1,9 @@
 package knowledge
 
-import "strings"
+import (
+	"iter"
+	"strings"
+)
 
 // RefKind distinguishes the two reference forms found in block content.
 type RefKind string
@@ -39,78 +42,102 @@ func ParseRefs(content string) []Ref {
 		seen[r] = true
 		out = append(out, r)
 	}
-	for _, line := range codeFreeLines(content) {
-		scanLine(line, add)
+	for line, fenced := range fencedLines(content) {
+		if fenced {
+			continue
+		}
+		scanLine(stripInlineCode(line), add)
 	}
 	return out
 }
 
-// scanLine reports every reference on one code-free line.
+// scanLine reports every reference on one line, code already removed.
 func scanLine(line string, add func(Ref)) {
-	for i := 0; i < len(line)-1; i++ {
-		switch {
-		case line[i] == '[' && line[i+1] == '[':
-			body, end, ok := until(line, i+2, "]]")
-			if !ok {
-				continue
-			}
-			// Nested brackets mean the outer pair is not a reference; the
-			// inner one is found by continuing the scan from just past "[[".
-			if !strings.ContainsAny(body, "[]") {
-				add(Ref{Kind: RefTopic, TargetKey: NormalizeTitle(body)})
-				i = end - 1
-			}
-		case line[i] == '(' && line[i+1] == '(':
-			body, end, ok := until(line, i+2, "))")
-			if !ok {
-				continue
-			}
-			target := body
-			if pipe := strings.IndexByte(body, '|'); pipe >= 0 {
-				target = body[:pipe]
-			}
-			target = strings.ToUpper(strings.TrimSpace(target))
-			if validULID(target) {
-				add(Ref{Kind: RefBlock, TargetKey: target})
-				i = end - 1
-			}
+	// Not a range loop: a matched reference advances i past its whole span,
+	// which a range variable would discard.
+	for i := 0; i < len(line); i++ {
+		if body, end, ok := topicRefAt(line, i); ok {
+			add(Ref{Kind: RefTopic, TargetKey: NormalizeTitle(body)})
+			i = end - 1
+			continue
+		}
+		if target, end, ok := blockRefAt(line, i); ok {
+			add(Ref{Kind: RefBlock, TargetKey: target})
+			i = end - 1
 		}
 	}
+}
+
+// topicRefAt reports the [[Topic]] reference starting at i: its raw body and
+// the offset just past the closing brackets. An unterminated pair is plain
+// text. Nested brackets mean the outer pair is not a reference either; the
+// inner one is found by continuing the scan from just past "[[".
+//
+// Both the reader (scanLine) and the rewriter (rewriteLine) go through here,
+// so what counts as a topic reference is defined once.
+func topicRefAt(line string, i int) (body string, end int, ok bool) {
+	if i+1 >= len(line) || line[i] != '[' || line[i+1] != '[' {
+		return "", 0, false
+	}
+	body, end, ok = until(line, i+2, "]]")
+	if !ok || strings.ContainsAny(body, "[]") {
+		return "", 0, false
+	}
+	return body, end, true
+}
+
+// blockRefAt reports the ((ULID|label)) reference starting at i: its
+// upper-cased target id and the offset just past the closing parens. A body
+// whose target is not a ULID is plain text, and the scan continues inside it.
+//
+// The label is free text — it may hold brackets and pipes — so the span is
+// skipped whole by reader and rewriter alike: a [[Topic]] written inside a
+// label is neither indexed nor rewritten.
+func blockRefAt(line string, i int) (target string, end int, ok bool) {
+	if i+1 >= len(line) || line[i] != '(' || line[i+1] != '(' {
+		return "", 0, false
+	}
+	body, end, ok := until(line, i+2, "))")
+	if !ok {
+		return "", 0, false
+	}
+	target = body
+	if pipe := strings.IndexByte(body, '|'); pipe >= 0 {
+		target = body[:pipe]
+	}
+	target = strings.ToUpper(strings.TrimSpace(target))
+	if !validULID(target) {
+		return "", 0, false
+	}
+	return target, end, true
 }
 
 // RewriteTopicRef replaces every [[...]] whose normalized name equals oldKey
 // with newName, leaving the rest of the content untouched. It is how a topic
 // rename keeps the text true.
 //
-// Unlike ParseRefs it skips fenced code blocks only: a [[Topic]] inside a
-// backtick span is rewritten like any other. Blanking inline code the way
-// ParseRefs does would destroy the very content this function must preserve,
-// so the contract is a rename that also touches inline code rather than one
-// that can corrupt it.
+// It reads references exactly as ParseRefs does — same fences, same brackets,
+// block-reference labels skipped whole — with one deliberate divergence:
+// inline code. ParseRefs skips a backtick span by blanking it, which preserves
+// offsets but destroys the text, so the rewriter cannot do the same; a
+// [[Topic]] inside backticks is rewritten like any other. The consequence is a
+// rename that touches inline code rather than one that can corrupt it.
+//
+// A newName that cannot be written as a reference — one carrying a bracket,
+// which would split the [[...]] into a reference plus stray text — is refused:
+// the content comes back unchanged rather than mangled.
 func RewriteTopicRef(content, oldKey, newName string) string {
-	if oldKey == "" {
+	if oldKey == "" || strings.ContainsAny(newName, "[]") {
 		return content
 	}
 	var b strings.Builder
-	fence := ""
-	for i, line := range strings.Split(content, "\n") {
-		if i > 0 {
+	first := true
+	for line, fenced := range fencedLines(content) {
+		if !first {
 			b.WriteByte('\n')
 		}
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case fence != "":
-			if strings.HasPrefix(trimmed, fence) {
-				fence = ""
-			}
-			b.WriteString(line)
-			continue
-		case strings.HasPrefix(trimmed, "```"):
-			fence = "```"
-			b.WriteString(line)
-			continue
-		case strings.HasPrefix(trimmed, "~~~"):
-			fence = "~~~"
+		first = false
+		if fenced {
 			b.WriteString(line)
 			continue
 		}
@@ -123,15 +150,19 @@ func RewriteTopicRef(content, oldKey, newName string) string {
 func rewriteLine(line, oldKey, newName string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); i++ {
-		if i < len(line)-1 && line[i] == '[' && line[i+1] == '[' {
-			body, end, ok := until(line, i+2, "]]")
-			// Nested brackets mean the outer pair is not a reference, exactly
-			// as scanLine reads it.
-			if ok && !strings.ContainsAny(body, "[]") && NormalizeTitle(body) == oldKey {
+		if body, end, ok := topicRefAt(line, i); ok {
+			if NormalizeTitle(body) == oldKey {
 				b.WriteString("[[" + newName + "]]")
-				i = end - 1
-				continue
+			} else {
+				b.WriteString(line[i:end])
 			}
+			i = end - 1
+			continue
+		}
+		if _, end, ok := blockRefAt(line, i); ok {
+			b.WriteString(line[i:end])
+			i = end - 1
+			continue
 		}
 		b.WriteByte(line[i])
 	}
@@ -149,32 +180,38 @@ func until(line string, start int, closer string) (body string, end int, ok bool
 	return rest[:j], start + j + len(closer), true
 }
 
-// codeFreeLines splits content into lines with code removed: lines inside a
-// fenced block are dropped entirely, and inline code spans are blanked out of
-// the lines that survive. An unterminated fence swallows the rest of the
-// content, matching how a markdown renderer reads it.
-func codeFreeLines(content string) []string {
-	var out []string
-	fence := ""
-	for line := range strings.SplitSeq(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if fence != "" {
-			if strings.HasPrefix(trimmed, fence) {
-				fence = ""
+// fencedLines splits content into lines, reporting for each whether it is code:
+// a fence delimiter itself or a line inside one. An unterminated fence swallows
+// the rest of the content, matching how a markdown renderer reads it.
+//
+// The single definition of a code fence: the reader drops what it reports,
+// the rewriter passes it through untouched, and neither can drift from the
+// other.
+func fencedLines(content string) iter.Seq2[string, bool] {
+	return func(yield func(string, bool) bool) {
+		fence := ""
+		for line := range strings.SplitSeq(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			switch {
+			case fence != "":
+				if strings.HasPrefix(trimmed, fence) {
+					fence = ""
+				}
+			case strings.HasPrefix(trimmed, "```"):
+				fence = "```"
+			case strings.HasPrefix(trimmed, "~~~"):
+				fence = "~~~"
+			default:
+				if !yield(line, false) {
+					return
+				}
+				continue
 			}
-			continue
+			if !yield(line, true) {
+				return
+			}
 		}
-		if strings.HasPrefix(trimmed, "```") {
-			fence = "```"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "~~~") {
-			fence = "~~~"
-			continue
-		}
-		out = append(out, stripInlineCode(line))
 	}
-	return out
 }
 
 // stripInlineCode replaces the contents of every closed backtick span with
@@ -224,13 +261,16 @@ func validULID(s string) bool {
 // produces blocks.title_key and the target key of a [[Topic]] reference —
 // they must not drift apart or resolution fails silently.
 func NormalizeTitle(s string) string {
-	line := s
-	if nl := strings.IndexByte(line, '\n'); nl >= 0 {
-		line = line[:nl]
-	}
-	line = strings.TrimSpace(line)
-	line = strings.TrimLeft(line, "#>-*+ \t")
-	return strings.ToLower(strings.Join(strings.Fields(line), " "))
+	return strings.ToLower(strings.Join(strings.Fields(TopicName(s)), " "))
+}
+
+// TopicName is the text a [[Topic]] reference to this content should carry:
+// its first line without the markdown markers NormalizeTitle also drops, with
+// the author's casing and spacing kept. Writing a reference from anything else
+// — FirstLine, say — would put a marker inside the brackets, so what the
+// reader sees and what the reference resolves by would disagree.
+func TopicName(s string) string {
+	return strings.TrimLeft(FirstLine(s), "#>-*+ \t")
 }
 
 // FirstLine is a block's display title: its first line, trimmed. Unlike

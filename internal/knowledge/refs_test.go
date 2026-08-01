@@ -69,6 +69,35 @@ func TestNormalizeTitle(t *testing.T) {
 	}
 }
 
+func TestTopicName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "Local-first", "Local-first"},
+		{"first line only", "Local-first\n\nA body paragraph.", "Local-first"},
+		{"strips heading markers", "## Local-First: Why?", "Local-First: Why?"},
+		{"strips bullet marker", "- Local-first", "Local-first"},
+		{"keeps casing and inner spacing", "Local   First", "Local   First"},
+		{"markers only", "###", ""},
+		{"empty input", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TopicName(tt.in)
+			if got != tt.want {
+				t.Errorf("TopicName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			// A reference written from the name must resolve to the key the
+			// content itself normalizes to.
+			if NormalizeTitle(got) != NormalizeTitle(tt.in) {
+				t.Errorf("NormalizeTitle(%q) = %q, want %q", got, NormalizeTitle(got), NormalizeTitle(tt.in))
+			}
+		})
+	}
+}
+
 func TestFirstLine(t *testing.T) {
 	tests := []struct {
 		name string

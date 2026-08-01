@@ -63,6 +63,31 @@ func TestRewriteTopicRef(t *testing.T) {
 			want:    "((01JT4X9K2M8P0QRSTVWXYZ2345|Zig)) and [[Ziglang]].",
 		},
 		{
+			// ParseRefs does not index a reference written inside a label, so
+			// rewriting one would edit text no rename depends on.
+			name:    "leaves a reference inside a block reference label alone",
+			content: "((01JT4X9K2M8P0QRSTVWXYZ2345|about [[Zig]])) and [[Zig]].",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "((01JT4X9K2M8P0QRSTVWXYZ2345|about [[Zig]])) and [[Ziglang]].",
+		},
+		{
+			// The same span without a valid ULID is plain text, and ParseRefs
+			// does index the reference inside it.
+			name:    "rewrites inside a span that is not a block reference",
+			content: "((not-a-ulid|[[Zig]]))",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "((not-a-ulid|[[Ziglang]]))",
+		},
+		{
+			name:    "a name carrying brackets is refused",
+			content: "We use [[Zig]] here.",
+			oldKey:  "zig",
+			newName: "Zig]] and [[Rust",
+			want:    "We use [[Zig]] here.",
+		},
+		{
 			name:    "no match is unchanged",
 			content: "Nothing to do here.",
 			oldKey:  "zig",
@@ -122,8 +147,51 @@ func TestRenameTopicRewritesReferencesInOneBatch(t *testing.T) {
 	if got := repo.applyOps[1]; got.Kind != OpEdit || got.BlockID != "01NOTE" || got.Content != want {
 		t.Errorf("op 1 = %+v, want an edit of 01NOTE with %q", got, want)
 	}
-	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Title != "Rename topic and update 1 references" {
+	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Title != "Rename topic and rewrite references in 1 block" {
 		t.Errorf("meta = %+v, want an owner batch titled by the rename", repo.applyMeta)
+	}
+}
+
+func TestRenameBatchTitleCountsTheBlocksItTouched(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01A", "01ZIG", 0, "One [[Local-first]] and another [[Local-first]]."),
+		blk("01B", "01ZIG", 1, "A second block on [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if want := "Rename topic and rewrite references in 2 blocks"; repo.applyMeta.Title != want {
+		t.Errorf("title = %q, want %q", repo.applyMeta.Title, want)
+	}
+}
+
+func TestRenameToAHeadingWritesThePlainName(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "# Local-first"),
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "# Offline-first"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Fatalf("ops = %+v, want the root edit plus the rewrite", repo.applyOps)
+	}
+	if got, want := repo.applyOps[1].Content, "We use [[Offline-first]]."; got != want {
+		t.Errorf("rewritten content = %q, want %q: the heading marker belongs to the root, not the reference", got, want)
+	}
+}
+
+func TestRenameToANameThatCannotBeWrittenLeavesReferencesAlone(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first [[or so]]"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].BlockID != "01ROOT" {
+		t.Errorf("ops = %+v, want the root edit alone rather than a corrupted rewrite", repo.applyOps)
 	}
 }
 

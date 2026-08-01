@@ -96,8 +96,14 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 		return err
 	}
 	meta := ownerMeta()
-	if rewritten := len(ops) - 1; rewritten > 0 {
-		meta.Title = fmt.Sprintf("Rename topic and update %d references", rewritten)
+	// The title is what the human reads in the Changes screen when deciding
+	// on the group, so it names what the batch actually touched.
+	if blocks := len(ops) - 1; blocks > 0 {
+		noun := "blocks"
+		if blocks == 1 {
+			noun = "block"
+		}
+		meta.Title = fmt.Sprintf("Rename topic and rewrite references in %d %s", blocks, noun)
 	}
 	_, err = s.ApplyOps(ctx, meta, ops)
 	return err
@@ -119,7 +125,7 @@ func (s *Service) editOps(ctx context.Context, block Block, content string) ([]O
 	if err != nil {
 		return nil, fmt.Errorf("rename topic %s: %w", block.ID, err)
 	}
-	newName := FirstLine(content)
+	newName := TopicName(content)
 	for _, src := range sources {
 		// A root that references itself is already in the batch as the edit
 		// that triggered the rename; a second edit of it would write the old
