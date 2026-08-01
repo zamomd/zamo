@@ -13,6 +13,10 @@ const reloadFixture = vi.hoisted(() => ({
 	gate: null as Promise<void> | null,
 	writeGate: null as Promise<void> | null,
 	onSubtree: null as ((id: string) => void) | null,
+	backlinks: {} as Record<string, unknown[]>,
+	backlinksError: null as Error | null,
+	createdTopicID: "",
+	createTopicError: null as Error | null,
 }));
 const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
@@ -31,7 +35,19 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			return reloadFixture.subtrees[id] ?? [];
 		},
 		ExpandTopic: async () => {},
-		EditWithAI: async () => {},
+		CreateTopic: vi.fn(async (_name: string) => {
+			if (reloadFixture.createTopicError !== null) {
+				throw reloadFixture.createTopicError;
+			}
+			return reloadFixture.createdTopicID;
+		}),
+		Backlinks: vi.fn(async (id: string) => {
+			if (reloadFixture.backlinksError !== null) {
+				throw reloadFixture.backlinksError;
+			}
+			return reloadFixture.backlinks[id] ?? [];
+		}),
+		EditWithAI: vi.fn(async () => {}),
 		EditBlockContent: vi.fn(async () => {
 			if (reloadFixture.writeGate !== null) {
 				await reloadFixture.writeGate;
@@ -53,10 +69,11 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	},
 }));
 vi.mock("./changes.svelte", () => ({
-	changes: { blocks: [], edges: [], count: 0, refresh: vi.fn(async () => {}) },
+	changes: { blocks: [], count: 0, refresh: vi.fn(async () => {}) },
 }));
 
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { parseRefs } from "../lib/refs";
 import { findNode, type TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";
 import { changes } from "./changes.svelte";
@@ -79,6 +96,14 @@ function node(id: string, parent: string, children: TreeNodeData[] = [], content
 	return { block: block(id, parent, content), children };
 }
 
+function backlink(id: string, topicID: string) {
+	return { Block: block(id, topicID), TopicID: topicID, TopicTitle: topicID };
+}
+
+// A real 26-character Crockford ULID: a short one is not a block reference at
+// all, and a test built on one proves nothing.
+const ulid = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
 beforeEach(() => {
 	base.forest = [
 		node("go", "", [node("ctx", "go", [node("done", "ctx")])]),
@@ -93,10 +118,14 @@ beforeEach(() => {
 	base.clearUndoHistory();
 	base.ghosts.clear();
 	base.busy = false;
-	base.openLinks.clear();
-	base.linksById.clear();
 	base.historyID = null;
 	base.revisions = [];
+	base.openBacklinks.clear();
+	base.backlinksById.clear();
+	reloadFixture.backlinks = {};
+	reloadFixture.backlinksError = null;
+	reloadFixture.createdTopicID = "";
+	reloadFixture.createTopicError = null;
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 	reloadFixture.writeGate = null;
@@ -410,6 +439,20 @@ describe("askAI's selection", () => {
 
 		expect(base.selectedTopicID).toBe("go");
 	});
+
+	it("reloads the tree after a scoped edit, not just after an untargeted expansion", async () => {
+		base.forest = [node("go", ""), node("sqlite", "")];
+		base.selectedTopicID = "go";
+		base.scopeID = "go";
+		base.command = "restructure this";
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")];
+		reloadFixture.subtrees = { go: [block("go", ""), block("fresh", "go")], sqlite: [block("sqlite", "")] };
+
+		await base.askAI();
+
+		expect(App.EditWithAI).toHaveBeenCalledWith("go", "restructure this");
+		expect(findNode(base.forest, "fresh")?.block.ID).toBe("fresh");
+	});
 });
 
 describe("reloadTopic", () => {
@@ -451,9 +494,7 @@ describe("reloadTopic", () => {
 		expect(base.forest.length).toBe(before);
 	});
 
-	it("closes the panels of a topic that vanished entirely", async () => {
-		base.openLinks.add("ctx");
-		base.linksById.set("ctx", []);
+	it("closes the history panel of a topic that vanished entirely", async () => {
 		base.historyID = "ctx";
 		base.revisions = [{ ID: "rev" }] as unknown as typeof base.revisions;
 		reloadFixture.subtrees.go = [];
@@ -461,23 +502,163 @@ describe("reloadTopic", () => {
 		await base.reloadTopic("go");
 
 		expect(base.forest.some((t) => t.block.ID === "go")).toBe(false);
-		expect(base.openLinks.has("ctx")).toBe(false);
-		expect(base.linksById.has("ctx")).toBe(false);
 		expect(base.historyID).toBe(null);
 		expect(base.revisions).toEqual([]);
 	});
 
-	it("leaves the panels of a surviving block alone", async () => {
-		base.openLinks.add("wal");
-		base.linksById.set("wal", []);
+	it("leaves the history panel of a surviving block alone", async () => {
 		base.historyID = "wal";
 		reloadFixture.subtrees.go = [];
 
 		await base.reloadTopic("go");
 
-		expect(base.openLinks.has("wal")).toBe(true);
-		expect(base.linksById.has("wal")).toBe(true);
 		expect(base.historyID).toBe("wal");
+	});
+
+	// The common flow: type a reference into a block, blur, runCommit,
+	// reloadTopic. The panel that exists to list that reference must not keep
+	// the count it had before the edit.
+	it("refreshes an open backlink panel", async () => {
+		reloadFixture.backlinks.ctx = [backlink("wal", "sqlite")];
+		await base.toggleBacklinks("ctx");
+		reloadFixture.backlinks.ctx = [backlink("wal", "sqlite"), backlink("done", "go")];
+
+		await base.reloadTopic("go");
+
+		expect(base.backlinksById.get("ctx")).toHaveLength(2);
+	});
+
+	it("closes a backlink panel whose block left the forest", async () => {
+		await base.toggleBacklinks("ctx");
+		reloadFixture.subtrees.go = [block("go", "")];
+
+		await base.reloadTopic("go");
+
+		expect(base.openBacklinks.has("ctx")).toBe(false);
+		expect(base.backlinksById.has("ctx")).toBe(false);
+	});
+});
+
+describe("backlink panels", () => {
+	it("reads the backlinks when a panel opens", async () => {
+		reloadFixture.backlinks.ctx = [backlink("wal", "sqlite")];
+
+		await base.toggleBacklinks("ctx");
+
+		expect(base.openBacklinks.has("ctx")).toBe(true);
+		expect(base.backlinksById.get("ctx")).toEqual([backlink("wal", "sqlite")]);
+		expect(App.Backlinks).toHaveBeenCalledTimes(1);
+	});
+
+	it("drops the panel and its answer when it closes", async () => {
+		await base.toggleBacklinks("ctx");
+		await base.toggleBacklinks("ctx");
+
+		expect(base.openBacklinks.has("ctx")).toBe(false);
+		expect(base.backlinksById.has("ctx")).toBe(false);
+	});
+
+	it("reads again when a closed panel reopens, because closing dropped the answer", async () => {
+		await base.toggleBacklinks("ctx");
+		await base.toggleBacklinks("ctx");
+		await base.toggleBacklinks("ctx");
+
+		expect(App.Backlinks).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not read when the panel already has an answer", async () => {
+		await base.refreshBacklinks("ctx");
+
+		await base.toggleBacklinks("ctx");
+
+		expect(App.Backlinks).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports a failed read and leaves the panel without a stale answer", async () => {
+		reloadFixture.backlinksError = new Error("storage is gone");
+
+		await base.refreshBacklinks("ctx");
+
+		expect(base.error).not.toBe("");
+		expect(base.backlinksById.has("ctx")).toBe(false);
+	});
+});
+
+describe("acceptRef", () => {
+	it("replaces the trigger span with a topic reference and lands the caret past it", () => {
+		base.editText = "See [[Loc more";
+		base.acceptRef(4, 9, "[[Local-first]]");
+
+		expect(base.editText).toBe("See [[Local-first]] more");
+		expect(base.editCaret).toBe(19);
+		expect(base.editText.slice(base.editCaret)).toBe(" more");
+	});
+
+	it("replaces the trigger span with a block reference", () => {
+		base.editText = "Cite ((cla later";
+		base.acceptRef(5, 10, `((${ulid}|A claim))`);
+
+		expect(base.editText).toBe(`Cite ((${ulid}|A claim)) later`);
+		expect(base.editText.slice(base.editCaret)).toBe(" later");
+		expect(parseRefs(base.editText)).toEqual([{ kind: "block", targetKey: ulid }]);
+	});
+
+	// The offsets are the only thing standing between the popup and a corrupted
+	// block, so the result has to parse back out as the reference intended.
+	it("writes text the parser reads back as one reference", () => {
+		base.editText = "See [[Loc more";
+		base.acceptRef(4, 9, "[[Local-first]]");
+
+		expect(parseRefs(base.editText)).toEqual([{ kind: "topic", targetKey: "local-first" }]);
+	});
+
+	it("handles a span at the very start and one running to the end", () => {
+		base.editText = "[[Zi";
+		base.acceptRef(0, 4, "[[Zig]]");
+
+		expect(base.editText).toBe("[[Zig]]");
+		expect(base.editCaret).toBe(7);
+	});
+
+	it("bumps the caret nonce so the editor re-places the caret", () => {
+		const before = base.editCaretNonce;
+		base.editText = "[[Zi";
+		base.acceptRef(0, 4, "[[Zig]]");
+
+		expect(base.editCaretNonce).toBeGreaterThan(before);
+	});
+});
+
+describe("createTopic", () => {
+	it("creates the topic and selects it", async () => {
+		reloadFixture.createdTopicID = "zig";
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("zig", "")];
+		reloadFixture.subtrees.zig = [block("zig", "")];
+
+		await base.createTopic("Zig");
+
+		expect(App.CreateTopic).toHaveBeenCalledWith("Zig");
+		expect(base.selectedTopicID).toBe("zig");
+		expect(base.error).toBe("");
+	});
+
+	it("refuses while another operation is running", async () => {
+		base.busy = true;
+
+		await base.createTopic("Zig");
+
+		expect(App.CreateTopic).not.toHaveBeenCalled();
+	});
+
+	it("reports a name already taken and clears busy", async () => {
+		reloadFixture.createTopicError = new Error("boom", {
+			cause: { code: "duplicate_topic", message: "topic name already taken" },
+		});
+
+		await base.createTopic("Go");
+
+		expect(base.error).toBe("A topic with that name already exists.");
+		expect(base.busy).toBe(false);
 	});
 });
 
@@ -625,11 +806,6 @@ describe("an open edit no longer locks the interface", () => {
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
 	});
 
-	it("starting a link commits first", async () => {
-		await base.startLink("ctx");
-		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
-	});
-
 	it("accepting a change commits first", async () => {
 		await base.accept("done");
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after");
@@ -708,17 +884,6 @@ describe("a failed commit aborts the gesture", () => {
 		base.command = "tighten this";
 		await base.askAI();
 		expect(base.command).toBe("tighten this");
-		expect(base.busy).toBe(false);
-		expect(base.editingID).toBe("ctx");
-		expect(base.editText).toBe("after");
-	});
-
-	it("leaves the link picker alone when the commit that starting a link triggers fails", async () => {
-		base.linkingID = null;
-		base.busy = false;
-		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"));
-		await base.startLink("ctx");
-		expect(base.linkingID).toBe(null);
 		expect(base.busy).toBe(false);
 		expect(base.editingID).toBe("ctx");
 		expect(base.editText).toBe("after");

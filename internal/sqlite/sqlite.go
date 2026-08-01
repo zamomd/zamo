@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	sqlite3 "modernc.org/sqlite"
@@ -67,6 +68,14 @@ func isBusy(err error) bool {
 	return false
 }
 
+// isDuplicateTopic reports the partial unique index on blocks.title_key
+// firing. SQLite names the offending column rather than the index, so the
+// column is what the message can be recognised by.
+func isDuplicateTopic(err error) bool {
+	e, ok := errors.AsType[*sqlite3.Error](err)
+	return ok && strings.Contains(e.Error(), "UNIQUE constraint failed: blocks.title_key")
+}
+
 // translate maps infrastructure errors to domain sentinels so driver types never leak to callers.
 func translate(err error) error {
 	switch {
@@ -76,9 +85,27 @@ func translate(err error) error {
 		return knowledge.ErrNotFound
 	case isBusy(err):
 		return knowledge.ErrBusy
+	case isDuplicateTopic(err):
+		return knowledge.ErrDuplicateTopic
 	default:
 		return err
 	}
+}
+
+// titleKey is the value blocks.title_key takes for a block: the key a topic
+// root is addressable by (knowledge.TopicKey), and NULL for everything else.
+// A root nothing can reference — an empty name, or one carrying a bracket — is
+// unnamed, which is also NULL; the partial unique index admits any number of
+// those, so such titles are ordinary content rather than a refused write.
+func titleKey(parent any, content string) any {
+	if parent != nil {
+		return nil
+	}
+	key := knowledge.TopicKey(content)
+	if key == "" {
+		return nil
+	}
+	return key
 }
 
 // Repo implements knowledge.Repository.
@@ -200,9 +227,10 @@ func (b batch) revision(id knowledge.ID, op knowledge.Op, seq int, snap knowledg
 // ordered op list in one immediate transaction: one revision row per touched
 // block plus the blocks projection, and one revision_groups row tying them
 // together. Ops carry final identifiers (BlockID is the target block — the
-// new block for add; Parent/From/To are resolved ids), so storage only
-// writes. The apply is atomic: any error rolls the whole transaction back,
-// so search and the tree never observe a half-applied batch.
+// new block for add; Parent/From/To are resolved ids), so the only reading
+// storage does on its own account is the optimistic guard an op may carry (see
+// guard). The apply is atomic: any error rolls the whole transaction back, so
+// search and the tree never observe a half-applied batch.
 func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op) error {
 	b := batch{
 		groupID: groupID,
@@ -221,10 +249,13 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	defer tx.Rollback()
+	if err := guard(ctx, tx, ops); err != nil {
+		return err
+	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO revision_groups (id, title, source, created_at) VALUES (?, ?, ?, ?)`,
-		string(groupID), meta.Title, string(meta.Source), b.now); err != nil {
+		`INSERT INTO revision_groups (id, title, source, atomic, created_at) VALUES (?, ?, ?, ?, ?)`,
+		string(groupID), meta.Title, string(meta.Source), meta.Atomic, b.now); err != nil {
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	for _, op := range ops {
@@ -233,6 +264,47 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		}
 	}
 	return tx.Commit()
+}
+
+// guard checks the optimistic preconditions a rename expansion attached to the
+// batch (see knowledge.Op.ExpectedContent and ExpectedTopicRefs). It runs inside
+// the apply transaction, which is what makes the check hold: BEGIN IMMEDIATE has
+// the write lock already, so nothing can land between the check and the writes
+// it clears the way for.
+//
+// A guarded block that is gone was written over as surely as one holding other
+// text, so both answer ErrConcurrentWrite — what the caller has to do, prepare
+// the rename again, is the same either way.
+func guard(ctx context.Context, tx *sql.Tx, ops []knowledge.Op) error {
+	for _, op := range ops {
+		if expected, guarded := op.ExpectedContent(); guarded {
+			var current string
+			err := tx.QueryRowContext(ctx,
+				`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&current)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("guard %s %s: %w", op.Kind, op.BlockID, translate(err))
+			}
+			if err != nil || current != expected {
+				return fmt.Errorf("guard %s %s: %w", op.Kind, op.BlockID, knowledge.ErrConcurrentWrite)
+			}
+		}
+		key, expected, guarded := op.ExpectedTopicRefs()
+		if !guarded {
+			continue
+		}
+		// Ordered by source_id to compare against BlocksReferencingTopic,
+		// which orders the sources it hands the domain by block id.
+		current, err := queryIDs(ctx, tx, `
+SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY source_id`, key)
+		if err != nil {
+			return fmt.Errorf("guard topic references %q: %w", key, err)
+		}
+		same := func(id string, want knowledge.ID) bool { return id == string(want) }
+		if !slices.EqualFunc(current, expected, same) {
+			return fmt.Errorf("guard topic references %q: %w", key, knowledge.ErrConcurrentWrite)
+		}
+	}
+	return nil
 }
 
 // applyOp applies one resolved operation inside the apply transaction.
@@ -246,10 +318,6 @@ func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch
 		return r.applyMove(ctx, tx, op, b)
 	case knowledge.OpDelete:
 		return r.applyDelete(ctx, tx, op, b)
-	case knowledge.OpLink:
-		return r.applyLink(ctx, tx, op, b)
-	case knowledge.OpUnlink:
-		return r.applyUnlink(ctx, tx, op, b)
 	default:
 		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
@@ -329,10 +397,12 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if err != nil {
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
+	key := titleKey(parent, op.Content)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(op.BlockID), parent, pos, op.Content, string(payload), b.now, b.now); err != nil {
+		`INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(op.BlockID), parent, pos, op.Content, key,
+		string(payload), b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
 	rev := b.revision(r.newID(), op, 1, knowledge.Revision{
@@ -343,6 +413,9 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
+	}
+	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
+		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
 	}
 	return nil
 }
@@ -370,10 +443,18 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
+	var parentArg any
+	if parent.Valid && parent.String != "" {
+		parentArg = parent.String
+	}
+	key := titleKey(parentArg, op.Content)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, updated_at = ? WHERE id = ?`,
-		op.Content, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
+		op.Content, key, b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+	}
+	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
+		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
 	}
 	return nil
 }
@@ -406,6 +487,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
+	key := titleKey(parent, content)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))
@@ -420,8 +502,8 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, key, b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return nil
@@ -454,82 +536,9 @@ func rejectMoveCycle(ctx context.Context, tx *sql.Tx, op knowledge.Op) error {
 	return nil
 }
 
-// requireBlock returns ErrNotFound when a referenced block is absent. An
-// empty id (no reference) is fine.
-func requireBlock(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, id string) error {
-	if id == "" {
-		return nil
-	}
-	var exists bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`, id).Scan(&exists); err != nil {
-		return fmt.Errorf("apply %s: block %s: %w", kind, id, translate(err))
-	}
-	if !exists {
-		return fmt.Errorf("apply %s: block %s: %w", kind, id, knowledge.ErrNotFound)
-	}
-	return nil
-}
-
-// applyLink upserts a non-hierarchical edge between two existing blocks.
-// Either endpoint gone maps to ErrNotFound; the relation defaults to
-// "related" when the op leaves it unset, matching the domain's default and
-// the schema's CHECK. The upsert resurrects a soft-deleted edge (deleted=0)
-// and refreshes its review state and group — re-linking is how the domain
-// restores a link an owner had rejected — while an edge the owner
-// hand-created (AddEdge, reviewed=1) stays reviewed only if this write is
-// also an owner write; an AI re-link of an owner edge intentionally regresses
-// it to unreviewed, since the link itself changed provenance.
-func (r *Repo) applyLink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
-	if err := requireBlock(ctx, tx, op.Kind, op.From); err != nil {
-		return err
-	}
-	if err := requireBlock(ctx, tx, op.Kind, op.To); err != nil {
-		return err
-	}
-	relation := op.Relation
-	if relation == "" {
-		relation = knowledge.RelationRelated
-	}
-	var origin any
-	if op.Origin != "" {
-		origin = op.Origin
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, origin, reviewed, deleted, group_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-		ON CONFLICT (from_id, to_id, relation)
-		DO UPDATE SET deleted = 0, reviewed = excluded.reviewed, group_id = excluded.group_id`,
-		op.From, op.To, string(relation), string(b.meta.Author), origin, b.reviewed, string(b.groupID), b.now); err != nil {
-		return fmt.Errorf("apply link %s->%s: %w", op.From, op.To, translate(err))
-	}
-	return nil
-}
-
-// applyUnlink soft-deletes an edge as part of a write batch — the mirror of
-// applyLink. An owner write removes the link at once (born reviewed); an AI
-// write leaves a pending removal (unreviewed, deleted) that GetEdges already
-// hides but review can still reject to restore. Unlinking an absent edge is a
-// no-op: there is nothing to hide, and the batch should not fail on it.
-func (r *Repo) applyUnlink(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
-	relation := op.Relation
-	if relation == "" {
-		relation = knowledge.RelationRelated
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE edges SET deleted = 1, reviewed = ?, group_id = ?
-		WHERE from_id = ? AND to_id = ? AND relation = ?`,
-		b.reviewed, string(b.groupID), op.From, op.To, string(relation)); err != nil {
-		return fmt.Errorf("apply unlink %s->%s: %w", op.From, op.To, translate(err))
-	}
-	return nil
-}
-
 // applyDelete tombstones a block and its whole subtree, children-first: each
 // touched block gets a tombstone revision (its current snapshot, Deleted
-// true) before its blocks row is removed. Edges are left untouched — reads
-// hide edges with a dead endpoint (Task 4), so restoring the block restores
-// its links without storage having to remember them here.
+// true) before its blocks row is removed.
 func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	subtree, err := subtreePreorder(ctx, tx, op.BlockID)
 	if err != nil {
@@ -557,6 +566,9 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blocks WHERE id = ?`, string(blk.ID)); err != nil {
 			return fmt.Errorf("apply delete %s: %w", blk.ID, translate(err))
+		}
+		if err := putRefs(ctx, tx, blk.ID, ""); err != nil {
+			return fmt.Errorf("apply delete %s: %w", blk.ID, err)
 		}
 	}
 	return nil

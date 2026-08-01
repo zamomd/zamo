@@ -9,11 +9,11 @@ type TopicNode struct {
 	Blocks int
 }
 
-// TopicEdge is an undirected link between two topics: it exists when any block
-// of one is linked to any block of the other. Multiplicity collapses — ten
-// links between two topics are one edge — and so does direction, so From is
-// always the smaller id. A topic never edges to itself: a link between two
-// blocks of the same topic says nothing about the map.
+// TopicEdge is an undirected connection between two topics. Multiplicity
+// collapses — many connections between two topics are one edge — and so does
+// direction, so From is always the smaller id. A topic never edges to itself:
+// a connection between two blocks of the same topic says nothing about the
+// map.
 type TopicEdge struct {
 	From ID
 	To   ID

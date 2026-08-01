@@ -3,7 +3,6 @@ package knowledge
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 )
@@ -43,9 +42,20 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWr
 // block gains a revision; AI revisions await review, owner revisions are
 // born reviewed. The single write path for MCP, the GUI AI flows, and the
 // owner's manual edits.
+//
+// A batch that renames a topic root additionally rewrites every [[Topic]]
+// reference to it, so the text stays true. The expansion lands in the same
+// batch and therefore the same revision group, so the rename is reviewed and
+// reverted as a unit — and because it happens here rather than on one caller's
+// path, an AI rename is expanded exactly like the owner's and inherits the
+// batch's review state.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
 	if strings.TrimSpace(meta.Title) == "" {
 		return Applied{}, fmt.Errorf("empty title: %w", ErrInvalidOps)
+	}
+	ops, err := s.expandRenames(ctx, &meta, ops)
+	if err != nil {
+		return Applied{}, err
 	}
 	resolved, ids, err := prepareOps(ops, s.newID)
 	if err != nil {
@@ -56,6 +66,27 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 		return Applied{}, err
 	}
 	return Applied{GroupID: groupID, IDs: ids}, nil
+}
+
+// CreateTopic adds an empty topic root named name. Owner-authored, so it is
+// born reviewed, and it needs no LLM — the provider has no default, so an AI
+// expansion is not a path a fresh install can rely on to make a topic exist.
+// The name is written verbatim, which is what makes the new root's title_key
+// exactly the key the [[Topic]] reference that asked for it resolves by.
+//
+// A name nothing could reference — empty, or carrying a bracket — is refused
+// rather than creating a root the reference cannot reach after all, and a name
+// already taken reports ErrDuplicateTopic.
+func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
+	if TopicKey(name) == "" {
+		return "", fmt.Errorf("create topic %q: a topic needs a name: %w", name, ErrInvalidOps)
+	}
+	const temp = "topic"
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpAdd, TempID: temp, Content: name}})
+	if err != nil {
+		return "", err
+	}
+	return applied.IDs[temp], nil
 }
 
 // ExpandTopic expands a topic into a block tree and writes it directly,
@@ -83,11 +114,288 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
-// path; an owner revision is born reviewed.
+// path; an owner revision is born reviewed. The block is read first so a
+// missing one is refused before any batch is built.
 func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
-	_, err := s.ApplyOps(ctx, ownerMeta(),
-		[]Op{{Kind: OpEdit, BlockID: id, Content: content}})
+	if _, err := s.blockByID(ctx, id); err != nil {
+		return err
+	}
+	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpEdit, BlockID: id, Content: content}})
 	return err
+}
+
+// rename is one topic rename found in a batch: the root being renamed, the
+// normalized name references still resolve by, and the name to write instead.
+// An empty newKey means the edit drops the root's name altogether.
+type rename struct {
+	id      ID
+	oldKey  string
+	newKey  string
+	newName string
+	content string
+}
+
+// expandRenames appends to ops the reference rewrites its topic renames imply,
+// and names the batch after them when the caller had nothing more specific to
+// say. An edit that takes a still-referenced root to a name nothing can
+// reference has no rewrite to make and is refused instead (see refuseOrphaning).
+//
+// Rewrites are made against the text the batch will actually store, which is
+// what the reader will see: an edit's own content supersedes what storage holds,
+// a move carries none so the stored text stands, and a delete leaves nothing to
+// rewrite. Only text that no longer carries the old name is left alone — that is
+// what makes a batch of "rename a topic and move a block referencing it" come
+// out true, and what makes the renamed root's own self-reference follow the
+// rename rather than go stale.
+func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) ([]Op, error) {
+	renames, err := s.renamesIn(ctx, ops)
+	if err != nil || len(renames) == 0 {
+		return ops, err
+	}
+	e := newExpansion(ops)
+	for _, r := range renames {
+		e.expect(r.id, r.content)
+		sources, err := s.repo.BlocksReferencingTopic(ctx, r.oldKey)
+		if err != nil {
+			return nil, fmt.Errorf("rename topic %s: %w", r.id, err)
+		}
+		e.expectRefs(r.id, r.oldKey, sources)
+		if r.newKey == "" {
+			if err := e.refuseOrphaning(r, sources); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		for _, src := range sources {
+			e.rewrite(src, r)
+		}
+	}
+	// A rewrite is only true alongside the rename that caused it, so a batch
+	// carrying one becomes a single reviewable unit — unless the rename's own
+	// op is what carries it, in which case there is nothing to decide on apart
+	// and the block keeps its ordinary controls.
+	meta.Atomic = e.split
+	retitleRename(meta, len(e.rewrote))
+	return e.ops, nil
+}
+
+// expansion is the batch a rename is being expanded into. It answers what text
+// the batch will store for a block and where that text lives, which is what
+// keeps one block to one written content: a rewrite lands on the op that already
+// carries it — the caller's edit, or an earlier rewrite — and a block whose ops
+// carry no content at all gets one appended edit and no more.
+type expansion struct {
+	ops     []Op
+	carrier map[ID]int  // block id → index in ops of the op writing its content
+	first   map[ID]int  // block id → index in ops of the first op naming it
+	gone    map[ID]bool // block id → the batch deletes it
+	rewrote map[ID]bool // block id → a rename changed its text
+	split   bool        // a rewrite landed on a block other than the renamed root
+}
+
+// newExpansion reads the caller's batch without taking it over: ops is cloned,
+// so nothing here is written through to the slice the caller still holds.
+func newExpansion(ops []Op) *expansion {
+	e := &expansion{
+		ops:     slices.Clone(ops),
+		carrier: make(map[ID]int),
+		first:   make(map[ID]int),
+		gone:    make(map[ID]bool),
+		rewrote: make(map[ID]bool),
+	}
+	for i, op := range ops {
+		if op.BlockID == "" {
+			continue
+		}
+		if _, seen := e.first[op.BlockID]; !seen {
+			e.first[op.BlockID] = i
+		}
+		switch op.Kind {
+		case OpDelete:
+			e.gone[op.BlockID] = true
+		case OpEdit:
+			// A later edit of the same block wins, as it does on apply.
+			e.carrier[op.BlockID] = i
+		}
+	}
+	return e
+}
+
+// content reports the text the batch leaves in src and whether the block
+// survives it at all.
+func (e *expansion) content(src Block) (string, bool) {
+	if e.gone[src.ID] {
+		return "", false
+	}
+	if i, ok := e.carrier[src.ID]; ok {
+		return e.ops[i].Content, true
+	}
+	return src.Content, true
+}
+
+// rewrite makes r's new name true in src. It writes through the op that carries
+// src's content, appending an edit only when no op does — a moved or untouched
+// block — so no block is ever given two ops that write content.
+func (e *expansion) rewrite(src Block, r rename) {
+	content, live := e.content(src)
+	if !live {
+		return
+	}
+	rewritten := RewriteTopicRef(content, r.oldKey, r.newName)
+	if rewritten == content {
+		return
+	}
+	e.rewrote[src.ID] = true
+	e.split = e.split || src.ID != r.id
+	if i, ok := e.carrier[src.ID]; ok {
+		e.ops[i].Content = rewritten
+	} else {
+		e.carrier[src.ID] = len(e.ops)
+		e.ops = append(e.ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+	}
+	e.expect(src.ID, src.Content)
+}
+
+// expect records the stored text a rename was worked out from, on the op that
+// will write the block — or, for a block the batch only moves, on the move,
+// which writes nothing but was still decided against that text. Storage refuses
+// the batch if the text is no longer there. The op keeps the first text it is
+// given: a batch renaming two topics reads the base once per rename, and it is
+// the read the rewrite was computed from that has to still hold.
+func (e *expansion) expect(id ID, content string) {
+	if i, ok := e.carrier[id]; ok {
+		e.ops[i].expectContent(content)
+		return
+	}
+	if i, ok := e.first[id]; ok {
+		e.ops[i].expectContent(content)
+	}
+}
+
+// expectRefs records which blocks referenced the topic when the rename read the
+// index, so a source that arrives meanwhile — one no rewrite in this batch keeps
+// true — is caught on apply rather than silently orphaned.
+func (e *expansion) expectRefs(id ID, key string, sources []Block) {
+	i, ok := e.first[id]
+	if !ok {
+		return
+	}
+	ids := make([]ID, len(sources))
+	for j, source := range sources {
+		ids[j] = source.ID
+	}
+	e.ops[i].expectTopicRefs(key, ids)
+}
+
+// refuseOrphaning rejects an edit that would leave a topic root with a name no
+// reference can reach while blocks still reference the name it is dropping.
+// There is nothing to rewrite those references to — [[]] resolves to nothing —
+// so the only honest answers are refusing the edit or orphaning every backlink
+// silently.
+//
+// What counts is the text the batch will store: a source it deletes, or edits
+// into something that no longer names the topic, orphans nothing. That is also
+// how the root's own self-reference is excluded when the same edit drops it. An
+// unreferenced root may still become unnamed, which the design allows.
+func (e *expansion) refuseOrphaning(r rename, sources []Block) error {
+	for _, src := range sources {
+		content, live := e.content(src)
+		if !live || !referencesTopic(content, r.oldKey) {
+			continue
+		}
+		return fmt.Errorf("unname topic %s still referenced by %s: %w",
+			r.id, src.ID, ErrUnreferenceableTopic)
+	}
+	return nil
+}
+
+// referencesTopic reports whether content carries a reference resolving by key,
+// read through the grammar that built the index rather than a second one.
+func referencesTopic(content, key string) bool {
+	return slices.Contains(ParseRefs(content), Ref{Kind: RefTopic, TargetKey: key})
+}
+
+// renamesIn reports the name changes a batch makes: one per edited topic root,
+// from the name references resolve by today to the one the batch leaves it with.
+// Only a root has a name to rename, and a root that had none has nothing for a
+// reference to have resolved by, so it is not a rename.
+//
+// It is the batch's last edit of a block that decides its content, as it does on
+// apply, so a root edited several times yields a single rename over the whole
+// batch — never one per op, which would rewrite the backlinks to a name only an
+// intermediate op held. A root taken back to the name it started with changes
+// nothing and is no rename at all.
+//
+// A name a reference cannot carry — one holding a bracket — keys as empty, so
+// taking a topic to such a name is the same transition as unnaming it: there is
+// nothing to rewrite the backlinks to, and refuseOrphaning decides.
+func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
+	var changed []ID
+	seen := make(map[ID]bool)
+	final := make(map[ID]int)     // block id → index in ops of the edit that decides its content
+	parent := make(map[ID]string) // block id → parent left by its last move
+	for i, op := range ops {
+		if op.BlockID == "" {
+			continue
+		}
+		switch op.Kind {
+		case OpEdit:
+			final[op.BlockID] = i
+		case OpMove:
+			parent[op.BlockID] = op.Parent
+		default:
+			continue
+		}
+		if !seen[op.BlockID] {
+			seen[op.BlockID] = true
+			changed = append(changed, op.BlockID)
+		}
+	}
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	blocks, err := s.repo.GetBlocks(ctx, changed)
+	if err != nil {
+		return nil, err
+	}
+	var out []rename
+	for _, id := range changed {
+		block, ok := blocks[id]
+		if !ok || !block.IsTopic() {
+			continue
+		}
+		content := block.Content
+		if i, edited := final[id]; edited {
+			content = ops[i].Content
+		}
+		oldKey := TopicKey(block.Content)
+		newKey := TopicKey(content)
+		if p, moved := parent[id]; moved && p != "" {
+			newKey = ""
+		}
+		if oldKey == "" || oldKey == newKey {
+			continue
+		}
+		out = append(out, rename{
+			id: id, oldKey: oldKey, newKey: newKey, newName: TopicName(content), content: block.Content,
+		})
+	}
+	return out, nil
+}
+
+// retitleRename names a rename batch in the Changes screen by what it actually
+// touched. Only the generic owner label is replaced: any other title was chosen
+// for this batch — an AI batch carries the instruction the human gave — and
+// says more than a count of rewritten blocks.
+func retitleRename(meta *WriteMeta, blocks int) {
+	if blocks == 0 || meta.Title != ownerTitle {
+		return
+	}
+	noun := "blocks"
+	if blocks == 1 {
+		noun = "block"
+	}
+	meta.Title = fmt.Sprintf("Rename topic and rewrite references in %d %s", blocks, noun)
 }
 
 // Unreviewed returns everything awaiting review: the Changes screen.
@@ -138,16 +446,6 @@ func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
 	return s.repo.UndoGroup(ctx, groupID)
 }
 
-// AcceptEdge marks a pending edge as reviewed.
-func (s *Service) AcceptEdge(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.MarkEdgeReviewed(ctx, from, to, rel)
-}
-
-// RejectEdge removes a pending edge.
-func (s *Service) RejectEdge(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.RejectEdge(ctx, from, to, rel)
-}
-
 // Search runs a full-text search over block content.
 func (s *Service) Search(ctx context.Context, query string) ([]Block, error) {
 	return s.repo.Search(ctx, query)
@@ -172,57 +470,14 @@ func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 	return s.repo.GetSubtree(ctx, root)
 }
 
-// LinkedBlocks returns the block's typed links hydrated with the neighbour
-// blocks. An edge whose neighbour vanished mid-read is dropped rather than
-// reported: the next read no longer sees the edge either.
-func (s *Service) LinkedBlocks(ctx context.Context, id ID) ([]LinkedBlock, error) {
-	edges, err := s.repo.GetEdges(ctx, id)
+// Backlinks returns every reference pointing at the block or topic, with the
+// context a reader needs to make sense of each one.
+func (s *Service) Backlinks(ctx context.Context, id ID) ([]Backlink, error) {
+	links, err := s.repo.GetBacklinks(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("backlinks of %s: %w", id, err)
 	}
-	ids := make([]ID, len(edges))
-	for i, e := range edges {
-		ids[i] = e.To
-		if e.From != id {
-			ids[i] = e.From
-		}
-	}
-	blocks, err := s.repo.GetBlocks(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]LinkedBlock, 0, len(edges))
-	for i, e := range edges {
-		b, ok := blocks[ids[i]]
-		if !ok {
-			continue
-		}
-		out = append(out, LinkedBlock{Relation: e.Relation, Outgoing: e.From == id, Block: b})
-	}
-	return out, nil
-}
-
-// CreateLink records a typed link directly, without going through review:
-// review guards the base against AI, not against its owner (like
-// EditBlockContent). An empty relation defaults to related, mirroring the
-// link op.
-func (s *Service) CreateLink(ctx context.Context, from, to ID, rel Relation) error {
-	if from == to {
-		return fmt.Errorf("link %s to itself: %w", from, ErrInvalidLink)
-	}
-	if rel == "" {
-		rel = RelationRelated
-	}
-	if rel != RelationExample && rel != RelationRelated {
-		return fmt.Errorf("link %s->%s relation %q: %w", from, to, rel, ErrInvalidLink)
-	}
-	return s.repo.AddEdge(ctx, from, to, rel, WriteMeta{Author: AuthorOwner, Source: SourceGUIManual})
-}
-
-// RemoveLink deletes a typed link directly — the owner's counterpart of
-// CreateLink. Removing an absent link is a no-op.
-func (s *Service) RemoveLink(ctx context.Context, from, to ID, rel Relation) error {
-	return s.repo.RemoveEdge(ctx, from, to, rel)
+	return links, nil
 }
 
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
@@ -248,53 +503,5 @@ func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	links, err := s.exportLinks(ctx, subtrees)
-	if err != nil {
-		return err
-	}
-	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees, links))
-}
-
-// exportLinks collects each block's outgoing typed links for the export,
-// hydrated with the first line of the target block so the connection reads in
-// plain markdown. Edges whose target vanished mid-read are dropped, like
-// LinkedBlocks. Only outgoing edges are rendered, so a link appears once, under
-// its source.
-func (s *Service) exportLinks(ctx context.Context, subtrees [][]Block) (map[ID][]ExportLink, error) {
-	outgoing := make(map[ID][]Edge)
-	targets := make(map[ID]bool)
-	for _, sub := range subtrees {
-		for _, block := range sub {
-			edges, err := s.repo.GetEdges(ctx, block.ID)
-			if err != nil {
-				return nil, err
-			}
-			for _, e := range edges {
-				if e.From != block.ID {
-					continue // render a link once, under its source
-				}
-				outgoing[block.ID] = append(outgoing[block.ID], e)
-				targets[e.To] = true
-			}
-		}
-	}
-	if len(targets) == 0 {
-		return nil, nil
-	}
-	blocks, err := s.repo.GetBlocks(ctx, slices.Collect(maps.Keys(targets)))
-	if err != nil {
-		return nil, err
-	}
-	links := make(map[ID][]ExportLink, len(outgoing))
-	for blockID, edges := range outgoing {
-		for _, e := range edges {
-			target, ok := blocks[e.To]
-			if !ok {
-				continue // the neighbour vanished mid-read
-			}
-			first, _, _ := strings.Cut(target.Content, "\n")
-			links[blockID] = append(links[blockID], ExportLink{Relation: e.Relation, Target: first})
-		}
-	}
-	return links, nil
+	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
 }

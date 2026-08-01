@@ -9,14 +9,20 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// revisionColumns is the block_revisions projection every read shares, in
-// the order scanRevision expects.
-const revisionColumns = `id, block_id, seq, content, parent_id, position,
-	deleted, author, source, origin, rationale, reviewed, group_id, created_at`
+// revisionSelect is the block_revisions projection every read shares, in the
+// order scanRevision expects. The group is joined in for its atomic flag: a
+// revision carries whether its batch has to be reviewed whole, so no caller
+// has to look that up separately and none can forget to.
+const revisionSelect = `
+SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position,
+       r.deleted, r.author, r.source, r.origin, r.rationale, r.reviewed,
+       r.group_id, r.created_at, COALESCE(g.atomic, 0)
+FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id`
 
 // rowQueryer is the read surface shared by *sql.DB and *sql.Tx, so
 // headRevision works standalone (a plain read) or inside a write
@@ -61,8 +67,7 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev knowledge.Revision, now
 // the block has none.
 func headRevision(ctx context.Context, q rowQueryer, blockID string) (knowledge.Revision, bool, error) {
 	row := q.QueryRowContext(ctx,
-		`SELECT `+revisionColumns+` FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`,
-		blockID)
+		revisionSelect+` WHERE r.block_id = ? ORDER BY r.seq DESC LIMIT 1`, blockID)
 	rev, err := scanRevision(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return knowledge.Revision{}, false, nil
@@ -73,7 +78,7 @@ func headRevision(ctx context.Context, q rowQueryer, blockID string) (knowledge.
 	return rev, true, nil
 }
 
-// scanRevision maps one revisionColumns row into a domain Revision: NULL
+// scanRevision maps one revisionSelect row into a domain Revision: NULL
 // parent_id becomes an empty ID (a topic root), the nullable provenance
 // columns (source, origin, rationale, group_id) become their zero value, and
 // created_at is parsed via parseTime.
@@ -85,7 +90,8 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 		created                                  string
 	)
 	if err := row.Scan(&id, &blockID, &rev.Seq, &rev.Content, &parent, &rev.Position,
-		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created); err != nil {
+		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created,
+		&rev.Atomic); err != nil {
 		return knowledge.Revision{}, err
 	}
 	rev.ID = knowledge.ID(id)
@@ -108,7 +114,11 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 // requires a live parent, and a block with live children cannot be removed.
 // Timestamps come from revision history so rollback reproduces historical state.
 //
-// Projection writes use the normal FTS-maintaining triggers.
+// It restores every piece of state derived from content, not just the row:
+// blocks_fts through the normal triggers, blocks.title_key computed here, and
+// the block's refs rows rebuilt from the projected content — emptied when the
+// head is a deletion. Dropping either of the last two is silent: the tree still
+// renders while the topic loses its name and every backlink to it.
 func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	head, ok, err := headRevision(ctx, tx, blockID)
 	if err != nil {
@@ -127,6 +137,9 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM blocks WHERE id = ?`, blockID); err != nil {
 			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
+		}
+		if err := putRefs(ctx, tx, knowledge.ID(blockID), ""); err != nil {
+			return fmt.Errorf("project head of %s: %w", blockID, err)
 		}
 		return nil
 	}
@@ -152,28 +165,51 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	if head.ParentID != "" {
 		parent = string(head.ParentID)
 	}
+	key := titleKey(parent, head.Content)
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, '{}', ?, ?)
+		INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			parent_id = excluded.parent_id, position = excluded.position,
-			content = excluded.content, updated_at = excluded.updated_at`,
-		blockID, parent, head.Position, head.Content, first, formatTime(head.CreatedAt)); err != nil {
+			content = excluded.content, title_key = excluded.title_key,
+			updated_at = excluded.updated_at`,
+		blockID, parent, head.Position, head.Content, key,
+		first, formatTime(head.CreatedAt)); err != nil {
 		return fmt.Errorf("project head of %s: %w", blockID, translate(err))
+	}
+	if err := putRefs(ctx, tx, knowledge.ID(blockID), head.Content); err != nil {
+		return fmt.Errorf("project head of %s: %w", blockID, err)
 	}
 	return nil
 }
 
 // DeleteRevision removes a revision and rebuilds the projection when the head
 // changes. Invalid projections roll back the transaction.
+//
+// An unreviewed revision of an atomic group is refused: deleting it is a review
+// decision on that block alone by another route. Reverting the rename of a
+// topic would leave the blocks it rewrote pending on their own, which is
+// exactly what refuseSplitGroup then reads as a whole group and accepts —
+// ending in a topic under its old name and accepted text pointing nowhere.
+//
+// The reviewed case is left open. Editing history can split a group that was
+// already decided on too, but that is a property of history editing rather
+// than of the review queue, and needs its own answer.
 func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
 	what := fmt.Sprintf("delete revision %s of %s", revID, blockID)
 	return r.withTx(ctx, what, func(tx *sql.Tx) error {
 		var seq int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT seq FROM block_revisions WHERE id = ? AND block_id = ?`,
-			string(revID), string(blockID)).Scan(&seq); err != nil {
+		var reviewed, atomic bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT r.seq, r.reviewed, COALESCE(g.atomic, 0)
+			FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id
+			WHERE r.id = ? AND r.block_id = ?`,
+			string(revID), string(blockID)).Scan(&seq, &reviewed, &atomic); err != nil {
 			return translate(err)
+		}
+		if !reviewed && atomic {
+			return fmt.Errorf("revision %s of %s is part of a group awaiting review: %w",
+				revID, blockID, knowledge.ErrAtomicGroup)
 		}
 		var maxSeq int
 		if err := tx.QueryRowContext(ctx,
@@ -198,6 +234,9 @@ func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) 
 // its last reviewed revision to drop, so it is a no-op.
 func (r *Repo) RejectBlock(ctx context.Context, blockID knowledge.ID) error {
 	return r.withTx(ctx, fmt.Sprintf("reject block %s", blockID), func(tx *sql.Tx) error {
+		if err := refuseSplitGroup(ctx, tx, []string{string(blockID)}); err != nil {
+			return err
+		}
 		return rejectBlockTx(ctx, tx, string(blockID))
 	})
 }
@@ -266,6 +305,9 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 		if err != nil {
 			return err
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		var toProject []string
 		for _, id := range ids {
 			trimmed, err := trimUnreviewedRevisions(ctx, tx, id)
@@ -280,8 +322,60 @@ func (r *Repo) RejectPage(ctx context.Context, topicID knowledge.ID) error {
 	})
 }
 
+// refuseSplitGroup rejects a review decision that would cover only part of an
+// atomic group. ids are the blocks the decision touches; every block of such a
+// group with something still pending has to be among them.
+//
+// Group-wide operations — MarkGroupReviewed, UndoGroup — never need the check:
+// they are the whole group by construction, and they are what the frontend
+// offers instead of the per-block controls (see UnreviewedBlock.Atomic). A page
+// that happens to contain the entire group passes, since nothing is left split.
+func refuseSplitGroup(ctx context.Context, tx *sql.Tx, ids []string) error {
+	groups, err := pendingAtomicGroups(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	covered := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		covered[id] = true
+	}
+	for _, group := range groups {
+		members, err := queryIDs(ctx, tx,
+			`SELECT DISTINCT block_id FROM block_revisions WHERE group_id = ? AND reviewed = 0`, group)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			if !covered[m] {
+				return fmt.Errorf("group %s also changed block %s: %w", group, m, knowledge.ErrAtomicGroup)
+			}
+		}
+	}
+	return nil
+}
+
+// pendingAtomicGroups returns the atomic groups any of ids still has an
+// unreviewed revision in.
+func pendingAtomicGroups(ctx context.Context, tx *sql.Tx, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return queryIDs(ctx, tx, `
+SELECT DISTINCT r.group_id FROM block_revisions r
+JOIN revision_groups g ON g.id = r.group_id
+WHERE r.reviewed = 0 AND g.atomic = 1
+  AND r.block_id IN (`+strings.Repeat(",?", len(ids))[1:]+`)`, args...)
+}
+
 // undoableBlockIDs returns the affected blocks when a group can be removed
-// without crossing newer revisions or edge changes.
+// without crossing newer revisions.
 func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
 	var buried bool
 	if err := tx.QueryRowContext(ctx, `
@@ -295,16 +389,7 @@ func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string
 		return nil, translate(err)
 	}
 	if buried {
-		return nil, fmt.Errorf("group %s: written over since: %w", groupID, knowledge.ErrInvalidRollback)
-	}
-	var edges bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM edges WHERE group_id = ?)`, groupID).Scan(&edges); err != nil {
-		return nil, translate(err)
-	}
-	if edges {
-		return nil, fmt.Errorf("group %s: edges have no revisions to roll back: %w",
-			groupID, knowledge.ErrInvalidRollback)
+		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrGroupWrittenOver)
 	}
 
 	ids, err := queryIDs(ctx, tx,
@@ -394,6 +479,9 @@ func (r *Repo) MarkBlockReviewed(ctx context.Context, blockID knowledge.ID) erro
 			}
 			ids = append(ids, descendants...)
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		return markReviewed(ctx, tx, ids)
 	})
 }
@@ -462,18 +550,11 @@ func tombstoneChainReaches(ctx context.Context, tx *sql.Tx, id, root string) (bo
 }
 
 // MarkGroupReviewed implements knowledge.Repository: accepts every
-// revision AND every edge of one ApplyOps batch at once — a batch that
-// included a link op (applyLink stamps the edge with the same group_id)
-// must not leave that link pending just because the accept happened at
-// the group, not the block, granularity.
+// revision of one ApplyOps batch at once.
 func (r *Repo) MarkGroupReviewed(ctx context.Context, groupID knowledge.ID) error {
 	return r.withTx(ctx, fmt.Sprintf("mark group reviewed %s", groupID), func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID)); err != nil {
-			return translate(err)
-		}
 		_, err := tx.ExecContext(ctx,
-			`UPDATE edges SET reviewed = 1 WHERE group_id = ?`, string(groupID))
+			`UPDATE block_revisions SET reviewed = 1 WHERE group_id = ?`, string(groupID))
 		return translate(err)
 	})
 }
@@ -487,6 +568,9 @@ func (r *Repo) MarkPageReviewed(ctx context.Context, topicID knowledge.ID) error
 		if err != nil {
 			return err
 		}
+		if err := refuseSplitGroup(ctx, tx, ids); err != nil {
+			return err
+		}
 		return markReviewed(ctx, tx, ids)
 	})
 }
@@ -497,8 +581,7 @@ func (r *Repo) MarkPageReviewed(ctx context.Context, topicID knowledge.ID) error
 // id never existed (or was fully rejected/rolled back away).
 func (r *Repo) ListRevisions(ctx context.Context, blockID knowledge.ID) ([]knowledge.Revision, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+revisionColumns+` FROM block_revisions WHERE block_id = ? ORDER BY seq DESC`,
-		string(blockID))
+		revisionSelect+` WHERE r.block_id = ? ORDER BY r.seq DESC`, string(blockID))
 	if err != nil {
 		return nil, fmt.Errorf("list revisions of %s: %w", blockID, translate(err))
 	}
@@ -549,15 +632,16 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		// always head, e.g. a reviewed owner edit sitting on top of a still-
 		// unreviewed AI edit).
 		var groupID, title string
+		var atomic bool
 		if err := r.db.QueryRowContext(ctx, `
-			SELECT COALESCE(rv.group_id, ''), COALESCE(g.title, '') FROM block_revisions rv
+			SELECT COALESCE(rv.group_id, ''), COALESCE(g.title, ''), COALESCE(g.atomic, 0) FROM block_revisions rv
 			LEFT JOIN revision_groups g ON g.id = rv.group_id
 			WHERE rv.block_id = ? AND rv.reviewed = 0
-			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title); err != nil {
+			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title, &atomic); err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, translate(err))
 		}
 		out = append(out, knowledge.UnreviewedBlock{
-			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
+			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title, Atomic: atomic,
 		})
 	}
 	slices.SortStableFunc(out, func(a, b knowledge.UnreviewedBlock) int {
@@ -567,33 +651,7 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		return cmp.Compare(a.Head.BlockID, b.Head.BlockID)
 	})
 
-	// An unreviewed edge is a pending change: a pending addition (deleted = 0)
-	// or a pending removal from an AI unlink (deleted = 1). Both need review;
-	// the deleted flag tells them apart via Edge.Removing.
-	const edgeQ = `
-SELECT from_id, to_id, relation, reviewed, deleted FROM edges
-WHERE reviewed = 0
-  AND EXISTS(SELECT 1 FROM blocks WHERE id = from_id)
-  AND EXISTS(SELECT 1 FROM blocks WHERE id = to_id)
-ORDER BY relation, from_id, to_id`
-	edgeRows, err := r.db.QueryContext(ctx, edgeQ)
-	if err != nil {
-		return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-	}
-	defer edgeRows.Close()
-	var edges []knowledge.Edge
-	for edgeRows.Next() {
-		var e knowledge.Edge
-		if err := edgeRows.Scan(&e.From, &e.To, &e.Relation, &e.Reviewed, &e.Removing); err != nil {
-			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-		}
-		edges = append(edges, e)
-	}
-	if err := edgeRows.Err(); err != nil {
-		return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: edges: %w", translate(err))
-	}
-
-	return knowledge.UnreviewedChanges{Blocks: out, Edges: edges}, nil
+	return knowledge.UnreviewedChanges{Blocks: out}, nil
 }
 
 // unreviewedBlockIDs returns the distinct ids of every block that has at

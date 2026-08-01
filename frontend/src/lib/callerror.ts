@@ -41,8 +41,14 @@ const readable: Record<string, string> = {
 	invalid_ops: "That change is malformed and can't be applied.",
 	empty_ops: "There's nothing to apply.",
 	invalid_rollback: "That version can't be rolled back to.",
-	invalid_link: "That link isn't valid.",
+	group_written_over:
+		"One of these blocks has been edited since this batch, so it can't be rolled back any more. Accept it and edit the blocks instead.",
+	duplicate_topic: "A topic with that name already exists.",
+	unreferenceable_topic:
+		"Other blocks link to this topic by name, so it can't be left with a name nothing can link to — an empty one, or one containing [ or ].",
+	atomic_group: "This is part of a topic rename — accept or reject the whole batch on the Changes screen.",
 	busy: "The database is busy. Try again in a moment.",
+	concurrent_write: "A linked block changed while this topic was being renamed. Try the rename again.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",
 	declarative: "Settings are locked by your config file (declarative mode).",

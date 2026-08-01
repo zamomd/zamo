@@ -24,13 +24,40 @@ var (
 	// removal that would orphan live children.
 	ErrInvalidRollback = errors.New("rollback would leave an inconsistent tree")
 
-	// ErrInvalidLink reports a link the domain refuses to create: a block
-	// linked to itself, or an unknown relation.
-	ErrInvalidLink = errors.New("link is invalid")
+	// ErrGroupWrittenOver reports a batch that cannot be rolled back because
+	// one of its blocks has been written again since. Removing the batch's
+	// revisions from under a later one would silently change what that later
+	// change was made against, so the batch can only be accepted from here and
+	// the blocks edited afterwards. Distinct from ErrInvalidRollback, which is
+	// about the tree a rollback would leave, so the user can be told which of
+	// the two stopped them.
+	ErrGroupWrittenOver = errors.New("batch was written over by a later change")
+
+	// ErrDuplicateTopic reports a write that would give two topic roots the
+	// same name. Names are how [[Topic]] references resolve, so they must
+	// stay unique.
+	ErrDuplicateTopic = errors.New("topic name already taken")
+
+	// ErrUnreferenceableTopic reports a write that would take a topic root to a
+	// name no [[Topic]] reference can reach — an empty one, or one carrying a
+	// bracket, which cannot be written inside [[...]] at all — while other
+	// blocks still reference the name it is dropping. Those references would
+	// resolve to nothing, silently. The name by itself is fine: a root nothing
+	// points at may carry either and is simply not addressable by name.
+	ErrUnreferenceableTopic = errors.New("topic name cannot be referenced")
+
+	// ErrAtomicGroup reports a review decision covering only part of a batch
+	// whose blocks are only true together (see WriteMeta.Atomic). Accepting
+	// or rejecting it has to cover the whole group.
+	ErrAtomicGroup = errors.New("change must be reviewed as one group")
 
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")
+
+	// ErrConcurrentWrite reports that a rename was prepared from a block which
+	// changed before the rename transaction began.
+	ErrConcurrentWrite = errors.New("block changed while preparing the rename")
 
 	// ErrLLMUnavailable reports that the model could not be reached:
 	// network, API key, timeout.

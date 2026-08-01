@@ -1,18 +1,23 @@
 import { decodeHTML, decodeHTMLStrict } from "entities";
-import { renderMarkdown } from "./markdown";
+import { type RefResolver, renderMarkdown } from "./markdown";
 
 const entityAtStart = /^&(?:#[xX][\dA-Fa-f]+|#\d+|[A-Za-z][A-Za-z\d]+);/;
 
 // renderedText mirrors the rendered container's textContent. Tag stripping is
-// safe because Markdown input HTML is disabled.
-export function renderedText(raw: string): string {
-	return decodeHTML(renderMarkdown(raw).replace(/<[^>]*>/g, ""));
+// safe because Markdown input HTML is disabled. resolve must be the same
+// resolver the caller rendered raw's DOM with: this text is later diffed
+// character-by-character against that DOM's textContent (see sourceOffset),
+// and a different resolver produces a different string for any reference
+// that resolves, throwing that diff off.
+export function renderedText(raw: string, resolve: RefResolver): string {
+	return decodeHTML(renderMarkdown(raw, resolve).replace(/<[^>]*>/g, ""));
 }
 
 // sourceOffset maps a rendered-text offset to its Markdown source offset.
-// Unmappable positions fall back to the end of the source.
-export function sourceOffset(raw: string, renderedOffset: number): number {
-	const rendered = renderedText(raw);
+// Unmappable positions fall back to the end of the source. resolve must match
+// the one the offset was measured against in the DOM — see renderedText.
+export function sourceOffset(raw: string, renderedOffset: number, resolve: RefResolver): number {
+	const rendered = renderedText(raw, resolve);
 	const target = Math.max(renderedOffset, 0);
 	let r = 0;
 	let s = 0;

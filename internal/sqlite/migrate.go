@@ -3,14 +3,14 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
 // The full-text index blocks_fts is kept in sync with blocks by
 // triggers: search can never fall behind the data. block_revisions holds a
-// full snapshot per change: blocks is a projection of each block's head
-// revision, and edges keep no FK so a tombstoned block's links survive
-// for restoration.
+// full snapshot per change, and blocks is a projection of each block's head
+// revision.
 var migrations = []string{
 	`
 CREATE TABLE blocks (
@@ -18,6 +18,7 @@ CREATE TABLE blocks (
     parent_id  TEXT REFERENCES blocks(id),
     position   INTEGER NOT NULL DEFAULT 0,
     content    TEXT NOT NULL,
+    title_key  TEXT,
     metadata   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -25,18 +26,23 @@ CREATE TABLE blocks (
 
 CREATE INDEX idx_blocks_parent ON blocks(parent_id, position);
 
-CREATE TABLE edges (
-    from_id    TEXT NOT NULL,
-    to_id      TEXT NOT NULL,
-    relation   TEXT NOT NULL CHECK (relation IN ('example', 'related')),
-    author     TEXT NOT NULL DEFAULT 'owner',
-    origin     TEXT,
-    reviewed   INTEGER NOT NULL DEFAULT 1,
-    deleted    INTEGER NOT NULL DEFAULT 0,
-    group_id   TEXT,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (from_id, to_id, relation)
+-- Topic names are unique among roots. NULL means the root's first line
+-- yields no name, and the index tolerates any number of those.
+CREATE UNIQUE INDEX idx_topic_title ON blocks(title_key) WHERE parent_id IS NULL;
+
+-- refs is derived from block content and rebuilt on every write; it is an
+-- index, never a second source of truth. A topic reference stores the
+-- normalized name and resolves by joining blocks.title_key, so creating or
+-- deleting a topic needs no maintenance here. A block reference stores the
+-- target id.
+CREATE TABLE refs (
+    source_id  TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('topic', 'block')),
+    target_key TEXT NOT NULL,
+    PRIMARY KEY (source_id, kind, target_key)
 );
+
+CREATE INDEX idx_refs_target ON refs(target_key);
 
 CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,
@@ -58,10 +64,13 @@ CREATE TABLE block_revisions (
 
 CREATE INDEX idx_revisions_unreviewed ON block_revisions(block_id) WHERE reviewed = 0;
 
+-- atomic marks a batch whose blocks are only true together: a topic rename
+-- and the reference rewrites it implies. Review takes such a group whole.
 CREATE TABLE revision_groups (
     id         TEXT PRIMARY KEY,
     title      TEXT NOT NULL,
     source     TEXT NOT NULL,
+    atomic     INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -88,6 +97,16 @@ END;
 `,
 }
 
+// ErrSchemaTooOld reports a database whose schema predates some part of the
+// current migrations[0]. It was rewritten in place rather than followed by a
+// second migration, so such a file already reports the current schema version
+// and no migration can bring it forward — whether it comes from an earlier
+// release or from an earlier state of this branch. The message names the only
+// remedy, because it is what the user reads when the app refuses to start.
+var ErrSchemaTooOld = errors.New(
+	"this database was created before inline references and cannot be upgraded: " +
+		"delete the database file to start fresh")
+
 // Migrate applies missing migrations. The current schema version is kept
 // in PRAGMA user_version.
 func Migrate(ctx context.Context, db *sql.DB) error {
@@ -97,9 +116,41 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		if done {
-			return nil
+			return checkCurrent(ctx, db)
 		}
 	}
+}
+
+// schemaFeatures are the pieces migrations[0] gained after it started being
+// edited in place, each with the query that finds it. Every in-place edit adds
+// one: a database created between two such edits reports the current version
+// and carries some of the list but not all, so the probe has to be the whole
+// list rather than whichever piece came last.
+var schemaFeatures = []struct {
+	what  string
+	probe string
+}{
+	{"refs", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`},
+	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
+	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
+}
+
+// checkCurrent verifies that a database already at the current schema version
+// carries the current schema. Such a base opens and reads perfectly well — the
+// tree renders — while writes and queries hit whatever it is missing, which
+// reaches the user as the catch-all "Something went wrong". Probing here turns
+// that into one legible refusal at startup instead.
+func checkCurrent(ctx context.Context, db *sql.DB) error {
+	for _, f := range schemaFeatures {
+		var exists bool
+		if err := db.QueryRowContext(ctx, f.probe).Scan(&exists); err != nil {
+			return fmt.Errorf("check schema for %s: %w", f.what, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w (schema has no %s)", ErrSchemaTooOld, f.what)
+		}
+	}
+	return nil
 }
 
 // migrateStep applies at most one pending migration and reports whether

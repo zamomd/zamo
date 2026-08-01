@@ -93,7 +93,10 @@
 		     present — .graph's gap only applies between existing children, so an
 		     absent note reserves no space of its own. -->
 		{#if graph.edges.length === 0 && graph.topics.length > 1}
-			<p class="note">No links between topics yet — links come from “+ link” or from MCP, never from an expansion.</p>
+			<p class="note">
+				No links between topics yet — an edge appears once a block references another topic, by name in
+				[[brackets]] or by block id.
+			</p>
 		{/if}
 		{#if reducedLayout(graph.topics.length)}
 			<p class="note">Large base: the layout ran fewer passes, so the arrangement is rougher.</p>

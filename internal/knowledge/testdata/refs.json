@@ -1,0 +1,135 @@
+[
+  {
+    "name": "topic reference",
+    "content": "We use [[Local-first]] here.",
+    "refs": [{"kind": "topic", "targetKey": "local-first"}]
+  },
+  {
+    "name": "topic name is normalized",
+    "content": "See [[  Local-First Architecture  ]].",
+    "refs": [{"kind": "topic", "targetKey": "local-first architecture"}]
+  },
+  {
+    "name": "two topics in one block",
+    "content": "[[Zig]] contrasts with [[Rust]].",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "topic", "targetKey": "rust"}
+    ]
+  },
+  {
+    "name": "duplicate topic collapses",
+    "content": "[[Zig]] and again [[zig]].",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "unterminated topic is text",
+    "content": "An open [[bracket stays text.",
+    "refs": []
+  },
+  {
+    "name": "nested brackets are rejected",
+    "content": "[[a [[b]] c]]",
+    "refs": [{"kind": "topic", "targetKey": "b"}]
+  },
+  {
+    "name": "newline inside brackets is rejected",
+    "content": "[[first\nsecond]]",
+    "refs": []
+  },
+  {
+    "name": "empty topic name is rejected",
+    "content": "[[]] and [[   ]]",
+    "refs": []
+  },
+  {
+    "name": "labelled block reference",
+    "content": "This contradicts ((01JT4X9K2M8P0QRSTVWXYZ2345|Zig has no hidden allocations)).",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
+    "name": "bare block reference is accepted",
+    "content": "See ((01JT4X9K2M8P0QRSTVWXYZ2345)).",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
+    "name": "block target is upper-cased",
+    "content": "See ((01jt4x9k2m8p0qrstvwxyz2345|lower)).",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
+    "name": "label may contain pipes and brackets",
+    "content": "((01JT4X9K2M8P0QRSTVWXYZ2345|a|b [[c]])).",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
+    "name": "invalid ULID is text",
+    "content": "((not-a-ulid|label))",
+    "refs": []
+  },
+  {
+    "name": "ordinary parentheses are text",
+    "content": "A remark (in parentheses) and ((doubled)).",
+    "refs": []
+  },
+  {
+    "name": "references in fenced code use the same syntax",
+    "content": "```\n[[Zig]]\n((01JT4X9K2M8P0QRSTVWXYZ2345|x))\n```",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}
+    ]
+  },
+  {
+    "name": "references in inline code use the same syntax",
+    "content": "`[[Zig]]` and [[Rust]]",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "topic", "targetKey": "rust"}
+    ]
+  },
+  {
+    "name": "a backslash escapes a topic reference",
+    "content": "\\[[Zig]] is literal text.",
+    "refs": []
+  },
+  {
+    "name": "a backslash escapes a block reference",
+    "content": "\\((01JT4X9K2M8P0QRSTVWXYZ2345|x))",
+    "refs": []
+  },
+  {
+    "name": "two backslashes leave a topic reference active",
+    "content": "\\\\[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "an escaped bracket does not swallow the reference behind it",
+    "content": "\\[[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
+    "name": "a reference does not carry its escaping past itself",
+    "content": "[[Rust]] and \\[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "a backslash inside a block-reference label does not split it",
+    "content": "((01JT4X9K2M8P0QRSTVWXYZ2345|a \\) label))",
+    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
+  },
+  {
+    "name": "mixed kinds keep source order",
+    "content": "[[Zig]] then ((01JT4X9K2M8P0QRSTVWXYZ2345|x)) then [[Rust]].",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"},
+      {"kind": "topic", "targetKey": "rust"}
+    ]
+  },
+  {
+    "name": "no references",
+    "content": "Just prose.",
+    "refs": []
+  }
+]

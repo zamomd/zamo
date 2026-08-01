@@ -7,8 +7,10 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// topicRoots pairs every block with the topic root it descends from. Both graph
-// queries start here. UNION, not UNION ALL: on a database whose parent_id
+// topicRoots pairs every block with the topic root it descends from. Every
+// query that needs a block's topic builds on it — the two graph queries here
+// and GetBacklinks, which needs the source block's topic for context.
+// UNION, not UNION ALL: on a database whose parent_id
 // somehow became cyclic, UNION discards the repeated row once a block is
 // already in roots, so the walk terminates instead of looping forever — the
 // same guard GetSubtree uses.
@@ -86,21 +88,32 @@ ORDER BY r.root`
 	return out, nil
 }
 
-// topicEdges lifts block-level links to the topic level. The CASE pair orders
-// each edge's endpoints, so A->B and B->A collapse to one row under DISTINCT;
-// the root inequality drops links inside a single topic; and joining both
-// endpoints against roots drops an edge whose block no longer exists — the
-// same visibility rule GetEdges spells out with EXISTS.
+// topicEdges reads the undirected topic-level edge set from the reference
+// index. A reference contributes an edge between the root of the block that
+// carries it and the root it points at: a block reference resolves through
+// its target's root, a topic reference resolves against title_key. MIN/MAX
+// collapse direction so each pair appears once, and the inequality drops
+// references that stay inside one topic — they say nothing about the map.
 func (r *Repo) topicEdges(ctx context.Context) ([]knowledge.TopicEdge, error) {
-	const q = topicRoots + `
-SELECT DISTINCT
-    CASE WHEN f.root < t.root THEN f.root ELSE t.root END AS a,
-    CASE WHEN f.root < t.root THEN t.root ELSE f.root END AS b
-FROM edges e
-JOIN roots f ON f.id = e.from_id
-JOIN roots t ON t.id = e.to_id
-WHERE e.deleted = 0 AND f.root <> t.root
-ORDER BY a, b`
+	const q = topicRoots + `,
+resolved(source_root, target_root) AS (
+    SELECT sr.root, tr.root
+    FROM refs f
+    JOIN roots sr ON sr.id = f.source_id
+    JOIN blocks tb ON tb.id = f.target_key
+    JOIN roots tr ON tr.id = tb.id
+    WHERE f.kind = 'block'
+    UNION
+    SELECT sr.root, t.id
+    FROM refs f
+    JOIN roots sr ON sr.id = f.source_id
+    JOIN blocks t ON t.title_key = f.target_key AND t.parent_id IS NULL
+    WHERE f.kind = 'topic'
+)
+SELECT DISTINCT MIN(source_root, target_root), MAX(source_root, target_root)
+FROM resolved
+WHERE source_root <> target_root
+ORDER BY 1, 2`
 
 	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {

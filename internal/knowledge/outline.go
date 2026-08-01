@@ -88,8 +88,7 @@ func (s *Service) SplitBlock(ctx context.Context, id ID, head, tail string) (Out
 
 // InsertBefore is Enter with the caret at the very start of a non-empty block:
 // an empty sibling appears above and the block itself is not touched, so it
-// keeps its id and with it its revision history, its review state and its
-// links.
+// keeps its id and with it its revision history and review state.
 func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (OutlineChange, error) {
 	b, err := s.nonRootBlock(ctx, id, "insert before", "a topic root has no siblings")
 	if err != nil {

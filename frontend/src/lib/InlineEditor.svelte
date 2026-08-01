@@ -2,10 +2,16 @@
 	import { untrack } from "svelte";
 	import { base } from "../stores/base.svelte";
 	import { caretColumn, lineCount, lineIndexOf } from "./caret";
+	import RefAutocomplete from "./RefAutocomplete.svelte";
+	import { triggerAt } from "./reftrigger";
 
 	let { id }: { id: string } = $props();
 
-	let el: HTMLTextAreaElement | undefined;
+	// $state, not a plain let: passed to RefAutocomplete as the `target` prop,
+	// and a prop sourced from a non-reactive binding would not propagate.
+	let el: HTMLTextAreaElement | undefined = $state();
+
+	const trigger = $derived(triggerAt(base.editText, base.editCaret));
 
 	function fit(): void {
 		if (el === undefined) {
@@ -149,29 +155,40 @@
 	}
 </script>
 
-<!-- readonly preserves focus while a write is in flight. -->
-<textarea
-	bind:this={el}
-	bind:value={base.editText}
-	class="editor"
-	aria-label="block content"
-	rows="1"
-	spellcheck="false"
-	readonly={base.busy || base.commitInFlight}
-	{onkeydown}
-	{onblur}
-	onkeyup={reportCaret}
-	onclick={reportCaret}
-	onselect={reportCaret}
-	oninput={reportCaret}
-></textarea>
+<div class="editor-wrap">
+	<!-- readonly preserves focus while a write is in flight. -->
+	<textarea
+		bind:this={el}
+		bind:value={base.editText}
+		class="editor"
+		aria-label="block content"
+		rows="1"
+		spellcheck="false"
+		readonly={base.busy || base.commitInFlight}
+		{onkeydown}
+		{onblur}
+		onkeyup={reportCaret}
+		onclick={reportCaret}
+		onselect={reportCaret}
+		oninput={reportCaret}
+	></textarea>
+	{#if trigger}
+		<RefAutocomplete {trigger} target={el} />
+	{/if}
+</div>
 
 <style>
-	/* Match the rendered row metric so entering edit mode does not move text. */
-	.editor {
+	.editor-wrap {
+		position: relative;
 		flex: 1;
 		min-width: 0;
+	}
+	/* Match the rendered row metric so entering edit mode does not move text.
+	   width: 100%, not flex: the wrapper is a plain block (position: relative
+	   is what it needs to anchor the popup), not a flex container. */
+	.editor {
 		display: block;
+		width: 100%;
 		margin: 0;
 		padding: 0 var(--unit) 0 0;
 		border: none;

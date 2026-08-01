@@ -1,25 +1,11 @@
 package sqlite
 
 import (
-	"context"
-	"database/sql"
+	"reflect"
 	"testing"
-	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
-
-func insertEdge(ctx context.Context, t *testing.T, db *sql.DB, from, to string, rel knowledge.Relation, deleted bool) {
-	t.Helper()
-	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC).Format(timeLayout)
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO edges (from_id, to_id, relation, author, reviewed, deleted, created_at)
-		VALUES (?, ?, ?, 'owner', 1, ?, ?)`,
-		from, to, string(rel), deleted, now)
-	if err != nil {
-		t.Fatalf("insert edge %s->%s: %v", from, to, err)
-	}
-}
 
 func TestGetTopicGraphCountsBlocks(t *testing.T) {
 	ctx := t.Context()
@@ -47,39 +33,114 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 			t.Errorf("topic %d = %+v, want %+v", i, got.Topics[i], want[i])
 		}
 	}
-	if len(got.Edges) != 0 {
-		t.Errorf("edges = %v, want none", got.Edges)
-	}
 }
 
-func TestGetTopicGraphAggregatesEdges(t *testing.T) {
-	ctx := t.Context()
-	db := openTestDB(t)
-
-	insertBlock(ctx, t, db, "a", "", 0, "Topic A")
-	insertBlock(ctx, t, db, "a1", "a", 0, "A1")
-	insertBlock(ctx, t, db, "a2", "a", 1, "A2")
-	insertBlock(ctx, t, db, "b", "", 1, "Topic B")
-	insertBlock(ctx, t, db, "b1", "b", 0, "B1")
-	insertBlock(ctx, t, db, "c", "", 2, "Topic C")
-
-	insertEdge(ctx, t, db, "a1", "b1", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "a2", "b1", knowledge.RelationExample, false)
-	insertEdge(ctx, t, db, "b1", "a1", knowledge.RelationExample, false)
-	insertEdge(ctx, t, db, "a1", "a2", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "a1", "c", knowledge.RelationRelated, true)
-	insertEdge(ctx, t, db, "a1", "gone", knowledge.RelationRelated, false)
-
-	got, err := r(db).GetTopicGraph(ctx)
+func TestTopicEdgesFromTopicReferences(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG", Content: "Unlike [[Rust]]."},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
 	if err != nil {
 		t.Fatalf("GetTopicGraph: %v", err)
 	}
-	want := []knowledge.TopicEdge{{From: "a", To: "b"}}
-	if len(got.Edges) != len(want) || got.Edges[0] != want[0] {
-		t.Fatalf("edges = %v, want %v", got.Edges, want)
+	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
+	if !reflect.DeepEqual(g.Edges, want) {
+		t.Errorf("edges = %v, want %v", g.Edges, want)
 	}
-	if len(got.Topics) != 3 {
-		t.Fatalf("topics = %v, want three", got.Topics)
+}
+
+func TestTopicEdgesFromBlockReferences(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01CCCCCCCCCCCCCCCCCCCCCCCC",
+			Parent: "01RUST", Content: "A claim.",
+		},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG",
+			Content: "See ((01CCCCCCCCCCCCCCCCCCCCCCCC|A claim)).",
+		},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
+	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
+	if !reflect.DeepEqual(g.Edges, want) {
+		t.Errorf("edges = %v, want %v", g.Edges, want)
+	}
+}
+
+func TestTopicEdgesDropSelfLoops(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+			Parent: "01ZIG", Content: "One.",
+		},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ZIG",
+			Content: "Two, see ((01AAAAAAAAAAAAAAAAAAAAAAAA|One)).",
+		},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
+	if len(g.Edges) != 0 {
+		t.Errorf("edges = %v, want none", g.Edges)
+	}
+}
+
+func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N1", Parent: "01ZIG", Content: "Zig has no borrow checker."},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N2", Parent: "01RUST", Content: "Rust has a borrow checker."},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
+	if len(g.Edges) != 0 {
+		t.Errorf("edges = %v, want none: two populated topics with no references between them", g.Edges)
+	}
+}
+
+func TestTopicEdgesCollapseMultiplicityAndDirection(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N1", Parent: "01ZIG", Content: "First, unlike [[Rust]]."},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N2", Parent: "01ZIG", Content: "Second, unlike [[Rust]]."},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N3", Parent: "01RUST", Content: "And [[Zig]] again."},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	g, err := repo.GetTopicGraph(t.Context())
+	if err != nil {
+		t.Fatalf("GetTopicGraph: %v", err)
+	}
+	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
+	if !reflect.DeepEqual(g.Edges, want) {
+		t.Errorf("edges = %v, want %v (references both ways must collapse to one edge)", g.Edges, want)
 	}
 }
 
@@ -90,8 +151,6 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	insertBlock(ctx, t, db, "c", "", 0, "Topic C")
 	insertBlock(ctx, t, db, "a", "", 1, "Topic A")
 	insertBlock(ctx, t, db, "b", "", 2, "Topic B")
-	insertEdge(ctx, t, db, "c", "a", knowledge.RelationRelated, false)
-	insertEdge(ctx, t, db, "c", "b", knowledge.RelationRelated, false)
 
 	got, err := r(db).GetTopicGraph(ctx)
 	if err != nil {
@@ -100,10 +159,6 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	ids := []knowledge.ID{got.Topics[0].ID, got.Topics[1].ID, got.Topics[2].ID}
 	if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
 		t.Errorf("topic order = %v, want a b c", ids)
-	}
-	want := []knowledge.TopicEdge{{From: "a", To: "c"}, {From: "b", To: "c"}}
-	if len(got.Edges) != 2 || got.Edges[0] != want[0] || got.Edges[1] != want[1] {
-		t.Errorf("edges = %v, want %v", got.Edges, want)
 	}
 }
 

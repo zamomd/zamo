@@ -1,0 +1,18 @@
+# Gitleaks configuration. The default ruleset is kept in full; this file only
+# narrows it where a rule is provably wrong about this repository.
+[extend]
+useDefault = true
+
+# internal/knowledge/testdata/refs.json is the fixture the Go and TypeScript
+# reference parsers are both driven from. Its block references carry
+# 26-character Crockford base32 ULIDs, which clear generic-api-key's entropy
+# threshold and sit behind the JSON field "targetKey" — the keyword that rule
+# scans for. The allowlist is deliberately conjunctive: only that rule, only
+# that file, and only a value that is exactly a ULID.
+[[allowlists]]
+description = "ULIDs in the reference parser fixture are test data, not secrets"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^internal/knowledge/testdata/refs\.json$''']
+regexTarget = "secret"
+regexes = ['''^[0-9A-HJKMNP-TV-Z]{26}$''']

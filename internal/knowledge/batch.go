@@ -132,8 +132,6 @@ func tempRefs(op Op) []string {
 			refs = append(refs, op.Before)
 		}
 		return refs
-	case OpLink, OpUnlink:
-		return []string{op.From, op.To}
 	}
 	return nil
 }
@@ -187,9 +185,6 @@ func prepareOps(ops []Op, newID IDGenerator) ([]Op, map[string]ID, error) {
 			op.Parent = resolve(op.Parent)
 			op.After = resolve(op.After)
 			op.Before = resolve(op.Before)
-		case OpLink, OpUnlink:
-			op.From = resolve(op.From)
-			op.To = resolve(op.To)
 		}
 		out = append(out, op)
 	}

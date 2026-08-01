@@ -27,6 +27,18 @@ export enum Author {
 };
 
 /**
+ * Backlink is one incoming reference, hydrated for display: the block that
+ * carries the reference plus the topic it lives under, which is the context a
+ * reader needs to place it without navigating. The source block's own parent
+ * is reachable as Block.ParentID.
+ */
+export interface Backlink {
+    "Block": Block;
+    "TopicID": ID;
+    "TopicTitle": string;
+}
+
+/**
  * Block is the unit of knowledge: a short markdown fragment in a topic
  * tree. Portability rule: Content is pure markdown; all structure lives
  * in fields, never as service markup inside the text.
@@ -52,48 +64,11 @@ export interface Block {
 }
 
 /**
- * Edge is a typed link between two blocks from different branches of the tree.
- */
-export interface Edge {
-    "From": ID;
-    "To": ID;
-    "Relation": Relation;
-
-    /**
-     * Reviewed reports that the edge has been accepted (or was created by
-     * the owner, born reviewed). Derived by storage on read; never
-     * written by callers.
-     */
-    "Reviewed": boolean;
-
-    /**
-     * Removing reports that this is a pending removal (an unreviewed unlink):
-     * the edge is already hidden from the graph but the removal awaits review,
-     * which can reject it to restore the link. Derived by storage on read.
-     */
-    "Removing": boolean;
-}
-
-/**
  * ID identifies a block, a revision, or a write-batch group (ULID: sorts
  * by creation time).
  * ID generation lives outside the domain and is injected into Service.
  */
 export type ID = string;
-
-/**
- * LinkedBlock is a neighbour reachable over a typed link, hydrated for
- * display: the edge's relation and direction plus the neighbour block itself.
- */
-export interface LinkedBlock {
-    "Relation": Relation;
-
-    /**
-     * true when the queried block is the edge's From
-     */
-    "Outgoing": boolean;
-    "Block": Block;
-}
 
 /**
  * Metadata holds extensible block metadata: authorship (human/AI),
@@ -109,30 +84,6 @@ export interface OutlineChange {
     "GroupID": ID;
     "BlockID": ID;
 }
-
-/**
- * Relation is the type of a non-hierarchical link between blocks.
- * The hierarchy (contains/part-of) is not stored as links: it lives
- * in Block.ParentID (one source of truth per fact).
- */
-export enum Relation {
-    /**
-     * The Go zero value for the underlying type of the enum.
-     */
-    $zero = "",
-
-    /**
-     * The two non-hierarchical relations.
-     *
-     * code example ↔ theory
-     */
-    RelationExample = "example",
-
-    /**
-     * loosely related (default type)
-     */
-    RelationRelated = "related",
-};
 
 /**
  * Revision is a full snapshot of a block's state at one change: content,
@@ -172,6 +123,13 @@ export interface Revision {
      */
     "GroupID": ID;
     "CreatedAt": string;
+
+    /**
+     * Atomic reports that the revision's group is only true as a whole (see
+     * WriteMeta.Atomic), so while it is unreviewed it can be neither decided on
+     * nor deleted alone. Derived by storage on read; never written by callers.
+     */
+    "Atomic": boolean;
 }
 
 /**
@@ -208,11 +166,11 @@ export enum Source {
 };
 
 /**
- * TopicEdge is an undirected link between two topics: it exists when any block
- * of one is linked to any block of the other. Multiplicity collapses — ten
- * links between two topics are one edge — and so does direction, so From is
- * always the smaller id. A topic never edges to itself: a link between two
- * blocks of the same topic says nothing about the map.
+ * TopicEdge is an undirected connection between two topics. Multiplicity
+ * collapses — many connections between two topics are one edge — and so does
+ * direction, so From is always the smaller id. A topic never edges to itself:
+ * a connection between two blocks of the same topic says nothing about the
+ * map.
  */
 export interface TopicEdge {
     "From": ID;
@@ -255,12 +213,15 @@ export interface TopicNode {
  * the AI revision underneath it is what is actually awaiting review, so
  * GroupID can differ from Head.GroupID. "Accept batch" must key off GroupID,
  * not Head.GroupID, or it accepts the wrong — already-reviewed — batch.
+ * Atomic says that group has to be reviewed whole (see WriteMeta.Atomic), so
+ * the screen offers the batch's controls for this block and not its own.
  */
 export interface UnreviewedBlock {
     "Head": Revision;
     "TopicID": ID;
     "GroupID": ID;
     "GroupTitle": string;
+    "Atomic": boolean;
 }
 
 /**
@@ -268,5 +229,4 @@ export interface UnreviewedBlock {
  */
 export interface UnreviewedChanges {
     "Blocks": UnreviewedBlock[] | null;
-    "Edges": Edge[] | null;
 }

@@ -31,6 +31,14 @@ type fakeRepo struct {
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
 
+	backlinks    []Backlink // what GetBacklinks returns
+	backlinksErr error
+
+	referencing       []Block            // what BlocksReferencingTopic returns for any key not in referencingByKey
+	referencingByKey  map[string][]Block // per-key answers, for a batch renaming more than one topic
+	referencingErr    error
+	gotReferencingKey string // the title key BlocksReferencingTopic was last asked for
+
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
 
@@ -64,20 +72,6 @@ type fakeRepo struct {
 	unreviewed    UnreviewedChanges
 	unreviewedErr error
 
-	edges     []Edge // what GetEdges returns
-	edgesErr  error
-	gotEdges  ID     // the id GetEdges was asked for
-	added     []Edge // edges handed to AddEdge
-	addedMeta WriteMeta
-	addErr    error
-	removed   []Edge // edges handed to RemoveEdge
-	removeErr error
-
-	markedEdgeReviewed  Edge
-	markEdgeReviewedErr error
-	rejectedEdge        Edge
-	rejectEdgeErr       error
-
 	searchErr error
 }
 
@@ -93,6 +87,18 @@ func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 		return nil, f.subtreeErr
 	}
 	return f.subtrees[root], nil
+}
+
+func (f *fakeRepo) GetBacklinks(_ context.Context, target ID) ([]Backlink, error) {
+	return f.backlinks, f.backlinksErr
+}
+
+func (f *fakeRepo) BlocksReferencingTopic(_ context.Context, titleKey string) ([]Block, error) {
+	f.gotReferencingKey = titleKey
+	if blocks, ok := f.referencingByKey[titleKey]; ok {
+		return blocks, f.referencingErr
+	}
+	return f.referencing, f.referencingErr
 }
 
 func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {
@@ -155,38 +161,6 @@ func (f *fakeRepo) MarkPageReviewed(_ context.Context, topicID ID) error {
 
 func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
 	return f.unreviewed, f.unreviewedErr
-}
-
-func (f *fakeRepo) GetEdges(_ context.Context, id ID) ([]Edge, error) {
-	f.gotEdges = id
-	return f.edges, f.edgesErr
-}
-
-func (f *fakeRepo) AddEdge(_ context.Context, from, to ID, rel Relation, meta WriteMeta) error {
-	if f.addErr != nil {
-		return f.addErr
-	}
-	f.added = append(f.added, Edge{From: from, To: to, Relation: rel})
-	f.addedMeta = meta
-	return nil
-}
-
-func (f *fakeRepo) RemoveEdge(_ context.Context, from, to ID, rel Relation) error {
-	if f.removeErr != nil {
-		return f.removeErr
-	}
-	f.removed = append(f.removed, Edge{From: from, To: to, Relation: rel})
-	return nil
-}
-
-func (f *fakeRepo) MarkEdgeReviewed(_ context.Context, from, to ID, rel Relation) error {
-	f.markedEdgeReviewed = Edge{From: from, To: to, Relation: rel}
-	return f.markEdgeReviewedErr
-}
-
-func (f *fakeRepo) RejectEdge(_ context.Context, from, to ID, rel Relation) error {
-	f.rejectedEdge = Edge{From: from, To: to, Relation: rel}
-	return f.rejectEdgeErr
 }
 
 func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
@@ -289,8 +263,61 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	}
 }
 
-func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
+func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	id, err := svc.CreateTopic(t.Context(), "Local-first")
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if id == "" {
+		t.Error("CreateTopic returned no id, want the new root's")
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want a single add", repo.applyOps)
+	}
+	op := repo.applyOps[0]
+	if op.Kind != OpAdd || op.Parent != "" || op.BlockID != id {
+		t.Errorf("op = %+v, want an add of a root with the returned id", op)
+	}
+	// Verbatim: the title_key storage derives from it is what the [[Topic]]
+	// reference that asked for this topic resolves by.
+	if op.Content != "Local-first" {
+		t.Errorf("content = %q, want the name written verbatim", op.Content)
+	}
+	if repo.applyMeta.Author != AuthorOwner {
+		t.Errorf("author = %q, want an owner write born reviewed", repo.applyMeta.Author)
+	}
+}
+
+func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	// A bracketed name belongs here too: the root would be created and the
+	// [[...]] that asked for it would still resolve to nothing.
+	for _, name := range []string{"", "   ", "###", "Notes [WIP]"} {
+		if _, err := svc.CreateTopic(t.Context(), name); !errors.Is(err, ErrInvalidOps) {
+			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
+		}
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a nameless topic reached storage: %d calls", repo.applyCalls)
+	}
+}
+
+func TestCreateTopicReportsATakenName(t *testing.T) {
+	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Local-first"); !errors.Is(err, ErrDuplicateTopic) {
+		t.Errorf("error = %v, want ErrDuplicateTopic", err)
+	}
+}
+
+func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
+	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
 	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
@@ -305,6 +332,18 @@ func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	op := repo.applyOps[0]
 	if op.Kind != OpEdit || op.BlockID != "01A" || op.Content != "new text" {
 		t.Errorf("op = %+v, want an edit of 01A with the new content", op)
+	}
+}
+
+func TestEditBlockContentRefusesAMissingBlock(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied for a missing block: %d calls", repo.applyCalls)
 	}
 }
 
@@ -456,14 +495,6 @@ func TestServiceReviewPassThroughs(t *testing.T) {
 		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)",
 			err, repo.deletedBlockID, repo.deletedRevID)
 	}
-	if err := svc.AcceptEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
-		repo.markedEdgeReviewed != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
-		t.Errorf("AcceptEdge did not reach MarkEdgeReviewed: err=%v got=%+v", err, repo.markedEdgeReviewed)
-	}
-	if err := svc.RejectEdge(t.Context(), "A", "B", RelationRelated); err != nil ||
-		repo.rejectedEdge != (Edge{From: "A", To: "B", Relation: RelationRelated}) {
-		t.Errorf("RejectEdge did not reach RejectEdge: err=%v got=%+v", err, repo.rejectedEdge)
-	}
 }
 
 func TestTopicGraphPassesThrough(t *testing.T) {
@@ -514,32 +545,11 @@ func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
 		t.Errorf("writer got dir %q, want the dir passed to ExportMarkdown", writer.dir)
 	}
 	want := []ExportFile{
-		{Name: "alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
-		{Name: "beta.md", Content: "- # Beta\n"},
+		{Name: "Alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
+		{Name: "Beta.md", Content: "- # Beta\n"},
 	}
 	if !slices.Equal(writer.files, want) {
 		t.Errorf("writer got files %+v, want %+v", writer.files, want)
-	}
-}
-
-func TestServiceExportMarkdownIncludesOutgoingLinks(t *testing.T) {
-	repo := &fakeRepo{
-		topics:   []Block{blk("t1", "", 0, "# Root")},
-		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Root")}},
-		edges:    []Edge{{From: "t1", To: "x9", Relation: RelationExample}},
-		blocks:   map[ID]Block{"x9": {ID: "x9", Content: "Target block\nsecond line"}},
-	}
-	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer)
-
-	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
-		t.Fatalf("ExportMarkdown: %v", err)
-	}
-	want := "- # Root\n" +
-		"  - links:\n" +
-		"    - example → Target block\n"
-	if len(writer.files) != 1 || writer.files[0].Content != want {
-		t.Errorf("content = %+v, want %q", writer.files, want)
 	}
 }
 

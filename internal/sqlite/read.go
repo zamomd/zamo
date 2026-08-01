@@ -212,16 +212,28 @@ func scanBlock(rows *sql.Rows) (knowledge.Block, error) {
 	if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &meta, &created, &updated, &b.Unreviewed); err != nil {
 		return knowledge.Block{}, err
 	}
+	if err := decodeBlockFields(&b, parent, meta, created, updated); err != nil {
+		return knowledge.Block{}, err
+	}
+	return b, nil
+}
+
+// decodeBlockFields fills in the fields the blockColumns projection carries
+// beyond id/position/content — ParentID, Meta, CreatedAt, UpdatedAt — shared
+// by every reader that scans that projection, including ones (like
+// GetBacklinks) that cannot use blockColumns' literal SQL because it joins
+// blocks under an alias.
+func decodeBlockFields(b *knowledge.Block, parent sql.NullString, meta, created, updated string) error {
 	b.ParentID = knowledge.ID(parent.String)
 	if err := json.Unmarshal([]byte(meta), &b.Meta); err != nil {
-		return knowledge.Block{}, fmt.Errorf("decode metadata for block %s: %w", b.ID, err)
+		return fmt.Errorf("decode metadata for block %s: %w", b.ID, err)
 	}
 	var err error
 	if b.CreatedAt, err = parseTime(created); err != nil {
-		return knowledge.Block{}, fmt.Errorf("parse created_at for block %s: %w", b.ID, err)
+		return fmt.Errorf("parse created_at for block %s: %w", b.ID, err)
 	}
 	if b.UpdatedAt, err = parseTime(updated); err != nil {
-		return knowledge.Block{}, fmt.Errorf("parse updated_at for block %s: %w", b.ID, err)
+		return fmt.Errorf("parse updated_at for block %s: %w", b.ID, err)
 	}
-	return b, nil
+	return nil
 }

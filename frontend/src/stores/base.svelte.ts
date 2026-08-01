@@ -1,11 +1,10 @@
 import { Events } from "@wailsio/runtime";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
-import {
-	type Block,
-	type LinkedBlock,
-	type OutlineChange,
-	Relation,
-	type Revision,
+import type {
+	Backlink,
+	Block,
+	OutlineChange,
+	Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
@@ -22,9 +21,6 @@ import {
 	topicOf,
 } from "../lib/tree";
 import { changes } from "./changes.svelte";
-
-// Debounce link search to avoid a backend call per keystroke.
-const linkQueryDebounceMs = 200;
 
 const generationProgressEvent = "generation:progress";
 
@@ -80,21 +76,13 @@ class BaseStore {
 	highlightID = $state<string | null>(null);
 	highlightNonce = $state(0);
 
-	openLinks = new SvelteSet<string>();
-	linksById = new SvelteMap<string, LinkedBlock[]>();
-
-	linkingID = $state<string | null>(null);
-	linkQuery = $state("");
-	linkResults = $state<Block[]>([]);
-	linkRelation = $state<Relation>(Relation.RelationRelated);
+	openBacklinks = new SvelteSet<string>();
+	backlinksById = new SvelteMap<string, Backlink[]>();
 
 	historyID = $state<string | null>(null);
 	revisions = $state<Revision[]>([]);
 
 	private pendingReveal: string | null = null;
-
-	private linkQueryTimer: ReturnType<typeof setTimeout> | null = null;
-	private linkQuerySeq = 0;
 
 	private historySeq = 0;
 
@@ -183,14 +171,8 @@ class BaseStore {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
 			this.focusID = null;
 		}
-		this.linksById.clear();
-		for (const id of [...this.openLinks]) {
-			if (findBlock(this.forest, id) === null) {
-				this.openLinks.delete(id);
-				continue;
-			}
-			await this.refreshLinks(id);
-		}
+		this.backlinksById.clear();
+		await this.syncBacklinks();
 		this.dropStaleHistory();
 		if (this.pendingReveal !== null) {
 			const id = this.pendingReveal;
@@ -216,16 +198,29 @@ class BaseStore {
 				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
 				this.focusID = null;
 			}
-			for (const id of [...this.openLinks]) {
-				if (findBlock(this.forest, id) === null) {
-					this.openLinks.delete(id);
-					this.linksById.delete(id);
-				}
-			}
+			await this.syncBacklinks();
 			this.dropStaleHistory();
 			return;
 		}
 		this.forest[i] = tree;
+		await this.syncBacklinks();
+	}
+
+	// syncBacklinks brings every open "Linked references" panel back in line
+	// with the forest just read: a panel whose block is gone closes, and the
+	// rest are re-read. Both halves matter after any write — typing [[Zig]]
+	// into a block and blurring reaches here through reloadTopic, and the panel
+	// that exists to list that reference would otherwise keep the count it had
+	// before the edit.
+	private async syncBacklinks(): Promise<void> {
+		for (const id of [...this.openBacklinks]) {
+			if (findBlock(this.forest, id) === null) {
+				this.openBacklinks.delete(id);
+				this.backlinksById.delete(id);
+				continue;
+			}
+			await this.refreshBacklinks(id);
+		}
 	}
 
 	// dropStaleHistory closes the history panel once its block has left the
@@ -234,14 +229,6 @@ class BaseStore {
 		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
 			this.historyID = null;
 			this.revisions = [];
-		}
-	}
-
-	// clearLinkTimer cancels a debounced link query still waiting to fire.
-	private clearLinkTimer(): void {
-		if (this.linkQueryTimer !== null) {
-			clearTimeout(this.linkQueryTimer);
-			this.linkQueryTimer = null;
 		}
 	}
 
@@ -378,30 +365,67 @@ class BaseStore {
 		this.error = "";
 		try {
 			const scope = this.scopeID;
-			this.status = scope === null ? `expanding "${text}"…` : "asking the AI to restructure…";
 			if (scope === null) {
-				await App.ExpandTopic(text, "");
+				await this.expandNewTopic(text);
 			} else {
+				this.status = "asking the AI to restructure…";
 				await App.EditWithAI(scope, text);
+				await this.reload();
+				this.status = "changes applied, awaiting review";
 			}
 			this.command = "";
 			this.clearScope();
-			const before = new Set(this.forest.map((t) => t.block.ID));
-			await this.reload();
-			if (scope === null) {
-				const fresh = this.forest.find((t) => !before.has(t.block.ID));
-				if (fresh) {
-					this.selectedTopicID = fresh.block.ID;
-					this.focusID = null;
-				}
-			}
-			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
 		}
+	}
+
+	// createTopic makes an empty topic named name and selects it — how clicking
+	// an unresolved [[Topic]] reference in the tree offers to create its
+	// target. Deliberately not an AI expansion: the provider has no default, so
+	// routing this through the model would make creating a topic impossible on
+	// a fresh install. Expanding a topic with the AI stays its own gesture, the
+	// untargeted half of askAI.
+	async createTopic(name: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
+		this.error = "";
+		try {
+			const id = await App.CreateTopic(name);
+			await this.reload();
+			if (this.forest.some((t) => t.block.ID === id)) {
+				this.selectedTopicID = id;
+				this.focusID = null;
+			}
+			this.status = `created "${name}"`;
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	private async expandNewTopic(name: string): Promise<void> {
+		this.status = `expanding "${name}"…`;
+		await App.ExpandTopic(name, "");
+		const before = new Set(this.forest.map((t) => t.block.ID));
+		await this.reload();
+		const fresh = this.forest.find((t) => !before.has(t.block.ID));
+		if (fresh) {
+			this.selectedTopicID = fresh.block.ID;
+			this.focusID = null;
+		}
+		this.status = "changes applied, awaiting review";
 	}
 
 	async startEdit(block: Block, caret: number): Promise<void> {
@@ -429,6 +453,16 @@ class BaseStore {
 			return;
 		}
 		this.editCaret = offset;
+	}
+
+	// acceptRef replaces [from, to) of the open edit with text and lands the
+	// caret just past it — how RefAutocomplete completes a reference.
+	acceptRef(from: number, to: number, text: string): void {
+		const before = this.editText.slice(0, from);
+		const after = this.editText.slice(to);
+		this.editText = before + text + after;
+		this.editCaret = before.length + text.length;
+		this.editCaretNonce++;
 	}
 
 	private async writeIfChanged(id: string): Promise<boolean> {
@@ -835,129 +869,23 @@ class BaseStore {
 		return this.review(() => App.RejectPage(id), "rejected page");
 	}
 
-	async toggleLinks(id: string): Promise<void> {
-		if (this.openLinks.has(id)) {
-			this.openLinks.delete(id);
-			if (this.linkingID === id) {
-				this.cancelLink();
-			}
-			this.linksById.delete(id);
+	async toggleBacklinks(id: string): Promise<void> {
+		if (this.openBacklinks.has(id)) {
+			this.openBacklinks.delete(id);
+			this.backlinksById.delete(id);
 			return;
 		}
-		this.openLinks.add(id);
-		if (!this.linksById.has(id)) {
-			await this.refreshLinks(id);
+		this.openBacklinks.add(id);
+		if (!this.backlinksById.has(id)) {
+			await this.refreshBacklinks(id);
 		}
 	}
 
-	async refreshLinks(id: string): Promise<void> {
+	async refreshBacklinks(id: string): Promise<void> {
 		try {
-			this.linksById.set(id, (await App.GetLinks(id)) ?? []);
+			this.backlinksById.set(id, (await App.Backlinks(id)) ?? []);
 		} catch (err: unknown) {
 			this.error = messageFor(err);
-		}
-	}
-
-	async startLink(id: string): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.busy = true;
-		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
-		}
-		this.linkingID = id;
-		this.linkQuery = "";
-		this.linkResults = [];
-		this.linkRelation = Relation.RelationRelated;
-		this.linkQuerySeq++;
-		this.clearLinkTimer();
-		this.busy = false;
-	}
-
-	cancelLink(): void {
-		this.linkingID = null;
-		this.linkQuery = "";
-		this.linkResults = [];
-		this.linkQuerySeq++;
-		this.clearLinkTimer();
-	}
-
-	setLinkQuery(q: string): void {
-		this.linkQuery = q;
-		this.linkQuerySeq++;
-		this.linkResults = [];
-		this.clearLinkTimer();
-		if (q.trim() === "") {
-			return;
-		}
-		this.linkQueryTimer = setTimeout(() => {
-			this.linkQueryTimer = null;
-			void this.runLinkQuery();
-		}, linkQueryDebounceMs);
-	}
-
-	private async runLinkQuery(): Promise<void> {
-		const mine = ++this.linkQuerySeq;
-		const q = this.linkQuery.trim();
-		try {
-			const hits = (await App.Search(q)) ?? [];
-			if (mine !== this.linkQuerySeq) {
-				return;
-			}
-			this.linkResults = hits.filter((b) => b.ID !== this.linkingID);
-		} catch (err: unknown) {
-			if (mine !== this.linkQuerySeq) {
-				return;
-			}
-			this.error = messageFor(err);
-		}
-	}
-
-	async createLink(target: Block): Promise<void> {
-		if (this.linkingID === null || this.busy) {
-			return;
-		}
-		const from = this.linkingID;
-		this.busy = true;
-		this.error = "";
-		try {
-			await App.CreateLink(from, target.ID, this.linkRelation);
-			this.cancelLink();
-			await this.refreshLinks(from);
-			if (this.openLinks.has(target.ID)) {
-				await this.refreshLinks(target.ID);
-			}
-			this.status = "linked";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
-		}
-	}
-
-	async removeLink(id: string, link: LinkedBlock): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		const from = link.Outgoing ? id : link.Block.ID;
-		const to = link.Outgoing ? link.Block.ID : id;
-		this.busy = true;
-		this.error = "";
-		try {
-			await App.RemoveLink(from, to, link.Relation);
-			await this.refreshLinks(id);
-			if (this.openLinks.has(link.Block.ID)) {
-				await this.refreshLinks(link.Block.ID);
-			}
-			this.status = "unlinked";
-		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-		} finally {
-			this.busy = false;
 		}
 	}
 

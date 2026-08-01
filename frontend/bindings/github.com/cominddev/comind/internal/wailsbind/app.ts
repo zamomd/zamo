@@ -26,13 +26,6 @@ export function AcceptBlock(id: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * AcceptEdge passes the call to knowledge.Service.
- */
-export function AcceptEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(2114022276, $from, to, rel);
-}
-
-/**
  * AcceptGroup passes the call to knowledge.Service: accepts every block from
  * one AI batch, identified by its group id.
  */
@@ -46,6 +39,13 @@ export function AcceptGroup(groupID: knowledge$0.ID): $CancellablePromise<void> 
  */
 export function AcceptPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
     return $Call.ByID(1412499454, topicID);
+}
+
+/**
+ * Backlinks lists every reference pointing at the block or topic.
+ */
+export function Backlinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Backlink[] | null> {
+    return $Call.ByID(455889751, id);
 }
 
 /**
@@ -65,11 +65,11 @@ export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
 }
 
 /**
- * CreateLink passes the call to knowledge.Service. The owner links directly,
- * without the review queue — like EditBlockContent.
+ * CreateTopic passes the call to knowledge.Service: a new, empty topic named by
+ * the user, written without the AI and reporting the new root's id.
  */
-export function CreateLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(1077906829, $from, to, relation);
+export function CreateTopic(name: string): $CancellablePromise<knowledge$0.ID> {
+    return $Call.ByID(3007216784, name);
 }
 
 /**
@@ -119,14 +119,6 @@ export function ExportMarkdown(dir: string): $CancellablePromise<void> {
 }
 
 /**
- * GetLinks passes the call to knowledge.Service: the block's typed links,
- * hydrated with their neighbour blocks.
- */
-export function GetLinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.LinkedBlock[] | null> {
-    return $Call.ByID(3922522708, id);
-}
-
-/**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
@@ -142,7 +134,7 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0
 
 /**
  * InsertBlockBefore is Enter at the very start of a block: an empty sibling
- * appears above and the block keeps its id, history and links.
+ * appears above and the block keeps its id and history.
  */
 export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1337418982, id, content);
@@ -179,24 +171,10 @@ export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * RejectEdge passes the call to knowledge.Service.
- */
-export function RejectEdge($from: knowledge$0.ID, to: knowledge$0.ID, rel: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(1953244827, $from, to, rel);
-}
-
-/**
  * RejectPage passes the call to knowledge.Service.
  */
 export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
     return $Call.ByID(370056809, topicID);
-}
-
-/**
- * RemoveLink passes the call to knowledge.Service.
- */
-export function RemoveLink($from: knowledge$0.ID, to: knowledge$0.ID, relation: knowledge$0.Relation): $CancellablePromise<void> {
-    return $Call.ByID(583003149, $from, to, relation);
 }
 
 /**
@@ -254,8 +232,8 @@ export function UndoGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
- * Unreviewed passes the call to knowledge.Service: the AI-authored blocks and
- * edges still awaiting a human decision.
+ * Unreviewed passes the call to knowledge.Service: the AI-authored blocks
+ * still awaiting a human decision.
  */
 export function Unreviewed(): $CancellablePromise<knowledge$0.UnreviewedChanges> {
     return $Call.ByID(1571825863);

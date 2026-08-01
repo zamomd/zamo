@@ -1,6 +1,9 @@
 package knowledge
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Source says where a write came from. The set is open: the scheduler,
 // chat import and other future inputs will add their own values.
@@ -25,13 +28,11 @@ const (
 	OpEdit   OpKind = "edit"
 	OpMove   OpKind = "move"
 	OpDelete OpKind = "delete"
-	OpLink   OpKind = "link"
-	OpUnlink OpKind = "unlink"
 )
 
 // Op is a single operation of a write batch. One format for every source —
 // topic expansion, AI edits, MCP tools, the owner's manual edits — each
-// emitting whichever of the five kinds it needs. New blocks reference each
+// emitting whichever of the four kinds it needs. New blocks reference each
 // other via TempID; real IDs are assigned on apply.
 type Op struct {
 	Kind    OpKind `json:"op"`
@@ -56,15 +57,64 @@ type Op struct {
 	After  string `json:"after,omitzero"`
 	Before string `json:"before,omitzero"`
 
-	// Link fields (OpLink only). From/To are TempIDs or existing IDs.
-	From     string   `json:"from,omitzero"`
-	To       string   `json:"to,omitzero"`
-	Relation Relation `json:"relation,omitzero"`
-
 	// Provenance: why the AI makes this change and where it came from.
 	// The review screen shows both fields.
 	Rationale string `json:"rationale,omitzero"`
 	Origin    string `json:"origin,omitzero"`
+
+	// The optimistic guards a rename expansion attaches to the ops it builds
+	// (see Service.ApplyOps), for storage to check inside the apply
+	// transaction. Unexported on purpose: a guard states what one expansion
+	// read a moment ago, so it must not survive the JSON the op travels as —
+	// a batch decoded from an MCP tool call, or replayed from a stored
+	// revision, would otherwise carry a precondition nobody checked against
+	// the base as it is now.
+	expectedContent  *string
+	expectedTopicKey string
+	expectedRefIDs   []ID
+}
+
+// expectContent guards the op against overwriting a block changed after the
+// expansion read it. The first text observed wins: an expansion reads the base
+// several times — once per rename it makes — and it is the read the rewrite was
+// computed from that the apply has to find still standing, not the newest one.
+func (op *Op) expectContent(content string) {
+	if op.expectedContent != nil {
+		return
+	}
+	op.expectedContent = new(content)
+}
+
+// ExpectedContent reports the optimistic guard carried by an op: the block
+// content the batch was prepared against, if any. Storage must refuse the batch
+// with ErrConcurrentWrite when the stored content differs.
+func (op Op) ExpectedContent() (string, bool) {
+	if op.expectedContent == nil {
+		return "", false
+	}
+	return *op.expectedContent, true
+}
+
+// expectTopicRefs guards the op against a reference to key appearing or
+// disappearing after the expansion read the index. First observation wins, for
+// the reason expectContent gives.
+func (op *Op) expectTopicRefs(key string, ids []ID) {
+	if op.expectedTopicKey != "" {
+		return
+	}
+	op.expectedTopicKey = key
+	op.expectedRefIDs = slices.Clone(ids)
+}
+
+// ExpectedTopicRefs reports the reference-set guard carried by an op: the topic
+// key a rename is rewriting and the blocks that referenced it when the batch was
+// prepared. Storage must refuse the batch with ErrConcurrentWrite when the index
+// holds a different set, since a source that arrived meanwhile has no rewrite.
+func (op Op) ExpectedTopicRefs() (string, []ID, bool) {
+	if op.expectedTopicKey == "" {
+		return "", nil, false
+	}
+	return op.expectedTopicKey, slices.Clone(op.expectedRefIDs), true
 }
 
 // validate checks the op's shape: the kind is known and its required fields
@@ -91,10 +141,6 @@ func (op Op) validate() error {
 	case OpEdit, OpMove, OpDelete:
 		if op.BlockID == "" {
 			return fmt.Errorf("%s op with empty block id: %w", op.Kind, ErrInvalidOps)
-		}
-	case OpLink, OpUnlink:
-		if op.From == "" || op.To == "" {
-			return fmt.Errorf("%s op with empty from/to: %w", op.Kind, ErrInvalidOps)
 		}
 	default:
 		return fmt.Errorf("unknown op kind %q: %w", op.Kind, ErrInvalidOps)

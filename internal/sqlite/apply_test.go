@@ -285,52 +285,6 @@ func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
 	}
 }
 
-func TestApplyOpsLinkUpsertsEdge(t *testing.T) {
-	repo := testRepo(t)
-	ctx := t.Context()
-
-	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
-		{Kind: knowledge.OpAdd, BlockID: "from", Content: "theory"},
-		{Kind: knowledge.OpAdd, BlockID: "to", Content: "example"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("link"), []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
-	}); err != nil {
-		t.Fatalf("link: %v", err)
-	}
-
-	var reviewed, deleted bool
-	var author string
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT reviewed, deleted, author FROM edges WHERE from_id = 'from' AND to_id = 'to'`).
-		Scan(&reviewed, &deleted, &author); err != nil {
-		t.Fatalf("read edge: %v", err)
-	}
-	if reviewed || deleted || author != "ai" {
-		t.Errorf("edge = reviewed=%v deleted=%v author=%q, want false/false/ai", reviewed, deleted, author)
-	}
-
-	if _, err := repo.db.ExecContext(ctx,
-		`UPDATE edges SET deleted = 1 WHERE from_id = 'from' AND to_id = 'to'`); err != nil {
-		t.Fatalf("soft-delete edge: %v", err)
-	}
-	if err := repo.ApplyOps(ctx, "grp-3", aiMeta("re-link"), []knowledge.Op{
-		{Kind: knowledge.OpLink, From: "from", To: "to", Relation: knowledge.RelationExample},
-	}); err != nil {
-		t.Fatalf("re-link: %v", err)
-	}
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT deleted FROM edges WHERE from_id = 'from' AND to_id = 'to'`).Scan(&deleted); err != nil {
-		t.Fatalf("read edge after re-link: %v", err)
-	}
-	if deleted {
-		t.Errorf("edge still deleted=true after re-linking, want resurrected")
-	}
-}
-
 func TestApplyOpsAtomic(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
