@@ -5,13 +5,10 @@
 	import { messageFor } from "./callerror";
 	import { caretColumn } from "./caret";
 	import { firstLine, normalizeTitle, topicName } from "./refs";
+	import { createRefSearch } from "./refsearch";
 	import { refLabel, type Trigger, topicReferenceable } from "./reftrigger";
 
 	let { trigger, target }: { trigger: Trigger; target: HTMLTextAreaElement | undefined } = $props();
-
-	// Debounce block search to avoid a backend call per keystroke; topics are
-	// filtered client-side against one fetch, so they need no debounce.
-	const debounceMs = 200;
 
 	type Entry =
 		| { kind: "topic"; id: string; label: string }
@@ -73,49 +70,27 @@
 		}
 	}
 
-	let searchTimer: ReturnType<typeof setTimeout> | null = null;
-	let searchSeq = 0;
+	// Block search is debounced to avoid a backend call per keystroke, and only
+	// the current query's hits are ever listed (createRefSearch). Topics are
+	// filtered client-side against one fetch, so they need neither.
+	const search = createRefSearch<Block>({
+		search: (q) => App.Search(q),
+		onResults: (hits) => {
+			blocks = hits;
+		},
+		onError: (err) => {
+			blocks = [];
+			base.error = messageFor(err);
+		},
+	});
+
 	$effect(() => {
 		if (trigger.kind !== "block") {
 			return;
 		}
-		const q = query;
-		if (searchTimer !== null) {
-			clearTimeout(searchTimer);
-			searchTimer = null;
-		}
-		if (q === "") {
-			blocks = [];
-			return;
-		}
-		searchTimer = setTimeout(() => {
-			searchTimer = null;
-			void runSearch(q);
-		}, debounceMs);
-		return () => {
-			if (searchTimer !== null) {
-				clearTimeout(searchTimer);
-				searchTimer = null;
-			}
-		};
+		search.update(query);
+		return () => search.cancel();
 	});
-
-	async function runSearch(q: string): Promise<void> {
-		const mine = ++searchSeq;
-		try {
-			const hits = (await App.Search(q)) ?? [];
-			if (mine !== searchSeq) {
-				return;
-			}
-			blocks = hits;
-		} catch (err: unknown) {
-			if (mine !== searchSeq) {
-				return;
-			}
-			blocks = [];
-			base.error = messageFor(err);
-		}
-	}
 
 	function acceptEntry(entry: Entry): void {
 		const end = trigger.start + 2 + trigger.query.length;
