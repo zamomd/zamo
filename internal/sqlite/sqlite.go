@@ -248,6 +248,39 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	defer tx.Rollback()
+	for _, op := range ops {
+		expected, guarded := op.ExpectedContent()
+		if !guarded {
+			continue
+		}
+		var current string
+		err := tx.QueryRowContext(ctx,
+			`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&current)
+		if err != nil {
+			return fmt.Errorf("guard apply %s %s: %w", op.Kind, op.BlockID, translate(err))
+		}
+		if current != expected {
+			return fmt.Errorf("guard apply %s %s: %w", op.Kind, op.BlockID, knowledge.ErrConcurrentWrite)
+		}
+	}
+	for _, op := range ops {
+		key, expected, guarded := op.ExpectedTopicRefs()
+		if !guarded {
+			continue
+		}
+		current, err := queryIDs(ctx, tx, `
+SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY source_id`, key)
+		if err != nil {
+			return fmt.Errorf("guard topic references %q: %w", key, err)
+		}
+		want := make([]string, len(expected))
+		for i, id := range expected {
+			want[i] = string(id)
+		}
+		if !slices.Equal(current, want) {
+			return fmt.Errorf("guard topic references %q: %w", key, knowledge.ErrConcurrentWrite)
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO revision_groups (id, title, source, atomic, created_at) VALUES (?, ?, ?, ?, ?)`,

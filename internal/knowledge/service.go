@@ -132,6 +132,7 @@ type rename struct {
 	oldKey  string
 	newKey  string
 	newName string
+	content string
 }
 
 // expandRenames appends to ops the reference rewrites its topic renames imply,
@@ -153,10 +154,12 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 	}
 	e := newExpansion(ops)
 	for _, r := range renames {
+		e.expect(r.id, r.content)
 		sources, err := s.repo.BlocksReferencingTopic(ctx, r.oldKey)
 		if err != nil {
 			return nil, fmt.Errorf("rename topic %s: %w", r.id, err)
 		}
+		e.expectRefs(r.id, r.oldKey, sources)
 		if r.newKey == "" {
 			if err := e.refuseOrphaning(r, sources); err != nil {
 				return nil, err
@@ -237,6 +240,7 @@ func (e *expansion) rewrite(src Block, r rename) {
 	if rewritten == content {
 		return
 	}
+	e.expect(src.ID, src.Content)
 	e.rewrote[src.ID] = true
 	e.split = e.split || src.ID != r.id
 	if i, ok := e.carrier[src.ID]; ok {
@@ -244,7 +248,35 @@ func (e *expansion) rewrite(src Block, r rename) {
 		return
 	}
 	e.carrier[src.ID] = len(e.ops)
-	e.ops = append(e.ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+	op := Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten}
+	op.expectContent(src.Content)
+	e.ops = append(e.ops, op)
+}
+
+func (e *expansion) expect(id ID, content string) {
+	if i, ok := e.carrier[id]; ok {
+		e.ops[i].expectContent(content)
+		return
+	}
+	for i := range e.ops {
+		if e.ops[i].BlockID == id {
+			e.ops[i].expectContent(content)
+			return
+		}
+	}
+}
+
+func (e *expansion) expectRefs(id ID, key string, sources []Block) {
+	ids := make([]ID, len(sources))
+	for i, source := range sources {
+		ids[i] = source.ID
+	}
+	for i := range e.ops {
+		if e.ops[i].BlockID == id {
+			e.ops[i].expectTopicRefs(key, ids)
+			return
+		}
+	}
 }
 
 // refuseOrphaning rejects an edit that would leave a topic root with a name no
@@ -290,37 +322,51 @@ func referencesTopic(content, key string) bool {
 // taking a topic to such a name is the same transition as unnaming it: there is
 // nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
-	var edited []ID
-	final := make(map[ID]int) // block id → index in ops of the edit that decides its content
+	var changed []ID
+	final := make(map[ID]int)     // block id → index in ops of the edit that decides its content
+	parent := make(map[ID]string) // block id → parent left by its last move
 	for i, op := range ops {
-		if op.Kind != OpEdit || op.BlockID == "" {
+		if (op.Kind != OpEdit && op.Kind != OpMove) || op.BlockID == "" {
 			continue
 		}
 		if _, seen := final[op.BlockID]; !seen {
-			edited = append(edited, op.BlockID)
+			if _, moved := parent[op.BlockID]; !moved {
+				changed = append(changed, op.BlockID)
+			}
 		}
-		final[op.BlockID] = i
+		if op.Kind == OpEdit {
+			final[op.BlockID] = i
+		} else {
+			parent[op.BlockID] = op.Parent
+		}
 	}
-	if len(edited) == 0 {
+	if len(changed) == 0 {
 		return nil, nil
 	}
-	blocks, err := s.repo.GetBlocks(ctx, edited)
+	blocks, err := s.repo.GetBlocks(ctx, changed)
 	if err != nil {
 		return nil, err
 	}
 	var out []rename
-	for _, id := range edited {
+	for _, id := range changed {
 		block, ok := blocks[id]
 		if !ok || !block.IsTopic() {
 			continue
 		}
-		content := ops[final[id]].Content
-		oldKey, newKey := TopicKey(block.Content), TopicKey(content)
+		content := block.Content
+		if i, edited := final[id]; edited {
+			content = ops[i].Content
+		}
+		oldKey := TopicKey(block.Content)
+		newKey := TopicKey(content)
+		if p, moved := parent[id]; moved && p != "" {
+			newKey = ""
+		}
 		if oldKey == "" || oldKey == newKey {
 			continue
 		}
 		out = append(out, rename{
-			id: id, oldKey: oldKey, newKey: newKey, newName: TopicName(content),
+			id: id, oldKey: oldKey, newKey: newKey, newName: TopicName(content), content: block.Content,
 		})
 	}
 	return out, nil

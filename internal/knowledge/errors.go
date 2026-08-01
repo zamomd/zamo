@@ -55,6 +55,10 @@ var (
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")
 
+	// ErrConcurrentWrite reports that a rename was prepared from a block which
+	// changed before the rename transaction began.
+	ErrConcurrentWrite = errors.New("block changed while preparing the rename")
+
 	// ErrLLMUnavailable reports that the model could not be reached:
 	// network, API key, timeout.
 	ErrLLMUnavailable = errors.New("LLM is unavailable")

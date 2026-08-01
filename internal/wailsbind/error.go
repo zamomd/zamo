@@ -33,6 +33,7 @@ var codes = []struct {
 	{knowledge.ErrUnreferenceableTopic, "unreferenceable_topic"},
 	{knowledge.ErrAtomicGroup, "atomic_group"},
 	{knowledge.ErrBusy, "busy"},
+	{knowledge.ErrConcurrentWrite, "concurrent_write"},
 	{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 	{knowledge.ErrLLMBadResponse, "llm_bad_response"},
 	{settings.ErrDeclarative, "declarative"},

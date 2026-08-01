@@ -73,99 +73,35 @@
     "refs": []
   },
   {
-    "name": "fenced code is ignored",
-    "content": "before\n```go\nx := [[Zig]] // ((01JT4X9K2M8P0QRSTVWXYZ2345))\n```\nafter [[Rust]]",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
+    "name": "references in fenced code use the same syntax",
+    "content": "```\n[[Zig]]\n((01JT4X9K2M8P0QRSTVWXYZ2345|x))\n```",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}
+    ]
   },
   {
-    "name": "tilde fence is ignored",
-    "content": "~~~\n[[Zig]]\n~~~\n[[Rust]]",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
+    "name": "references in inline code use the same syntax",
+    "content": "`[[Zig]]` and [[Rust]]",
+    "refs": [
+      {"kind": "topic", "targetKey": "zig"},
+      {"kind": "topic", "targetKey": "rust"}
+    ]
   },
   {
-    "name": "a three-backtick line does not close a four-backtick fence",
-    "content": "````\n[[Zig]]\n```\n[[Rust]]",
-    "refs": []
-  },
-  {
-    "name": "a closing fence may be longer than its opener",
-    "content": "```\n[[Zig]]\n`````\n[[Rust]]",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
-  },
-  {
-    "name": "an info string does not close a fence",
-    "content": "```\n[[Zig]]\n```go\n[[Rust]]\n```\n[[Elixir]]",
-    "refs": [{"kind": "topic", "targetKey": "elixir"}]
-  },
-  {
-    "name": "a tilde line does not close a backtick fence",
-    "content": "```\n[[Zig]]\n~~~\n[[Rust]]",
-    "refs": []
-  },
-  {
-    "name": "a three-tilde line does not close a four-tilde fence",
-    "content": "~~~~\n[[Zig]]\n~~~\n[[Rust]]",
-    "refs": []
-  },
-  {
-    "name": "a longer tilde closer ends its fence",
-    "content": "~~~\n[[Zig]]\n~~~~\n[[Rust]]",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
-  },
-  {
-    "name": "an info string does not close a tilde fence",
-    "content": "~~~\n[[Zig]]\n~~~ js\n[[Rust]]",
-    "refs": []
-  },
-  {
-    "name": "a tilde fence takes a backtick in its info string",
-    "content": "~~~ `js`\n[[Zig]]\n~~~\n[[Rust]]",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
-  },
-  {
-    "name": "a backtick in the info string opens no fence",
-    "content": "``` a`b\n[[Zig]]",
-    "refs": [{"kind": "topic", "targetKey": "zig"}]
-  },
-  {
-    "name": "inline code is ignored",
-    "content": "Write `[[Zig]]` to link. Then [[Rust]].",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
-  },
-  {
-    "name": "a double-backtick code span is ignored",
-    "content": "Write ``[[Zig]]`` to link. Then [[Rust]].",
-    "refs": [{"kind": "topic", "targetKey": "rust"}]
-  },
-  {
-    "name": "a shorter run inside a longer span does not close it",
-    "content": "a `` b ` c `` d [[Zig]]",
-    "refs": [{"kind": "topic", "targetKey": "zig"}]
-  },
-  {
-    "name": "a longer run inside a shorter span does not close it",
-    "content": "`a``b` [[Zig]]",
-    "refs": [{"kind": "topic", "targetKey": "zig"}]
-  },
-  {
-    "name": "a backtick run with no matching closer is text",
-    "content": "``not a span ` [[Zig]]",
-    "refs": [{"kind": "topic", "targetKey": "zig"}]
-  },
-  {
-    "name": "a backslash does not escape a topic reference",
+    "name": "a backslash escapes a topic reference",
     "content": "\\[[Zig]] is still indexed.",
-    "refs": [{"kind": "topic", "targetKey": "zig"}]
-  },
-  {
-    "name": "a backslash does not escape a block reference",
-    "content": "\\((01JT4X9K2M8P0QRSTVWXYZ2345|x))",
-    "refs": [{"kind": "block", "targetKey": "01JT4X9K2M8P0QRSTVWXYZ2345"}]
-  },
-  {
-    "name": "unclosed fence swallows the rest",
-    "content": "text\n```\n[[Zig]]",
     "refs": []
+  },
+  {
+    "name": "a backslash escapes a block reference",
+    "content": "\\((01JT4X9K2M8P0QRSTVWXYZ2345|x))",
+    "refs": []
+  },
+  {
+    "name": "two backslashes leave a topic reference active",
+    "content": "\\\\[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
   },
   {
     "name": "mixed kinds keep source order",

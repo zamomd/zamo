@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -97,6 +98,65 @@ func TestRenameTopicRewritesReferencesInOneGroup(t *testing.T) {
 	}
 	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
 		t.Errorf("backlinks = %v, want the rewritten reference still resolving to the topic", links)
+	}
+}
+
+type concurrentRenameRepo struct {
+	*Repo
+	t   *testing.T
+	add bool
+}
+
+func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key string) ([]knowledge.Block, error) {
+	blocks, err := r.Repo.BlocksReferencingTopic(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	op := knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "A concurrent [[Local-first]] edit."}
+	if r.add {
+		op = knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01ZIG",
+			Content: "A new [[Local-first]] reference.",
+		}
+	}
+	if err := r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent edit"), []knowledge.Op{op}); err != nil {
+		r.t.Fatalf("concurrent edit: %v", err)
+	}
+	return blocks, nil
+}
+
+func TestRenameRefusesANewConcurrentReference(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	concurrent := &concurrentRenameRepo{Repo: repo, t: t, add: true}
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
+
+	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
+	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
+		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
+		t.Errorf("topic content = %q, want the rename rolled back", content)
+	}
+	if _, _, content, ok := blockRow(t, repo, "01NEW"); !ok || content != "A new [[Local-first]] reference." {
+		t.Errorf("new source = %q (present %v), want the concurrent reference preserved", content, ok)
+	}
+}
+
+func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	svc := knowledge.NewService(nil, &concurrentRenameRepo{Repo: repo, t: t}, func() knowledge.ID { return "rename" }, nil)
+
+	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
+	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
+		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
+		t.Errorf("topic content = %q, want the rename rolled back", content)
+	}
+	if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != "A concurrent [[Local-first]] edit." {
+		t.Errorf("source content = %q, want the concurrent edit preserved", content)
 	}
 }
 

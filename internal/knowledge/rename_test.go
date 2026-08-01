@@ -2,9 +2,22 @@ package knowledge
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 )
+
+func equalPublicOps(a, b []Op) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return slices.EqualFunc(a, b, func(a, b Op) bool {
+		a.expectedContent, b.expectedContent = nil, nil
+		a.expectedTopicKey, b.expectedTopicKey = "", ""
+		a.expectedRefIDs, b.expectedRefIDs = nil, nil
+		return reflect.DeepEqual(a, b)
+	})
+}
 
 func TestRewriteTopicRef(t *testing.T) {
 	tests := []struct {
@@ -36,6 +49,13 @@ func TestRewriteTopicRef(t *testing.T) {
 			want:    "[[Zig]] and [[Offline-first]].",
 		},
 		{
+			name:    "leaves an escaped reference alone",
+			content: `Literal \[[Zig]] and [[Zig]].`,
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    `Literal \[[Zig]] and [[Ziglang]].`,
+		},
+		{
 			name:    "rewrites every occurrence",
 			content: "[[Zig]] then [[zig]] again.",
 			oldKey:  "zig",
@@ -43,70 +63,11 @@ func TestRewriteTopicRef(t *testing.T) {
 			want:    "[[Ziglang]] then [[Ziglang]] again.",
 		},
 		{
-			name:    "leaves fenced code alone",
-			content: "```\n[[Zig]]\n```\n[[Zig]]",
+			name:    "rewrites references in Markdown code",
+			content: "```\n[[Zig]]\n```\n`[[Zig]]`",
 			oldKey:  "zig",
 			newName: "Ziglang",
-			want:    "```\n[[Zig]]\n```\n[[Ziglang]]",
-		},
-		{
-			name:    "a shorter run does not close a fence, so its content stays code",
-			content: "````\n[[Zig]]\n```\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "````\n[[Zig]]\n```\n[[Zig]]",
-		},
-		{
-			name:    "rewrites after a closer longer than its opener",
-			content: "```\n[[Zig]]\n`````\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "```\n[[Zig]]\n`````\n[[Ziglang]]",
-		},
-		{
-			name:    "an info string does not close a fence",
-			content: "```\n[[Zig]]\n```go\n[[Zig]]\n```\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "```\n[[Zig]]\n```go\n[[Zig]]\n```\n[[Ziglang]]",
-		},
-		{
-			name:    "a tilde line does not close a backtick fence",
-			content: "```\n[[Zig]]\n~~~\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "```\n[[Zig]]\n~~~\n[[Zig]]",
-		},
-		{
-			name:    "tilde fences follow the same rules",
-			content: "~~~~\n[[Zig]]\n~~~\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "~~~~\n[[Zig]]\n~~~\n[[Zig]]",
-		},
-		{
-			name:    "a backtick in the info string opens no fence",
-			content: "``` a`b\n[[Zig]]",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "``` a`b\n[[Ziglang]]",
-		},
-		{
-			// ParseRefs does not index a reference inside a backtick span, so
-			// there is no backlink a rewrite would keep true — only a code
-			// sample it would silently edit.
-			name:    "leaves inline code alone",
-			content: "`[[Zig]]` and [[Zig]].",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "`[[Zig]]` and [[Ziglang]].",
-		},
-		{
-			name:    "leaves a multi-backtick span alone",
-			content: "Write ``[[Zig]]`` for [[Zig]].",
-			oldKey:  "zig",
-			newName: "Ziglang",
-			want:    "Write ``[[Zig]]`` for [[Ziglang]].",
+			want:    "```\n[[Ziglang]]\n```\n`[[Ziglang]]`",
 		},
 		{
 			// An unterminated run is literal text to the reader, which does
@@ -315,6 +276,36 @@ func TestUnnamingAnUnreferencedTopicIsAllowed(t *testing.T) {
 	}
 	if len(repo.applyOps) != 1 {
 		t.Errorf("ops = %+v, want the root edit: an unnamed root is a designed state", repo.applyOps)
+	}
+}
+
+func TestMovingAReferencedTopicUnderAnotherBlockIsRefused(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01OTHER", 0, "We use [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	_, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
+		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
+	})
+	if !errors.Is(err, ErrUnreferenceableTopic) {
+		t.Errorf("error = %v, want ErrUnreferenceableTopic", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the refusal: %d calls", repo.applyCalls)
+	}
+}
+
+func TestMovingAnUnreferencedTopicUnderAnotherBlockIsAllowed(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
+		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpMove {
+		t.Errorf("ops = %+v, want the move applied unchanged", repo.applyOps)
 	}
 }
 
@@ -585,10 +576,11 @@ func TestRenameRewritesTheContentTheBatchWillStore(t *testing.T) {
 			if got := repo.applyOps[0]; got.BlockID != "01ROOT" || got.Content != "Offline-first" {
 				t.Errorf("op 0 = %+v, want the rename itself", got)
 			}
-			if got := repo.applyOps[1:]; !slices.Equal(got, tc.want) {
+			got := repo.applyOps[1:]
+			if !equalPublicOps(got, tc.want) {
 				t.Errorf("ops after the rename = %+v, want %+v", got, tc.want)
 			}
-			if !slices.Equal(ops, []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}) {
+			if !equalPublicOps(ops, []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}) {
 				t.Errorf("the caller's slice was rewritten under it: %+v", ops)
 			}
 		})
@@ -722,7 +714,8 @@ func TestSeveralEditsOfOneRootRewriteReferencesOnce(t *testing.T) {
 					t.Errorf("op %d = %+v, want the root's edit carrying %q", i, got, want)
 				}
 			}
-			if got := repo.applyOps[len(tc.wantRoot):]; !slices.Equal(got, tc.wantRest) {
+			got := repo.applyOps[len(tc.wantRoot):]
+			if !equalPublicOps(got, tc.wantRest) {
 				t.Errorf("ops after the root's edits = %+v, want %+v", got, tc.wantRest)
 			}
 		})

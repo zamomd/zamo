@@ -28,9 +28,7 @@ const ulidLen = 26;
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 // parseRefs extracts every reference from a block's content, in source order
-// and deduplicated. Text inside fenced code blocks and inline code spans is
-// skipped: the base is largely about code, where both bracket forms occur
-// literally.
+// and deduplicated. Reference syntax is independent of Markdown context.
 export function parseRefs(content: string): Ref[] {
 	const out: Ref[] = [];
 	const seen = new Set<string>();
@@ -45,18 +43,18 @@ export function parseRefs(content: string): Ref[] {
 		seen.add(key);
 		out.push(ref);
 	};
-	for (const [line, fenced] of fencedLines(content)) {
-		if (fenced) {
-			continue;
-		}
-		scanLine(stripInlineCode(line), add);
+	for (const line of content.split("\n")) {
+		scanLine(line, add);
 	}
 	return out;
 }
 
-// scanLine reports every reference on one line, code already removed.
+// scanLine reports every reference on one line.
 function scanLine(line: string, add: (ref: Ref) => void): void {
 	for (let i = 0; i < line.length; i++) {
+		if (escapedAt(line, i)) {
+			continue;
+		}
 		const topic = topicRefAt(line, i);
 		if (topic !== null) {
 			add({ kind: "topic", targetKey: normalizeTitle(topic.body) });
@@ -69,6 +67,15 @@ function scanLine(line: string, add: (ref: Ref) => void): void {
 			i = block.end - 1;
 		}
 	}
+}
+
+// escapedAt reports whether the punctuation at i is escaped in Markdown.
+function escapedAt(line: string, i: number): boolean {
+	let n = 0;
+	for (i--; i >= 0 && line[i] === "\\"; i--) {
+		n++;
+	}
+	return n % 2 === 1;
 }
 
 // topicRefAt reports the [[Topic]] reference starting at i: its raw body and
@@ -130,139 +137,6 @@ function until(line: string, start: number, closer: string): { body: string; end
 		return null;
 	}
 	return { body: rest.slice(0, j), end: start + j + closer.length };
-}
-
-// fencedLines splits content into lines, reporting for each whether it is
-// code: a fence delimiter itself or a line inside one. An unterminated fence
-// swallows the rest of the content, matching how a markdown renderer reads
-// it.
-//
-// The single definition of a code fence: the reader drops what it reports,
-// and nothing here can drift from that. What matters more is that it agrees
-// with markdown-it, which is what actually renders the block: a reference the
-// reader sees as code must be code to the index too.
-function* fencedLines(content: string): Generator<[line: string, fenced: boolean]> {
-	let char = "";
-	let open = 0;
-	for (const line of content.split("\n")) {
-		const trimmed = line.trim();
-		if (open > 0) {
-			if (closesFence(trimmed, char, open)) {
-				open = 0;
-			}
-		} else {
-			const fence = opensFence(trimmed);
-			if (fence === null) {
-				yield [line, false];
-				continue;
-			}
-			char = fence.char;
-			open = fence.n;
-		}
-		yield [line, true];
-	}
-}
-
-// opensFence reports the fence a line opens: its delimiter character and the
-// length of the run, following CommonMark. A run of at least three backticks or
-// tildes opens one; the text after the run is the info string, which for a
-// backtick fence may not itself contain a backtick, so a line of prose carrying
-// a code span never opens a block.
-function opensFence(trimmed: string): { char: string; n: number } | null {
-	const char = trimmed[0];
-	if (char !== "`" && char !== "~") {
-		return null;
-	}
-	const n = runLen(trimmed, char);
-	if (n < 3) {
-		return null;
-	}
-	if (char === "`" && trimmed.slice(n).includes("`")) {
-		return null;
-	}
-	return { char, n };
-}
-
-// closesFence reports whether a line closes the open fence: the same character,
-// a run at least as long as the opening one, and nothing after it. CommonMark
-// allows no info string on a closing fence, so ```go inside a fence is content.
-function closesFence(trimmed: string, char: string, open: number): boolean {
-	if (trimmed[0] !== char) {
-		return false;
-	}
-	const n = runLen(trimmed, char);
-	return n >= open && n === trimmed.length;
-}
-
-// runLen returns the length of the run of char starting s.
-function runLen(s: string, char: string): number {
-	let i = 0;
-	while (i < s.length && s[i] === char) {
-		i++;
-	}
-	return i;
-}
-
-// stripInlineCode replaces every closed backtick span with spaces, preserving
-// offsets so the caller can scan the line as-is.
-//
-// Spans are matched by backtick run, as CommonMark and therefore markdown-it
-// do: a run of n backticks opens a span that the next run of exactly n closes,
-// and a run with no matching closer is literal text the scan continues past.
-// Counting runs is what makes ``[[Zig]]`` code to the reader and to the index
-// alike — the single-backtick reading indexed it and left a backlink pointing
-// into a code sample nobody could see.
-//
-// The grammar stops there. It has no escape mechanism, so a backslash before
-// [[ escapes the bracket for markdown's renderer but not here, and \[[Zig]]
-// still indexes: matching markdown's escaping too would mean a second markdown
-// implementation in two languages, and the reference forms are rare enough
-// characters that quoting them in code — which is handled — is how they
-// actually turn up.
-function stripInlineCode(line: string): string {
-	const chars = line.split("");
-	let i = 0;
-	while (i < chars.length) {
-		if (chars[i] !== "`") {
-			i++;
-			continue;
-		}
-		const open = i;
-		i = runEnd(chars, i);
-		const closeEnd = matchingRun(chars, i, i - open);
-		if (closeEnd >= 0) {
-			for (let k = open; k < closeEnd; k++) {
-				chars[k] = " ";
-			}
-			i = closeEnd;
-		}
-	}
-	return chars.join("");
-}
-
-// runEnd returns the offset just past the backtick run starting at i.
-function runEnd(chars: string[], i: number): number {
-	while (i < chars.length && chars[i] === "`") {
-		i++;
-	}
-	return i;
-}
-
-// matchingRun finds the next backtick run of exactly n after from, returning
-// the offset just past it, or -1 when there is none.
-function matchingRun(chars: string[], from: number, n: number): number {
-	for (let i = from; i < chars.length; ) {
-		if (chars[i] !== "`") {
-			i++;
-			continue;
-		}
-		const run = runEnd(chars, i);
-		if (run - i === n) {
-			return run;
-		}
-		i = run;
-	}
-	return -1;
 }
 
 // validULID reports whether s is 26 Crockford base32 characters.

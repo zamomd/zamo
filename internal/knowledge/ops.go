@@ -1,6 +1,9 @@
 package knowledge
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Source says where a write came from. The set is open: the scheduler,
 // chat import and other future inputs will add their own values.
@@ -58,6 +61,35 @@ type Op struct {
 	// The review screen shows both fields.
 	Rationale string `json:"rationale,omitzero"`
 	Origin    string `json:"origin,omitzero"`
+
+	expectedContent  *string
+	expectedTopicKey string
+	expectedRefIDs   []ID
+}
+
+// expectContent guards an internally expanded rename against overwriting a
+// block changed after the expansion read it.
+func (op *Op) expectContent(content string) { op.expectedContent = new(content) }
+
+// ExpectedContent reports the internal optimistic guard carried by an op.
+func (op Op) ExpectedContent() (string, bool) {
+	if op.expectedContent == nil {
+		return "", false
+	}
+	return *op.expectedContent, true
+}
+
+func (op *Op) expectTopicRefs(key string, ids []ID) {
+	op.expectedTopicKey = key
+	op.expectedRefIDs = slices.Clone(ids)
+}
+
+// ExpectedTopicRefs reports the reference-set guard for a topic rename.
+func (op Op) ExpectedTopicRefs() (string, []ID, bool) {
+	if op.expectedTopicKey == "" {
+		return "", nil, false
+	}
+	return op.expectedTopicKey, slices.Clone(op.expectedRefIDs), true
 }
 
 // validate checks the op's shape: the kind is known and its required fields
