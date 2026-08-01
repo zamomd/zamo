@@ -100,6 +100,50 @@ func TestRenameTopicRewritesReferencesInOneGroup(t *testing.T) {
 	}
 }
 
+// An AI rename arrives as a plain edit op through ApplyOps, the path
+// write_blocks and EditWithAI share. Without expansion there the refs rows keep
+// the old key, so the topic loses every backlink the moment it is renamed.
+func TestAIRenameKeepsReferencesResolving(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	svc := renameService(repo)
+
+	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename the topic"}
+	if _, err := svc.ApplyOps(t.Context(), meta,
+		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"}}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+
+	want := "We use [[Offline-first]] and [[Offline-first]] daily."
+	if _, _, content, ok := blockRow(t, repo, "01NOTE"); !ok || content != want {
+		t.Errorf("referencing block = %q (present %v), want %q", content, ok, want)
+	}
+	links, err := repo.GetBacklinks(t.Context(), "01LOCAL")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
+		t.Errorf("backlinks = %v, want the reference still resolving after an AI rename", links)
+	}
+	if got := headGroup(t, repo, "01LOCAL"); got != headGroup(t, repo, "01NOTE") {
+		t.Errorf("root and rewritten block landed in different groups (%q), want one reviewable group", got)
+	}
+	if reviewed := reviewedHead(t, repo, "01NOTE"); reviewed {
+		t.Error("the rewrite is already reviewed, want an AI batch awaiting the owner's decision")
+	}
+}
+
+// reviewedHead reports the review state of a block's most recent revision.
+func reviewedHead(t *testing.T, repo *Repo, id string) bool {
+	t.Helper()
+	var reviewed bool
+	if err := repo.db.QueryRowContext(t.Context(),
+		`SELECT reviewed FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&reviewed); err != nil {
+		t.Fatalf("read head revision of %s: %v", id, err)
+	}
+	return reviewed
+}
+
 func TestRenameOntoATakenNameWritesNothing(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)

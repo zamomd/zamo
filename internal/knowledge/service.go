@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -41,9 +42,20 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWr
 // block gains a revision; AI revisions await review, owner revisions are
 // born reviewed. The single write path for MCP, the GUI AI flows, and the
 // owner's manual edits.
+//
+// A batch that renames a topic root additionally rewrites every [[Topic]]
+// reference to it, so the text stays true. The expansion lands in the same
+// batch and therefore the same revision group, so the rename is reviewed and
+// reverted as a unit — and because it happens here rather than on one caller's
+// path, an AI rename is expanded exactly like the owner's and inherits the
+// batch's review state.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
 	if strings.TrimSpace(meta.Title) == "" {
 		return Applied{}, fmt.Errorf("empty title: %w", ErrInvalidOps)
+	}
+	ops, err := s.expandRenames(ctx, &meta, ops)
+	if err != nil {
+		return Applied{}, err
 	}
 	resolved, ids, err := prepareOps(ops, s.newID)
 	if err != nil {
@@ -81,63 +93,127 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
-// path; an owner revision is born reviewed. Renaming a topic root — an edit
-// that changes its normalized name — additionally rewrites every [[Topic]]
-// reference to it, so the text stays true. All of it lands in one batch, and
-// therefore one revision group, so the rename is reviewed and reverted as a
-// unit.
+// path; an owner revision is born reviewed. The block is read first so a
+// missing one is refused before any batch is built.
 func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
-	block, err := s.blockByID(ctx, id)
-	if err != nil {
+	if _, err := s.blockByID(ctx, id); err != nil {
 		return err
 	}
-	ops, err := s.editOps(ctx, block, content)
-	if err != nil {
-		return err
-	}
-	meta := ownerMeta()
-	// The title is what the human reads in the Changes screen when deciding
-	// on the group, so it names what the batch actually touched.
-	if blocks := len(ops) - 1; blocks > 0 {
-		noun := "blocks"
-		if blocks == 1 {
-			noun = "block"
-		}
-		meta.Title = fmt.Sprintf("Rename topic and rewrite references in %d %s", blocks, noun)
-	}
-	_, err = s.ApplyOps(ctx, meta, ops)
+	_, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpEdit, BlockID: id, Content: content}})
 	return err
 }
 
-// editOps turns one manual edit into the batch it implies: the edit itself,
-// followed by a rewrite of every block referencing the topic by its old name
-// when the edit renames a topic root.
-func (s *Service) editOps(ctx context.Context, block Block, content string) ([]Op, error) {
-	ops := []Op{{Kind: OpEdit, BlockID: block.ID, Content: content}}
-	oldKey, newKey := NormalizeTitle(block.Content), NormalizeTitle(content)
-	// Only a root has a name to rename. An edit that leaves the root unnamed
-	// is not a rename either: rewriting references to it would turn them into
-	// [[]], so they stay as the author wrote them.
-	if !block.IsTopic() || oldKey == "" || newKey == "" || oldKey == newKey {
-		return ops, nil
+// rename is one topic rename found in a batch: the root being renamed, the
+// normalized name references still resolve by, and the name to write instead.
+type rename struct {
+	id      ID
+	oldKey  string
+	newName string
+}
+
+// expandRenames appends to ops the reference rewrites its topic renames imply,
+// and names the batch after them when the caller had nothing more specific to
+// say.
+//
+// The batch is authoritative over every block it already names: such a block
+// keeps the content its own op writes and gets no rewrite. Otherwise the
+// author's text would be silently replaced by a rewrite of the content it was
+// about to supersede — which is also why the renamed root's own edit survives
+// a self-reference — and two ops could target one block in a single batch.
+// Rewrites this call appends are not the caller's, so a second rename in the
+// same batch chains onto them rather than emitting a duplicate.
+func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) ([]Op, error) {
+	renames, err := s.renamesIn(ctx, ops)
+	if err != nil || len(renames) == 0 {
+		return ops, err
 	}
-	sources, err := s.repo.BlocksReferencingTopic(ctx, oldKey)
+	named := make(map[ID]bool, len(ops))
+	for _, op := range ops {
+		if op.BlockID != "" {
+			named[op.BlockID] = true
+		}
+	}
+	out := slices.Clone(ops)
+	at := make(map[ID]int) // block id → index of the rewrite already appended for it
+	for _, r := range renames {
+		sources, err := s.repo.BlocksReferencingTopic(ctx, r.oldKey)
+		if err != nil {
+			return nil, fmt.Errorf("rename topic %s: %w", r.id, err)
+		}
+		for _, src := range sources {
+			if named[src.ID] {
+				continue
+			}
+			i, pending := at[src.ID]
+			content := src.Content
+			if pending {
+				content = out[i].Content
+			}
+			rewritten := RewriteTopicRef(content, r.oldKey, r.newName)
+			switch {
+			case rewritten == content:
+			case pending:
+				out[i].Content = rewritten
+			default:
+				at[src.ID] = len(out)
+				out = append(out, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+			}
+		}
+	}
+	retitleRename(meta, len(at))
+	return out, nil
+}
+
+// renamesIn reports the topic renames a batch performs, in batch order: an
+// edit of a topic root whose normalized name changes to another non-empty one.
+// Only a root has a name to rename, and an edit that leaves the root unnamed is
+// not a rename either — rewriting references to it would turn them into [[]],
+// so they stay as the author wrote them.
+func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
+	var edited []ID
+	for _, op := range ops {
+		if op.Kind == OpEdit && op.BlockID != "" {
+			edited = append(edited, op.BlockID)
+		}
+	}
+	if len(edited) == 0 {
+		return nil, nil
+	}
+	blocks, err := s.repo.GetBlocks(ctx, edited)
 	if err != nil {
-		return nil, fmt.Errorf("rename topic %s: %w", block.ID, err)
+		return nil, err
 	}
-	newName := TopicName(content)
-	for _, src := range sources {
-		// A root that references itself is already in the batch as the edit
-		// that triggered the rename; a second edit of it would write the old
-		// content back over the new name.
-		if src.ID == block.ID {
+	var out []rename
+	for _, op := range ops {
+		if op.Kind != OpEdit {
 			continue
 		}
-		if rewritten := RewriteTopicRef(src.Content, oldKey, newName); rewritten != src.Content {
-			ops = append(ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+		block, ok := blocks[op.BlockID]
+		if !ok || !block.IsTopic() {
+			continue
 		}
+		oldKey, newKey := NormalizeTitle(block.Content), NormalizeTitle(op.Content)
+		if oldKey == "" || newKey == "" || oldKey == newKey {
+			continue
+		}
+		out = append(out, rename{id: op.BlockID, oldKey: oldKey, newName: TopicName(op.Content)})
 	}
-	return ops, nil
+	return out, nil
+}
+
+// retitleRename names a rename batch in the Changes screen by what it actually
+// touched. Only the generic owner label is replaced: any other title was chosen
+// for this batch — an AI batch carries the instruction the human gave — and
+// says more than a count of rewritten blocks.
+func retitleRename(meta *WriteMeta, blocks int) {
+	if blocks == 0 || meta.Title != ownerTitle {
+		return
+	}
+	noun := "blocks"
+	if blocks == 1 {
+		noun = "block"
+	}
+	meta.Title = fmt.Sprintf("Rename topic and rewrite references in %d %s", blocks, noun)
 }
 
 // Unreviewed returns everything awaiting review: the Changes screen.

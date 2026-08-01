@@ -34,9 +34,10 @@ type fakeRepo struct {
 	backlinks    []Backlink // what GetBacklinks returns
 	backlinksErr error
 
-	referencing       []Block // what BlocksReferencingTopic returns
+	referencing       []Block            // what BlocksReferencingTopic returns for any key not in referencingByKey
+	referencingByKey  map[string][]Block // per-key answers, for a batch renaming more than one topic
 	referencingErr    error
-	gotReferencingKey string // the title key BlocksReferencingTopic was asked for
+	gotReferencingKey string // the title key BlocksReferencingTopic was last asked for
 
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
@@ -94,6 +95,9 @@ func (f *fakeRepo) GetBacklinks(_ context.Context, target ID) ([]Backlink, error
 
 func (f *fakeRepo) BlocksReferencingTopic(_ context.Context, titleKey string) ([]Block, error) {
 	f.gotReferencingKey = titleKey
+	if blocks, ok := f.referencingByKey[titleKey]; ok {
+		return blocks, f.referencingErr
+	}
 	return f.referencing, f.referencingErr
 }
 

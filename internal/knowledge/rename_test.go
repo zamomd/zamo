@@ -287,6 +287,93 @@ func TestRenameSurfacesLookupErrorWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestAIRenameExpandsTheSameWayTheOwnersDoes(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename the topic"}
+	if _, err := svc.ApplyOps(t.Context(), meta,
+		[]Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Fatalf("ops = %+v, want the root edit plus the rewrite of 01NOTE", repo.applyOps)
+	}
+	got := repo.applyOps[1]
+	if got.Kind != OpEdit || got.BlockID != "01NOTE" || got.Content != "We use [[Offline-first]]." {
+		t.Errorf("op 1 = %+v, want 01NOTE rewritten to the new name", got)
+	}
+	if repo.applyMeta.Author != AuthorAI {
+		t.Errorf("author = %q, want the rewrite to await review with the rest of the batch", repo.applyMeta.Author)
+	}
+	if repo.applyMeta.Title != "rename the topic" {
+		t.Errorf("title = %q, want the caller's own title kept", repo.applyMeta.Title)
+	}
+}
+
+func TestRenameLeavesBlocksTheBatchAlreadyNamesToTheirOwnOps(t *testing.T) {
+	referencing := blk("01NOTE", "01ZIG", 0, "We use [[Local-first]].")
+	cases := []struct {
+		name string
+		op   Op
+	}{
+		{
+			name: "the batch edits the referencing block itself",
+			op:   Op{Kind: OpEdit, BlockID: "01NOTE", Content: "Rewritten by the author, still [[Local-first]]."},
+		},
+		{
+			name: "the batch deletes the referencing block",
+			op:   Op{Kind: OpDelete, BlockID: "01NOTE"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"), referencing)
+			svc := NewService(nil, repo, seqIDs(), nil)
+
+			meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename and edit"}
+			ops := []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}
+			if _, err := svc.ApplyOps(t.Context(), meta, ops); err != nil {
+				t.Fatalf("ApplyOps: %v", err)
+			}
+			if len(repo.applyOps) != 2 {
+				t.Fatalf("ops = %+v, want the batch's own two ops and no third op for 01NOTE", repo.applyOps)
+			}
+			if got := repo.applyOps[1]; got != tc.op {
+				t.Errorf("op 1 = %+v, want the author's op untouched", got)
+			}
+		})
+	}
+}
+
+func TestTwoRenamesInOneBatchChainOntoOneRewrite(t *testing.T) {
+	note := blk("01NOTE", "01ZIG", 0, "Both [[Alpha]] and [[Beta]].")
+	repo := &fakeRepo{
+		blocks: map[ID]Block{
+			"01A": blk("01A", "", 0, "Alpha"),
+			"01B": blk("01B", "", 1, "Beta"),
+		},
+		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {note}},
+	}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename both topics"}
+	if _, err := svc.ApplyOps(t.Context(), meta, []Op{
+		{Kind: OpEdit, BlockID: "01A", Content: "Alpha prime"},
+		{Kind: OpEdit, BlockID: "01B", Content: "Beta prime"},
+	}); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	if len(repo.applyOps) != 3 {
+		t.Fatalf("ops = %+v, want the two renames plus exactly one rewrite of 01NOTE", repo.applyOps)
+	}
+	want := "Both [[Alpha prime]] and [[Beta prime]]."
+	if got := repo.applyOps[2]; got.BlockID != "01NOTE" || got.Content != want {
+		t.Errorf("op 2 = %+v, want 01NOTE carrying both new names (%q)", got, want)
+	}
+}
+
 func TestRenameOntoATakenNameFails(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
