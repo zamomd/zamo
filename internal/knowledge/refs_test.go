@@ -16,7 +16,9 @@ type refCase struct {
 	} `json:"refs"`
 }
 
-func TestParseRefs(t *testing.T) {
+// refFixture loads the grammar cases the TypeScript parser is driven from too.
+func refFixture(t *testing.T) []refCase {
+	t.Helper()
 	raw, err := os.ReadFile("testdata/refs.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
@@ -28,7 +30,11 @@ func TestParseRefs(t *testing.T) {
 	if len(cases) == 0 {
 		t.Fatal("fixture is empty")
 	}
-	for _, tc := range cases {
+	return cases
+}
+
+func TestParseRefs(t *testing.T) {
+	for _, tc := range refFixture(t) {
 		t.Run(tc.Name, func(t *testing.T) {
 			want := make([]Ref, 0, len(tc.Refs))
 			for _, r := range tc.Refs {

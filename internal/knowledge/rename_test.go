@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -49,11 +50,30 @@ func TestRewriteTopicRef(t *testing.T) {
 			want:    "```\n[[Zig]]\n```\n[[Ziglang]]",
 		},
 		{
-			name:    "rewrites inside inline code",
+			// ParseRefs does not index a reference inside a backtick span, so
+			// there is no backlink a rewrite would keep true — only a code
+			// sample it would silently edit.
+			name:    "leaves inline code alone",
 			content: "`[[Zig]]` and [[Zig]].",
 			oldKey:  "zig",
 			newName: "Ziglang",
-			want:    "`[[Ziglang]]` and [[Ziglang]].",
+			want:    "`[[Zig]]` and [[Ziglang]].",
+		},
+		{
+			name:    "leaves a multi-backtick span alone",
+			content: "Write ``[[Zig]]`` for [[Zig]].",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "Write ``[[Zig]]`` for [[Ziglang]].",
+		},
+		{
+			// An unterminated run is literal text to the reader, which does
+			// index the reference after it.
+			name:    "rewrites after an unclosed backtick run",
+			content: "``still text [[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "``still text [[Ziglang]]",
 		},
 		{
 			name:    "leaves block references alone",
@@ -108,6 +128,51 @@ func TestRewriteTopicRef(t *testing.T) {
 				t.Errorf("RewriteTopicRef()\n got %q\nwant %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRewriteTopicRefRewritesExactlyWhatParseRefsIndexes drives the rewriter
+// over the parser's own fixture with every topic key the fixture uses. Two
+// properties hold for each pair, and together they say the two sides read the
+// same grammar: a key the reader does not index leaves the text byte-identical,
+// and a key it does index comes back with that key — and only that key —
+// replaced.
+func TestRewriteTopicRefRewritesExactlyWhatParseRefsIndexes(t *testing.T) {
+	cases := refFixture(t)
+	var keys []string
+	for _, tc := range cases {
+		for _, r := range ParseRefs(tc.Content) {
+			if r.Kind == RefTopic && !slices.Contains(keys, r.TargetKey) {
+				keys = append(keys, r.TargetKey)
+			}
+		}
+	}
+
+	const newName = "Renamed target"
+	newKey := NormalizeTitle(newName)
+	for _, tc := range cases {
+		for _, key := range keys {
+			t.Run(tc.Name+"/"+key, func(t *testing.T) {
+				before := ParseRefs(tc.Content)
+				got := RewriteTopicRef(tc.Content, key, newName)
+				if !slices.Contains(before, Ref{Kind: RefTopic, TargetKey: key}) {
+					if got != tc.Content {
+						t.Fatalf("%q is not indexed here, yet renaming it edited the text\n got %q\nwant %q",
+							key, got, tc.Content)
+					}
+					return
+				}
+				want := slices.Clone(before)
+				for i := range want {
+					if want[i].Kind == RefTopic && want[i].TargetKey == key {
+						want[i].TargetKey = newKey
+					}
+				}
+				if after := ParseRefs(got); !slices.Equal(after, want) {
+					t.Errorf("renaming %q in %q gave %q\n refs %v\n want %v", key, tc.Content, got, after, want)
+				}
+			})
+		}
 	}
 }
 

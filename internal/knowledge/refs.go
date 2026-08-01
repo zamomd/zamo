@@ -116,12 +116,11 @@ func blockRefAt(line string, i int) (target string, end int, ok bool) {
 // with newName, leaving the rest of the content untouched. It is how a topic
 // rename keeps the text true.
 //
-// It reads references exactly as ParseRefs does — same fences, same brackets,
-// block-reference labels skipped whole — with one deliberate divergence:
-// inline code. ParseRefs skips a backtick span by blanking it, which preserves
-// offsets but destroys the text, so the rewriter cannot do the same; a
-// [[Topic]] inside backticks is rewritten like any other. The consequence is a
-// rename that touches inline code rather than one that can corrupt it.
+// It reads references exactly as ParseRefs does — same fences, same inline
+// code, same brackets, block-reference labels skipped whole — so it rewrites
+// the references ParseRefs indexed and nothing else. A [[Topic]] the reader
+// treats as code has no backlink to keep true, and editing it would silently
+// change a code sample the author wrote.
 //
 // A newName that cannot be written as a reference — one carrying a bracket,
 // which would split the [[...]] into a reference plus stray text — is refused:
@@ -147,10 +146,18 @@ func RewriteTopicRef(content, oldKey, newName string) string {
 }
 
 // rewriteLine rewrites matching topic references on one line outside a fence.
+//
+// References are located in the blanked line stripInlineCode produces — the
+// reader's own view of the line — while every byte written out comes from the
+// original. Blanking preserves offsets, so the two index alike, and code spans
+// carry no reference to find and are therefore copied through verbatim. Sharing
+// the function rather than a notion of a span is what keeps reader and rewriter
+// from drifting.
 func rewriteLine(line, oldKey, newName string) string {
+	scan := stripInlineCode(line)
 	var b strings.Builder
 	for i := 0; i < len(line); i++ {
-		if body, end, ok := topicRefAt(line, i); ok {
+		if body, end, ok := topicRefAt(scan, i); ok {
 			if NormalizeTitle(body) == oldKey {
 				b.WriteString("[[" + newName + "]]")
 			} else {
@@ -159,7 +166,7 @@ func rewriteLine(line, oldKey, newName string) string {
 			i = end - 1
 			continue
 		}
-		if _, end, ok := blockRefAt(line, i); ok {
+		if _, end, ok := blockRefAt(scan, i); ok {
 			b.WriteString(line[i:end])
 			i = end - 1
 			continue
@@ -216,6 +223,10 @@ func fencedLines(content string) iter.Seq2[string, bool] {
 
 // stripInlineCode replaces every closed backtick span with spaces, preserving
 // offsets so the caller can scan the line as-is.
+//
+// The single definition of an inline code span: the reader (scanLine) scans
+// what it returns, the rewriter (rewriteLine) scans it too and writes from the
+// original line, and neither can drift from the other.
 //
 // Spans are matched by backtick run, as CommonMark and therefore markdown-it
 // do: a run of n backticks opens a span that the next run of exactly n closes,
