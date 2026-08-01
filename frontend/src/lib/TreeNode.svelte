@@ -27,6 +27,7 @@
 	const ghost = $derived(base.ghosts.has(node.block.ID));
 	const topicRoot = $derived(node.block.ParentID === "");
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
+	const straddling = $derived(changes.straddling.has(node.block.ID));
 	const byAI = $derived(node.block.Meta?.author === "ai");
 	const hasHidden = $derived(hasChildren && !expanded);
 
@@ -276,7 +277,13 @@
 			</button>
 		{/if}
 
-		{#if pageDirty}
+		{#if pageDirty && straddling}
+			<!-- The page holds only part of a topic rename, so a page-wide
+			     decision is refused the same way a per-block one is. -->
+			<span class="batch-only" title="this page holds part of a topic rename — decide on the whole batch in Changes"
+				>batch page</span
+			>
+		{:else if pageDirty}
 			<button
 				type="button"
 				class="accept-page"
