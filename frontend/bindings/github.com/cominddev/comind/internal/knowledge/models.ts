@@ -123,6 +123,13 @@ export interface Revision {
      */
     "GroupID": ID;
     "CreatedAt": string;
+
+    /**
+     * Atomic reports that the revision's group is only true as a whole (see
+     * WriteMeta.Atomic), so while it is unreviewed it can be neither decided on
+     * nor deleted alone. Derived by storage on read; never written by callers.
+     */
+    "Atomic": boolean;
 }
 
 /**

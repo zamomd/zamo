@@ -14,10 +14,15 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// revisionColumns is the block_revisions projection every read shares, in
-// the order scanRevision expects.
-const revisionColumns = `id, block_id, seq, content, parent_id, position,
-	deleted, author, source, origin, rationale, reviewed, group_id, created_at`
+// revisionSelect is the block_revisions projection every read shares, in the
+// order scanRevision expects. The group is joined in for its atomic flag: a
+// revision carries whether its batch has to be reviewed whole, so no caller
+// has to look that up separately and none can forget to.
+const revisionSelect = `
+SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position,
+       r.deleted, r.author, r.source, r.origin, r.rationale, r.reviewed,
+       r.group_id, r.created_at, COALESCE(g.atomic, 0)
+FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id`
 
 // rowQueryer is the read surface shared by *sql.DB and *sql.Tx, so
 // headRevision works standalone (a plain read) or inside a write
@@ -62,8 +67,7 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev knowledge.Revision, now
 // the block has none.
 func headRevision(ctx context.Context, q rowQueryer, blockID string) (knowledge.Revision, bool, error) {
 	row := q.QueryRowContext(ctx,
-		`SELECT `+revisionColumns+` FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`,
-		blockID)
+		revisionSelect+` WHERE r.block_id = ? ORDER BY r.seq DESC LIMIT 1`, blockID)
 	rev, err := scanRevision(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return knowledge.Revision{}, false, nil
@@ -74,7 +78,7 @@ func headRevision(ctx context.Context, q rowQueryer, blockID string) (knowledge.
 	return rev, true, nil
 }
 
-// scanRevision maps one revisionColumns row into a domain Revision: NULL
+// scanRevision maps one revisionSelect row into a domain Revision: NULL
 // parent_id becomes an empty ID (a topic root), the nullable provenance
 // columns (source, origin, rationale, group_id) become their zero value, and
 // created_at is parsed via parseTime.
@@ -86,7 +90,8 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 		created                                  string
 	)
 	if err := row.Scan(&id, &blockID, &rev.Seq, &rev.Content, &parent, &rev.Position,
-		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created); err != nil {
+		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created,
+		&rev.Atomic); err != nil {
 		return knowledge.Revision{}, err
 	}
 	rev.ID = knowledge.ID(id)
@@ -180,14 +185,31 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 
 // DeleteRevision removes a revision and rebuilds the projection when the head
 // changes. Invalid projections roll back the transaction.
+//
+// An unreviewed revision of an atomic group is refused: deleting it is a review
+// decision on that block alone by another route. Reverting the rename of a
+// topic would leave the blocks it rewrote pending on their own, which is
+// exactly what refuseSplitGroup then reads as a whole group and accepts —
+// ending in a topic under its old name and accepted text pointing nowhere.
+//
+// The reviewed case is left open. Editing history can split a group that was
+// already decided on too, but that is a property of history editing rather
+// than of the review queue, and needs its own answer.
 func (r *Repo) DeleteRevision(ctx context.Context, blockID, revID knowledge.ID) error {
 	what := fmt.Sprintf("delete revision %s of %s", revID, blockID)
 	return r.withTx(ctx, what, func(tx *sql.Tx) error {
 		var seq int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT seq FROM block_revisions WHERE id = ? AND block_id = ?`,
-			string(revID), string(blockID)).Scan(&seq); err != nil {
+		var reviewed, atomic bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT r.seq, r.reviewed, COALESCE(g.atomic, 0)
+			FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id
+			WHERE r.id = ? AND r.block_id = ?`,
+			string(revID), string(blockID)).Scan(&seq, &reviewed, &atomic); err != nil {
 			return translate(err)
+		}
+		if !reviewed && atomic {
+			return fmt.Errorf("revision %s of %s is part of a group awaiting review: %w",
+				revID, blockID, knowledge.ErrAtomicGroup)
 		}
 		var maxSeq int
 		if err := tx.QueryRowContext(ctx,
@@ -559,8 +581,7 @@ func (r *Repo) MarkPageReviewed(ctx context.Context, topicID knowledge.ID) error
 // id never existed (or was fully rejected/rolled back away).
 func (r *Repo) ListRevisions(ctx context.Context, blockID knowledge.ID) ([]knowledge.Revision, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+revisionColumns+` FROM block_revisions WHERE block_id = ? ORDER BY seq DESC`,
-		string(blockID))
+		revisionSelect+` WHERE r.block_id = ? ORDER BY r.seq DESC`, string(blockID))
 	if err != nil {
 		return nil, fmt.Errorf("list revisions of %s: %w", blockID, translate(err))
 	}

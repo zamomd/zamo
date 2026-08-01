@@ -31,6 +31,11 @@ type Revision struct {
 	Reviewed  bool
 	GroupID   ID // one ApplyOps batch = one group
 	CreatedAt time.Time
+
+	// Atomic reports that the revision's group is only true as a whole (see
+	// WriteMeta.Atomic), so while it is unreviewed it can be neither decided on
+	// nor deleted alone. Derived by storage on read; never written by callers.
+	Atomic bool
 }
 
 // WriteMeta is the provenance of one ApplyOps batch. Author decides the

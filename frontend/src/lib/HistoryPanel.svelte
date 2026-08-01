@@ -28,16 +28,25 @@
 						{/if}
 						<span class="created">{rev.CreatedAt}</span>
 						{#if rev.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
-						<button
-							type="button"
-							class="delete"
-							aria-label={i === 0 ? "revert to the previous version" : "delete this version"}
-							title={i === 0 ? "revert to the previous version" : "delete this version"}
-							disabled={base.busy}
-							onclick={() => base.deleteRevision(block.ID, rev.ID)}
-						>
-							{i === 0 ? "revert" : "delete"}
-						</button>
+						{#if rev.Atomic && !rev.Reviewed}
+							<!-- Part of a topic rename still awaiting review: removing this
+							     version alone is refused, since it would leave the blocks the
+							     rename rewrote pending on their own. -->
+							<span class="batch-only" title="part of a topic rename — decide on the whole batch in Changes"
+								>batch</span
+							>
+						{:else}
+							<button
+								type="button"
+								class="delete"
+								aria-label={i === 0 ? "revert to the previous version" : "delete this version"}
+								title={i === 0 ? "revert to the previous version" : "delete this version"}
+								disabled={base.busy}
+								onclick={() => base.deleteRevision(block.ID, rev.ID)}
+							>
+								{i === 0 ? "revert" : "delete"}
+							</button>
+						{/if}
 					</div>
 					<Diff before={olderContent(i)} after={rev.Content} />
 				</li>
@@ -115,6 +124,12 @@
 		background: none;
 		padding: 0 0.3em;
 		border-radius: var(--radius);
+	}
+	/* Sits where the delete button would, so an atomic row keeps its shape. */
+	.batch-only {
+		flex: none;
+		padding: 0 0.3rem;
+		color: var(--text-dim);
 	}
 	.delete {
 		flex: none;

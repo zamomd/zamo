@@ -259,6 +259,63 @@ func TestHalfARenameCannotBeReviewed(t *testing.T) {
 	}
 }
 
+// headRevisionID returns the id of a block's most recent revision — what the
+// history panel's newest row deletes.
+func headRevisionID(t *testing.T, repo *Repo, id string) knowledge.ID {
+	t.Helper()
+	var rev string
+	if err := repo.db.QueryRowContext(t.Context(),
+		`SELECT id FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&rev); err != nil {
+		t.Fatalf("read head revision of %s: %v", id, err)
+	}
+	return knowledge.ID(rev)
+}
+
+// Reverting the newest revision from the history panel deletes it, which is a
+// decision on that block alone taken outside the review controls. Left open, it
+// undoes the rename and leaves the rewritten reference as the group's only
+// pending member, so accepting the batch then succeeds and the base ends with a
+// topic under its old name and accepted text pointing at nothing.
+func TestRevertingHalfARenameFromHistoryIsRefused(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	aiRename(t, repo)
+	revisions := countRows(t, repo, "block_revisions")
+
+	err := repo.DeleteRevision(t.Context(), "01LOCAL", headRevisionID(t, repo, "01LOCAL"))
+	if !errors.Is(err, knowledge.ErrAtomicGroup) {
+		t.Fatalf("DeleteRevision = %v, want ErrAtomicGroup", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Offline-first" {
+		t.Errorf("root = %q, want the refusal to have written nothing", content)
+	}
+	if got := countRows(t, repo, "block_revisions"); got != revisions {
+		t.Errorf("block_revisions = %d, want %d: the refusal must delete nothing", got, revisions)
+	}
+	// The group is still whole, so the review controls still cover it.
+	if err := repo.RejectBlock(t.Context(), "01NOTE"); !errors.Is(err, knowledge.ErrAtomicGroup) {
+		t.Errorf("RejectBlock after the refusal = %v, want the group still atomic", err)
+	}
+}
+
+// The rule is about the review queue, not about history: once the batch has
+// been decided on, its revisions are editable like any others.
+func TestHistoryEditingSurvivesAReviewedRename(t *testing.T) {
+	repo := testRepo(t)
+	renameBase(t, repo)
+	group := aiRename(t, repo)
+	if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
+		t.Fatalf("MarkGroupReviewed: %v", err)
+	}
+
+	if err := repo.DeleteRevision(t.Context(), "01LOCAL", headRevisionID(t, repo, "01LOCAL")); err != nil {
+		t.Fatalf("DeleteRevision: %v", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
+		t.Errorf("root = %q, want the reviewed rename revertible from history", content)
+	}
+}
+
 func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
 	t.Run("accept the batch", func(t *testing.T) {
 		repo := testRepo(t)
