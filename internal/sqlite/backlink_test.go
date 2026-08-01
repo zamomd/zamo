@@ -63,17 +63,21 @@ func TestBacklinksToBlock(t *testing.T) {
 
 func TestBacklinksDedupesSourceReferencingBothForms(t *testing.T) {
 	repo := testRepo(t)
+	// The topic id must itself be a full 26-char ULID, or ((id|label)) fails
+	// validULID and never becomes a block ref in the first place — leaving
+	// only the [[Name]] form and silently not exercising the dedup at all.
+	const rust = "01RRRRRRRRRRRRRRRRRRRRRRRR"
 	if err := ownerOps(t, repo, "01G1",
-		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: rust, Content: "Rust"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{
 			Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG",
-			Content: "Unlike [[Rust]] and ((01RUST|Rust)).",
+			Content: "Unlike [[Rust]] and ((" + rust + "|Rust)).",
 		},
 	); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	got, err := repo.GetBacklinks(t.Context(), "01RUST")
+	got, err := repo.GetBacklinks(t.Context(), knowledge.ID(rust))
 	if err != nil {
 		t.Fatalf("GetBacklinks: %v", err)
 	}
