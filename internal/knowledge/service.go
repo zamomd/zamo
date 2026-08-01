@@ -81,11 +81,57 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
-// path; an owner revision is born reviewed.
+// path; an owner revision is born reviewed. Renaming a topic root — an edit
+// that changes its normalized name — additionally rewrites every [[Topic]]
+// reference to it, so the text stays true. All of it lands in one batch, and
+// therefore one revision group, so the rename is reviewed and reverted as a
+// unit.
 func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) error {
-	_, err := s.ApplyOps(ctx, ownerMeta(),
-		[]Op{{Kind: OpEdit, BlockID: id, Content: content}})
+	block, err := s.blockByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	ops, err := s.editOps(ctx, block, content)
+	if err != nil {
+		return err
+	}
+	meta := ownerMeta()
+	if rewritten := len(ops) - 1; rewritten > 0 {
+		meta.Title = fmt.Sprintf("Rename topic and update %d references", rewritten)
+	}
+	_, err = s.ApplyOps(ctx, meta, ops)
 	return err
+}
+
+// editOps turns one manual edit into the batch it implies: the edit itself,
+// followed by a rewrite of every block referencing the topic by its old name
+// when the edit renames a topic root.
+func (s *Service) editOps(ctx context.Context, block Block, content string) ([]Op, error) {
+	ops := []Op{{Kind: OpEdit, BlockID: block.ID, Content: content}}
+	oldKey, newKey := NormalizeTitle(block.Content), NormalizeTitle(content)
+	// Only a root has a name to rename. An edit that leaves the root unnamed
+	// is not a rename either: rewriting references to it would turn them into
+	// [[]], so they stay as the author wrote them.
+	if !block.IsTopic() || oldKey == "" || newKey == "" || oldKey == newKey {
+		return ops, nil
+	}
+	sources, err := s.repo.BlocksReferencingTopic(ctx, oldKey)
+	if err != nil {
+		return nil, fmt.Errorf("rename topic %s: %w", block.ID, err)
+	}
+	newName := FirstLine(content)
+	for _, src := range sources {
+		// A root that references itself is already in the batch as the edit
+		// that triggered the rename; a second edit of it would write the old
+		// content back over the new name.
+		if src.ID == block.ID {
+			continue
+		}
+		if rewritten := RewriteTopicRef(src.Content, oldKey, newName); rewritten != src.Content {
+			ops = append(ops, Op{Kind: OpEdit, BlockID: src.ID, Content: rewritten})
+		}
+	}
+	return ops, nil
 }
 
 // Unreviewed returns everything awaiting review: the Changes screen.

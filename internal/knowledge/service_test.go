@@ -34,6 +34,10 @@ type fakeRepo struct {
 	backlinks    []Backlink // what GetBacklinks returns
 	backlinksErr error
 
+	referencing       []Block // what BlocksReferencingTopic returns
+	referencingErr    error
+	gotReferencingKey string // the title key BlocksReferencingTopic was asked for
+
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
 
@@ -86,6 +90,11 @@ func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 
 func (f *fakeRepo) GetBacklinks(_ context.Context, target ID) ([]Backlink, error) {
 	return f.backlinks, f.backlinksErr
+}
+
+func (f *fakeRepo) BlocksReferencingTopic(_ context.Context, titleKey string) ([]Block, error) {
+	f.gotReferencingKey = titleKey
+	return f.referencing, f.referencingErr
 }
 
 func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {
@@ -251,7 +260,7 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 }
 
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
-	repo := &fakeRepo{}
+	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
 	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
@@ -266,6 +275,18 @@ func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	op := repo.applyOps[0]
 	if op.Kind != OpEdit || op.BlockID != "01A" || op.Content != "new text" {
 		t.Errorf("op = %+v, want an edit of 01A with the new content", op)
+	}
+}
+
+func TestEditBlockContentRefusesAMissingBlock(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied for a missing block: %d calls", repo.applyCalls)
 	}
 }
 

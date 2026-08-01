@@ -1,0 +1,231 @@
+package knowledge
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestRewriteTopicRef(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		oldKey  string
+		newName string
+		want    string
+	}{
+		{
+			name:    "rewrites a match",
+			content: "We use [[Local-first]] here.",
+			oldKey:  "local-first",
+			newName: "Local-first architecture",
+			want:    "We use [[Local-first architecture]] here.",
+		},
+		{
+			name:    "match is case-insensitive",
+			content: "See [[LOCAL-FIRST]].",
+			oldKey:  "local-first",
+			newName: "Offline-first",
+			want:    "See [[Offline-first]].",
+		},
+		{
+			name:    "leaves other topics alone",
+			content: "[[Zig]] and [[Local-first]].",
+			oldKey:  "local-first",
+			newName: "Offline-first",
+			want:    "[[Zig]] and [[Offline-first]].",
+		},
+		{
+			name:    "rewrites every occurrence",
+			content: "[[Zig]] then [[zig]] again.",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "[[Ziglang]] then [[Ziglang]] again.",
+		},
+		{
+			name:    "leaves fenced code alone",
+			content: "```\n[[Zig]]\n```\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "```\n[[Zig]]\n```\n[[Ziglang]]",
+		},
+		{
+			name:    "rewrites inside inline code",
+			content: "`[[Zig]]` and [[Zig]].",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "`[[Ziglang]]` and [[Ziglang]].",
+		},
+		{
+			name:    "leaves block references alone",
+			content: "((01JT4X9K2M8P0QRSTVWXYZ2345|Zig)) and [[Zig]].",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "((01JT4X9K2M8P0QRSTVWXYZ2345|Zig)) and [[Ziglang]].",
+		},
+		{
+			name:    "no match is unchanged",
+			content: "Nothing to do here.",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "Nothing to do here.",
+		},
+		{
+			name:    "an empty key rewrites nothing",
+			content: "[[Zig]] and [[]].",
+			oldKey:  "",
+			newName: "Ziglang",
+			want:    "[[Zig]] and [[]].",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RewriteTopicRef(tt.content, tt.oldKey, tt.newName); got != tt.want {
+				t.Errorf("RewriteTopicRef()\n got %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// renameRepo serves one topic root plus the blocks the refs index reports as
+// referencing it.
+func renameRepo(root Block, referencing ...Block) *fakeRepo {
+	return &fakeRepo{
+		blocks:      map[ID]Block{root.ID: root},
+		referencing: referencing,
+	}
+}
+
+func TestRenameTopicRewritesReferencesInOneBatch(t *testing.T) {
+	root := blk("01ROOT", "", 0, "Local-first")
+	repo := renameRepo(root,
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]], see [[local-first]] again."),
+		blk("01OTHER", "01ZIG", 1, "Unrelated [[Zig]]."),
+	)
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Local-first architecture"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if repo.gotReferencingKey != "local-first" {
+		t.Errorf("looked up %q, want the old normalized name", repo.gotReferencingKey)
+	}
+	if repo.applyCalls != 1 {
+		t.Errorf("storage saw %d batches, want 1 so the rename is one revision group", repo.applyCalls)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Fatalf("ops = %+v, want the root edit plus one rewrite", repo.applyOps)
+	}
+	if got := repo.applyOps[0]; got.BlockID != "01ROOT" || got.Content != "Local-first architecture" {
+		t.Errorf("op 0 = %+v, want the root's own edit", got)
+	}
+	want := "We use [[Local-first architecture]], see [[Local-first architecture]] again."
+	if got := repo.applyOps[1]; got.Kind != OpEdit || got.BlockID != "01NOTE" || got.Content != want {
+		t.Errorf("op 1 = %+v, want an edit of 01NOTE with %q", got, want)
+	}
+	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Title != "Rename topic and update 1 references" {
+		t.Errorf("meta = %+v, want an owner batch titled by the rename", repo.applyMeta)
+	}
+}
+
+func TestRenameSkipsTheRootsOwnSelfReference(t *testing.T) {
+	root := blk("01ROOT", "", 0, "Local-first\nSee also [[Local-first]].")
+	repo := renameRepo(root, root)
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first\nSee also [[Local-first]]."); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %+v, want the root's edit alone and never a second edit of it", repo.applyOps)
+	}
+	if repo.applyOps[0].Content != "Offline-first\nSee also [[Local-first]]." {
+		t.Errorf("root content = %q, want the caller's text untouched", repo.applyOps[0].Content)
+	}
+}
+
+func TestRenameEmitsNothingForUnchangedSources(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01ZIG", 0, "No reference in this text at all."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Errorf("ops = %+v, want only the root edit", repo.applyOps)
+	}
+	if repo.applyMeta.Title != ownerTitle {
+		t.Errorf("title = %q, want the plain owner title when nothing was rewritten", repo.applyMeta.Title)
+	}
+}
+
+func TestEditsThatAreNotRenamesDoNotExpand(t *testing.T) {
+	cases := []struct {
+		name    string
+		block   Block
+		content string
+	}{
+		{
+			name:    "a child block is not a topic",
+			block:   blk("01KID", "01ROOT", 0, "Local-first"),
+			content: "Offline-first",
+		},
+		{
+			name:    "the name is unchanged",
+			block:   blk("01ROOT", "", 0, "Local-first"),
+			content: "  local-first  \nbody text",
+		},
+		{
+			name:    "the root had no name",
+			block:   blk("01ROOT", "", 0, "###"),
+			content: "Offline-first",
+		},
+		{
+			name:    "the rename leaves the root unnamed",
+			block:   blk("01ROOT", "", 0, "Local-first"),
+			content: "###",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := renameRepo(tc.block, blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+			svc := NewService(nil, repo, seqIDs(), nil)
+
+			if err := svc.EditBlockContent(t.Context(), tc.block.ID, tc.content); err != nil {
+				t.Fatalf("EditBlockContent: %v", err)
+			}
+			if repo.gotReferencingKey != "" {
+				t.Errorf("looked up references for %q, want no lookup at all", repo.gotReferencingKey)
+			}
+			if len(repo.applyOps) != 1 {
+				t.Errorf("ops = %+v, want the single edit", repo.applyOps)
+			}
+		})
+	}
+}
+
+func TestRenameSurfacesLookupErrorWithoutWriting(t *testing.T) {
+	boom := errors.New("db down")
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
+	repo.referencingErr = boom
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first")
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the storage read error", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the failed lookup: %d calls", repo.applyCalls)
+	}
+}
+
+func TestRenameOntoATakenNameFails(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+	repo.applyErr = ErrDuplicateTopic
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); !errors.Is(err, ErrDuplicateTopic) {
+		t.Errorf("error = %v, want ErrDuplicateTopic", err)
+	}
+}

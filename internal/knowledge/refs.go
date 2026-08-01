@@ -78,6 +78,66 @@ func scanLine(line string, add func(Ref)) {
 	}
 }
 
+// RewriteTopicRef replaces every [[...]] whose normalized name equals oldKey
+// with newName, leaving the rest of the content untouched. It is how a topic
+// rename keeps the text true.
+//
+// Unlike ParseRefs it skips fenced code blocks only: a [[Topic]] inside a
+// backtick span is rewritten like any other. Blanking inline code the way
+// ParseRefs does would destroy the very content this function must preserve,
+// so the contract is a rename that also touches inline code rather than one
+// that can corrupt it.
+func RewriteTopicRef(content, oldKey, newName string) string {
+	if oldKey == "" {
+		return content
+	}
+	var b strings.Builder
+	fence := ""
+	for i, line := range strings.Split(content, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case fence != "":
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			b.WriteString(line)
+			continue
+		case strings.HasPrefix(trimmed, "```"):
+			fence = "```"
+			b.WriteString(line)
+			continue
+		case strings.HasPrefix(trimmed, "~~~"):
+			fence = "~~~"
+			b.WriteString(line)
+			continue
+		}
+		b.WriteString(rewriteLine(line, oldKey, newName))
+	}
+	return b.String()
+}
+
+// rewriteLine rewrites matching topic references on one line outside a fence.
+func rewriteLine(line, oldKey, newName string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); i++ {
+		if i < len(line)-1 && line[i] == '[' && line[i+1] == '[' {
+			body, end, ok := until(line, i+2, "]]")
+			// Nested brackets mean the outer pair is not a reference, exactly
+			// as scanLine reads it.
+			if ok && !strings.ContainsAny(body, "[]") && NormalizeTitle(body) == oldKey {
+				b.WriteString("[[" + newName + "]]")
+				i = end - 1
+				continue
+			}
+		}
+		b.WriteByte(line[i])
+	}
+	return b.String()
+}
+
 // until returns the text between start and the next occurrence of closer,
 // plus the offset just past closer. A missing terminator reports !ok.
 func until(line string, start int, closer string) (body string, end int, ok bool) {

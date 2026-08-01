@@ -14,6 +14,10 @@ type Repository interface {
 	// GetBacklinks returns every block referencing the target, whether by
 	// topic name or by block id. An unknown target yields an empty slice.
 	GetBacklinks(ctx context.Context, target ID) ([]Backlink, error)
+	// BlocksReferencingTopic returns every block whose content carries a
+	// [[Topic]] reference resolving to titleKey, so a rename can rewrite
+	// them. Ordered by id, for a deterministic batch.
+	BlocksReferencingTopic(ctx context.Context, titleKey string) ([]Block, error)
 
 	// ApplyOps applies a prepared, ordered batch in one transaction,
 	// writing one revision per touched block plus the projection.
