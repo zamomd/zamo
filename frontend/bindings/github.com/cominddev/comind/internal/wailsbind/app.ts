@@ -42,6 +42,13 @@ export function AcceptPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
 }
 
 /**
+ * Backlinks lists every reference pointing at the block or topic.
+ */
+export function Backlinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Backlink[] | null> {
+    return $Call.ByID(455889751, id);
+}
+
+/**
  * BlockHistory passes the call to knowledge.Service: the block's revisions,
  * newest first.
  */

@@ -31,6 +31,9 @@ type fakeRepo struct {
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
 
+	backlinks    []Backlink // what GetBacklinks returns
+	backlinksErr error
+
 	blocks    map[ID]Block // what GetBlocks serves
 	blocksErr error
 
@@ -79,6 +82,10 @@ func (f *fakeRepo) GetSubtree(_ context.Context, root ID) ([]Block, error) {
 		return nil, f.subtreeErr
 	}
 	return f.subtrees[root], nil
+}
+
+func (f *fakeRepo) GetBacklinks(_ context.Context, target ID) ([]Backlink, error) {
+	return f.backlinks, f.backlinksErr
 }
 
 func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) {

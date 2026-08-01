@@ -160,6 +160,16 @@ func (s *Service) GetSubtree(ctx context.Context, root ID) ([]Block, error) {
 	return s.repo.GetSubtree(ctx, root)
 }
 
+// Backlinks returns every reference pointing at the block or topic, with the
+// context a reader needs to make sense of each one.
+func (s *Service) Backlinks(ctx context.Context, id ID) ([]Backlink, error) {
+	links, err := s.repo.GetBacklinks(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("backlinks of %s: %w", id, err)
+	}
+	return links, nil
+}
+
 // ExportMarkdown exports the base: one markdown file per topic, block nesting
 // rendered as nested lists (RenderMarkdown). It reads every topic's full
 // subtree, renders the set, then hands the files to the injected writer. All

@@ -8,6 +8,7 @@ export {
 
 export type {
     Applied,
+    Backlink,
     Block,
     ID,
     Metadata,

@@ -27,6 +27,18 @@ export enum Author {
 };
 
 /**
+ * Backlink is one incoming reference, hydrated for display: the block that
+ * carries the reference plus the topic it lives under, which is the context a
+ * reader needs to place it without navigating. The source block's own parent
+ * is reachable as Block.ParentID.
+ */
+export interface Backlink {
+    "Block": Block;
+    "TopicID": ID;
+    "TopicTitle": string;
+}
+
+/**
  * Block is the unit of knowledge: a short markdown fragment in a topic
  * tree. Portability rule: Content is pure markdown; all structure lives
  * in fields, never as service markup inside the text.

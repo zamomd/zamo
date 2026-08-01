@@ -91,6 +91,11 @@ func (a *App) GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Bl
 	return a.svc.GetSubtree(ctx, root)
 }
 
+// Backlinks lists every reference pointing at the block or topic.
+func (a *App) Backlinks(ctx context.Context, id knowledge.ID) ([]knowledge.Backlink, error) {
+	return a.svc.Backlinks(ctx, id)
+}
+
 // EditBlockContent passes the call to knowledge.Service. A manual edit by the
 // owner applies directly, without the review queue.
 func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {

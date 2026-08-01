@@ -11,6 +11,9 @@ type Repository interface {
 	// GetTopicGraph returns every topic with its block count plus the edges
 	// between topics.
 	GetTopicGraph(ctx context.Context) (TopicGraph, error)
+	// GetBacklinks returns every block referencing the target, whether by
+	// topic name or by block id. An unknown target yields an empty slice.
+	GetBacklinks(ctx context.Context, target ID) ([]Backlink, error)
 
 	// ApplyOps applies a prepared, ordered batch in one transaction,
 	// writing one revision per touched block plus the projection.

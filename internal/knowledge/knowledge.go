@@ -33,3 +33,13 @@ type Block struct {
 
 // IsTopic reports whether the block is a topic root.
 func (b Block) IsTopic() bool { return b.ParentID == "" }
+
+// Backlink is one incoming reference, hydrated for display: the block that
+// carries the reference plus the topic it lives under, which is the context a
+// reader needs to place it without navigating. The source block's own parent
+// is reachable as Block.ParentID.
+type Backlink struct {
+	Block      Block
+	TopicID    ID
+	TopicTitle string
+}
