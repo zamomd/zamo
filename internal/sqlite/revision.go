@@ -159,6 +159,13 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	if head.ParentID != "" {
 		parent = string(head.ParentID)
 	}
+	// Unreachable in practice: no write path can put a bracketed name into a
+	// root's revision, since titleKey refused it on the way in. Restoring
+	// through the same rule rather than around it is what keeps that true.
+	key, err := titleKey(parent, head.Content)
+	if err != nil {
+		return fmt.Errorf("project head of %s: %w", blockID, err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
@@ -166,7 +173,7 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 			parent_id = excluded.parent_id, position = excluded.position,
 			content = excluded.content, title_key = excluded.title_key,
 			updated_at = excluded.updated_at`,
-		blockID, parent, head.Position, head.Content, titleKey(parent, head.Content),
+		blockID, parent, head.Position, head.Content, key,
 		first, formatTime(head.CreatedAt)); err != nil {
 		return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 	}

@@ -29,6 +29,13 @@ var (
 	// stay unique.
 	ErrDuplicateTopic = errors.New("topic name already taken")
 
+	// ErrUnreferenceableTopic reports a write that would leave a topic root
+	// with a name no [[Topic]] reference can reach: one carrying a bracket,
+	// which cannot be written inside [[...]] at all, or none at all while
+	// other blocks still reference the name being dropped. Either way the
+	// references that pointed at it would resolve to nothing, silently.
+	ErrUnreferenceableTopic = errors.New("topic name cannot be referenced")
+
 	// ErrBusy reports that the database is locked by another process.
 	// The caller retries shortly.
 	ErrBusy = errors.New("database is busy")

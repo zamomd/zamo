@@ -125,15 +125,18 @@ func (s *Service) EditBlockContent(ctx context.Context, id ID, content string) e
 
 // rename is one topic rename found in a batch: the root being renamed, the
 // normalized name references still resolve by, and the name to write instead.
+// An empty newKey means the edit drops the root's name altogether.
 type rename struct {
 	id      ID
 	oldKey  string
+	newKey  string
 	newName string
 }
 
 // expandRenames appends to ops the reference rewrites its topic renames imply,
 // and names the batch after them when the caller had nothing more specific to
-// say.
+// say. An edit that drops a still-referenced root's name has no rewrite to make
+// and is refused instead (see refuseOrphaning).
 //
 // The batch is authoritative over every block it already names: such a block
 // keeps the content its own op writes and gets no rewrite. Otherwise the
@@ -160,6 +163,12 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 		if err != nil {
 			return nil, fmt.Errorf("rename topic %s: %w", r.id, err)
 		}
+		if r.newKey == "" {
+			if err := refuseOrphaning(r, sources, named); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		for _, src := range sources {
 			if named[src.ID] {
 				continue
@@ -184,11 +193,30 @@ func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) 
 	return out, nil
 }
 
-// renamesIn reports the topic renames a batch performs, in batch order: an
-// edit of a topic root whose normalized name changes to another non-empty one.
-// Only a root has a name to rename, and an edit that leaves the root unnamed is
-// not a rename either — rewriting references to it would turn them into [[]],
-// so they stay as the author wrote them.
+// refuseOrphaning rejects an edit that would leave a topic root unnamed while
+// blocks still reference the name it is dropping. There is nothing to rewrite
+// those references to — [[]] resolves to nothing — so the only honest answers
+// are refusing the edit or orphaning every backlink silently.
+//
+// A source the batch already names is not counted: the batch is authoritative
+// over the blocks it writes (see expandRenames), and that is also how the
+// root's own self-reference is excluded. An unreferenced root may still become
+// unnamed, which the design allows.
+func refuseOrphaning(r rename, sources []Block, named map[ID]bool) error {
+	for _, src := range sources {
+		if named[src.ID] {
+			continue
+		}
+		return fmt.Errorf("unname topic %s still referenced by %s: %w",
+			r.id, src.ID, ErrUnreferenceableTopic)
+	}
+	return nil
+}
+
+// renamesIn reports the name changes a batch makes, in batch order: an edit of
+// a topic root whose normalized name changes to a different one, empty
+// included. Only a root has a name to rename, and a root that had none has
+// nothing for a reference to have resolved by, so it is not a rename.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var edited []ID
 	for _, op := range ops {
@@ -213,10 +241,12 @@ func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 			continue
 		}
 		oldKey, newKey := NormalizeTitle(block.Content), NormalizeTitle(op.Content)
-		if oldKey == "" || newKey == "" || oldKey == newKey {
+		if oldKey == "" || oldKey == newKey {
 			continue
 		}
-		out = append(out, rename{id: op.BlockID, oldKey: oldKey, newName: TopicName(op.Content)})
+		out = append(out, rename{
+			id: op.BlockID, oldKey: oldKey, newKey: newKey, newName: TopicName(op.Content),
+		})
 	}
 	return out, nil
 }

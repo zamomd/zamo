@@ -112,6 +112,72 @@ func TestDuplicateTopicNameRejected(t *testing.T) {
 	}
 }
 
+// A bracket cannot be written inside [[...]], so a root carrying one would be
+// named yet unreachable: no reference resolves to it and autocomplete cannot
+// offer it. Every path that sets a root's name goes through titleKey, so every
+// path refuses it.
+func TestBracketedTopicNameRefusedOnEveryWritePath(t *testing.T) {
+	t.Run("add", func(t *testing.T) {
+		repo := testRepo(t)
+		err := ownerOps(t, repo, "01G1",
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Topic [draft]"})
+		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
+			t.Fatalf("add: got %v, want ErrUnreferenceableTopic", err)
+		}
+		if _, _, _, ok := blockRow(t, repo, "01ROOT"); ok {
+			t.Error("the refused add left a row behind")
+		}
+	})
+
+	t.Run("edit", func(t *testing.T) {
+		repo := testRepo(t)
+		if err := ownerOps(t, repo, "01G1",
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Local-first"}); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+		err := ownerOps(t, repo, "01G2",
+			knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01ROOT", Content: "Topic [draft]"})
+		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
+			t.Fatalf("edit: got %v, want ErrUnreferenceableTopic", err)
+		}
+		if got, want := titleKeyOf(t, repo, "01ROOT"), "local-first"; got != want {
+			t.Errorf("title_key = %q, want %q: the refused edit must leave nothing behind", got, want)
+		}
+	})
+
+	t.Run("move to root level", func(t *testing.T) {
+		repo := testRepo(t)
+		if err := ownerOps(t, repo, "01G1",
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Local-first"},
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01KID", Parent: "01ROOT", Content: "See [x] below"},
+		); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+		err := ownerOps(t, repo, "01G2", knowledge.Op{Kind: knowledge.OpMove, BlockID: "01KID"})
+		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
+			t.Fatalf("promote: got %v, want ErrUnreferenceableTopic", err)
+		}
+		parent, _, _, ok := blockRow(t, repo, "01KID")
+		if !ok || parent != "01ROOT" {
+			t.Errorf("parent after the refused move = %q (present %v), want 01ROOT", parent, ok)
+		}
+	})
+}
+
+// The rule is about names, and only a root has one.
+func TestBracketedChildContentIsFine(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Local-first"},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01KID", Parent: "01ROOT", Content: "- [ ] read [[Zig]]"},
+	); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if got := titleKeyOf(t, repo, "01KID"); got != "" {
+		t.Errorf("child title_key = %q, want empty", got)
+	}
+}
+
 func TestUnnamedRootsCoexist(t *testing.T) {
 	repo := testRepo(t)
 	if err := ownerOps(t, repo, "01G1",

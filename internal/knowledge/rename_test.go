@@ -247,6 +247,51 @@ func TestRenameToAHeadingWritesThePlainName(t *testing.T) {
 	}
 }
 
+func TestUnnamingAReferencedTopicIsRefused(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
+		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	err := svc.EditBlockContent(t.Context(), "01ROOT", "###")
+	if !errors.Is(err, ErrUnreferenceableTopic) {
+		t.Errorf("error = %v, want ErrUnreferenceableTopic: [[Local-first]] would resolve to nothing", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the refusal: %d calls", repo.applyCalls)
+	}
+}
+
+func TestUnnamingAnUnreferencedTopicIsAllowed(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "###"); err != nil {
+		t.Fatalf("EditBlockContent: %v", err)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Errorf("ops = %+v, want the root edit: an unnamed root is a designed state", repo.applyOps)
+	}
+}
+
+func TestUnnamingATopicTheBatchAlreadyRewritesIsAllowed(t *testing.T) {
+	note := blk("01NOTE", "01ZIG", 0, "We use [[Local-first]].")
+	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"), note)
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	ops := []Op{
+		{Kind: OpEdit, BlockID: "01ROOT", Content: "###"},
+		{Kind: OpEdit, BlockID: "01NOTE", Content: "We use it."},
+	}
+	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), ops); err != nil {
+		t.Fatalf("ApplyOps: %v", err)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Errorf("ops = %+v, want the batch's own two ops: it drops the reference itself", repo.applyOps)
+	}
+}
+
+// Storage refuses the batch outright (see titleKey); what is asserted here is
+// that the domain does not build a mangled rewrite on the way there.
 func TestRenameToANameThatCannotBeWrittenLeavesReferencesAlone(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
@@ -312,11 +357,6 @@ func TestEditsThatAreNotRenamesDoNotExpand(t *testing.T) {
 			name:    "the root had no name",
 			block:   blk("01ROOT", "", 0, "###"),
 			content: "Offline-first",
-		},
-		{
-			name:    "the rename leaves the root unnamed",
-			block:   blk("01ROOT", "", 0, "Local-first"),
-			content: "###",
 		},
 	}
 	for _, tc := range cases {
