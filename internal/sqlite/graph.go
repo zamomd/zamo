@@ -7,8 +7,10 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
-// topicRoots pairs every block with the topic root it descends from. Both graph
-// queries build on it. UNION, not UNION ALL: on a database whose parent_id
+// topicRoots pairs every block with the topic root it descends from. Every
+// query that needs a block's topic builds on it — the two graph queries here
+// and GetBacklinks, which needs the source block's topic for context.
+// UNION, not UNION ALL: on a database whose parent_id
 // somehow became cyclic, UNION discards the repeated row once a block is
 // already in roots, so the walk terminates instead of looping forever — the
 // same guard GetSubtree uses.

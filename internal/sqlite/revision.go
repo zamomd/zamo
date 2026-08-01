@@ -108,7 +108,11 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 // requires a live parent, and a block with live children cannot be removed.
 // Timestamps come from revision history so rollback reproduces historical state.
 //
-// Projection writes use the normal FTS-maintaining triggers.
+// It restores every piece of state derived from content, not just the row:
+// blocks_fts through the normal triggers, blocks.title_key computed here, and
+// the block's refs rows rebuilt from the projected content — emptied when the
+// head is a deletion. Dropping either of the last two is silent: the tree still
+// renders while the topic loses its name and every backlink to it.
 func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	head, ok, err := headRevision(ctx, tx, blockID)
 	if err != nil {

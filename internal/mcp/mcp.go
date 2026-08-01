@@ -1,5 +1,5 @@
-// Package mcp is an entry point: the MCP server (tools map, search,
-// get_subtree, write_blocks).
+// Package mcp is an entry point: the MCP server. Its tools are topic_map,
+// search, get_subtree, get_backlinks and write_blocks.
 package mcp
 
 import (
