@@ -5,8 +5,9 @@
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
+	import { firstLine, normalizeTitle, type Ref } from "./refs";
 	import TreeNode from "./TreeNode.svelte";
-	import { hasUnreviewed, type TreeNodeData } from "./tree";
+	import { findBlock, hasUnreviewed, type TreeNodeData } from "./tree";
 
 	let {
 		node,
@@ -40,7 +41,73 @@
 		});
 	});
 
+	// findTopicRoot looks a [[Topic]] reference up by its normalized key among
+	// the topics the store already holds — the same key blocks.title_key
+	// carries on the Go side, so this is the client-side half of resolution.
+	function findTopicRoot(targetKey: string): TreeNodeData | null {
+		return base.forest.find((t) => normalizeTitle(t.block.Content) === targetKey) ?? null;
+	}
+
+	// resolveRef backs renderMarkdown's live-lookup: null means unresolved, in
+	// which case the renderer falls back to the reference's own written text.
+	function resolveRef(ref: Ref): string | null {
+		if (ref.kind === "topic") {
+			const root = findTopicRoot(ref.targetKey);
+			return root ? firstLine(root.block.Content) : null;
+		}
+		const block = findBlock(base.forest, ref.targetKey);
+		return block ? firstLine(block.Content) : null;
+	}
+
+	// pendingTopic holds the unresolved [[Topic]] name a click just asked to
+	// create. confirm()/alert()/prompt() are no-ops in the Wails webview (see
+	// AGENTS.md), so the confirmation has to be a real element in the row
+	// rather than a blocking dialog.
+	let pendingTopic: { name: string } | null = $state(null);
+
+	// clickRef routes a click on a rendered reference: a resolved one navigates
+	// within the tree, an unresolved topic offers to create it, and an
+	// unresolved block reference — nothing points at a gone or not-yet-synced
+	// block — does nothing.
+	function clickRef(el: HTMLElement): void {
+		const targetKey = el.dataset.target ?? "";
+		const isTopic = el.classList.contains("ref-topic");
+		if (el.classList.contains("ref-missing")) {
+			if (isTopic) {
+				pendingTopic = { name: el.textContent ?? targetKey };
+			}
+			return;
+		}
+		if (isTopic) {
+			const root = findTopicRoot(targetKey);
+			if (root) base.reveal(root.block.ID);
+			return;
+		}
+		if (findBlock(base.forest, targetKey)) {
+			base.reveal(targetKey);
+		}
+	}
+
+	async function confirmCreateTopic(): Promise<void> {
+		if (pendingTopic === null || base.busy) {
+			return;
+		}
+		const { name } = pendingTopic;
+		pendingTopic = null;
+		await base.createTopic(name);
+	}
+
+	function cancelCreateTopic(): void {
+		pendingTopic = null;
+	}
+
 	function editFromClick(e: MouseEvent): void {
+		const ref = (e.target as HTMLElement).closest<HTMLElement>(".ref[data-target]");
+		if (ref) {
+			e.preventDefault();
+			clickRef(ref);
+			return;
+		}
 		const link = (e.target as HTMLElement).closest("a");
 		if (link) {
 			e.preventDefault();
@@ -106,7 +173,7 @@
 		{#if ghost}
 			<!-- A pending deletion: struck through, no edit/target affordances —
 			     there is nothing left to edit until it is restored. -->
-			<span class="content ghost-content">{@html renderMarkdown(node.block.Content)}</span>
+			<span class="content ghost-content">{@html renderMarkdown(node.block.Content, resolveRef)}</span>
 		{:else if editing}
 			<InlineEditor id={node.block.ID} />
 		{:else}
@@ -128,7 +195,7 @@
 				onclick={editFromClick}
 				onkeydown={editFromKey}
 			>
-				{@html renderMarkdown(node.block.Content)}
+				{@html renderMarkdown(node.block.Content, resolveRef)}
 			</div>
 			<span class="gutter">
 				<button
@@ -211,6 +278,15 @@
 	</div>
 	{#if historyOpen}
 		<HistoryPanel block={node.block} />
+	{/if}
+	{#if pendingTopic}
+		<!-- confirm() is a no-op in the Wails webview, so this row is the
+		     confirmation — see clickRef. -->
+		<div class="ref-create">
+			<span>Create topic “{pendingTopic.name}”?</span>
+			<button type="button" disabled={base.busy} onclick={confirmCreateTopic}>create</button>
+			<button type="button" onclick={cancelCreateTopic}>cancel</button>
+		</div>
 	{/if}
 	{#if hasChildren && expanded}
 		<ul class="children">
@@ -496,6 +572,19 @@
 	.content :global(a) {
 		color: var(--accent);
 	}
+	/* A reference reads like a link but is not one: a dotted underline instead
+	   of a solid one keeps it visually distinct from a real hyperlink. Missing
+	   dims to --text-dim rather than --danger — an unresolved reference is
+	   routine (the target may just not exist yet), not an error. */
+	.content :global(.ref) {
+		color: var(--accent);
+		cursor: pointer;
+		text-decoration: underline dotted;
+		text-underline-offset: 2px;
+	}
+	.content :global(.ref-missing) {
+		color: var(--text-dim);
+	}
 	.content :global(blockquote) {
 		margin: 0.15rem 0;
 		padding-left: 0.5rem;
@@ -526,6 +615,28 @@
 		flex: 1;
 		padding: 0.1rem 0.3rem;
 		text-decoration: line-through;
+	}
+	/* Same indent and quiet styling as HistoryPanel's .history: a small panel
+	   hanging off this row, not a competing block. */
+	.ref-create {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.1rem 0 0.25rem 1.25rem;
+		padding: 0.2rem 0.4rem;
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
+	}
+	.ref-create button {
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		background: none;
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		color: inherit;
+	}
+	.ref-create button:hover:not(:disabled) {
+		background: var(--hover);
 	}
 	/* accept/reject are a per-row status action, not a hover affordance like
 	   .target: always visible while a block is unreviewed, so the decision is

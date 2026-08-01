@@ -340,30 +340,58 @@ class BaseStore {
 		this.error = "";
 		try {
 			const scope = this.scopeID;
-			this.status = scope === null ? `expanding "${text}"…` : "asking the AI to restructure…";
 			if (scope === null) {
-				await App.ExpandTopic(text, "");
+				await this.expandNewTopic(text);
 			} else {
+				this.status = "asking the AI to restructure…";
 				await App.EditWithAI(scope, text);
+				this.status = "changes applied, awaiting review";
 			}
 			this.command = "";
 			this.clearScope();
-			const before = new Set(this.forest.map((t) => t.block.ID));
-			await this.reload();
-			if (scope === null) {
-				const fresh = this.forest.find((t) => !before.has(t.block.ID));
-				if (fresh) {
-					this.selectedTopicID = fresh.block.ID;
-					this.focusID = null;
-				}
-			}
-			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";
 		} finally {
 			this.busy = false;
 		}
+	}
+
+	// createTopic asks the AI to expand a brand-new topic titled name. It is
+	// the untargeted half of askAI, reachable without going through the
+	// command box — how clicking an unresolved [[Topic]] reference in the
+	// tree offers to create the target.
+	async createTopic(name: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
+		this.error = "";
+		try {
+			await this.expandNewTopic(name);
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	private async expandNewTopic(name: string): Promise<void> {
+		this.status = `expanding "${name}"…`;
+		await App.ExpandTopic(name, "");
+		const before = new Set(this.forest.map((t) => t.block.ID));
+		await this.reload();
+		const fresh = this.forest.find((t) => !before.has(t.block.ID));
+		if (fresh) {
+			this.selectedTopicID = fresh.block.ID;
+			this.focusID = null;
+		}
+		this.status = "changes applied, awaiting review";
 	}
 
 	async startEdit(block: Block, caret: number): Promise<void> {
