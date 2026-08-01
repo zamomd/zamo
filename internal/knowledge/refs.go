@@ -353,6 +353,21 @@ func NormalizeTitle(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(TopicName(s)), " "))
 }
 
+// TopicKey is the key a root's content is addressable by: its normalized name,
+// or "" when nothing can reference it. Two names cannot be referenced — the
+// empty one, and one carrying a bracket, which cannot be written inside [[...]]
+// at all. Both are the same situation, so both are simply unnamed: the root
+// exists and renders, it is just not reachable by name.
+//
+// It is what blocks.title_key holds (NULL for "") and what a rename compares
+// against, so the two agree on which roots have a name to lose.
+func TopicKey(content string) string {
+	if strings.ContainsAny(TopicName(content), "[]") {
+		return ""
+	}
+	return NormalizeTitle(content)
+}
+
 // TopicName is the text a [[Topic]] reference to this content should carry:
 // its first line without the markdown markers NormalizeTitle also drops, with
 // the author's casing and spacing kept. Writing a reference from anything else

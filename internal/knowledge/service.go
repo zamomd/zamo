@@ -74,10 +74,11 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 // The name is written verbatim, which is what makes the new root's title_key
 // exactly the key the [[Topic]] reference that asked for it resolves by.
 //
-// A name that normalizes to nothing is refused rather than creating an
-// unaddressable root, and a name already taken reports ErrDuplicateTopic.
+// A name nothing could reference — empty, or carrying a bracket — is refused
+// rather than creating a root the reference cannot reach after all, and a name
+// already taken reports ErrDuplicateTopic.
 func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
-	if NormalizeTitle(name) == "" {
+	if TopicKey(name) == "" {
 		return "", fmt.Errorf("create topic %q: a topic needs a name: %w", name, ErrInvalidOps)
 	}
 	const temp = "topic"
@@ -219,9 +220,13 @@ func refuseOrphaning(r rename, sources []Block, named map[ID]bool) error {
 }
 
 // renamesIn reports the name changes a batch makes, in batch order: an edit of
-// a topic root whose normalized name changes to a different one, empty
-// included. Only a root has a name to rename, and a root that had none has
-// nothing for a reference to have resolved by, so it is not a rename.
+// a topic root whose key (TopicKey) changes to a different one, empty included.
+// Only a root has a name to rename, and a root that had none has nothing for a
+// reference to have resolved by, so it is not a rename.
+//
+// A name a reference cannot carry — one holding a bracket — keys as empty, so
+// taking a topic to such a name is the same transition as unnaming it: there is
+// nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var edited []ID
 	for _, op := range ops {
@@ -245,7 +250,7 @@ func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 		if !ok || !block.IsTopic() {
 			continue
 		}
-		oldKey, newKey := NormalizeTitle(block.Content), NormalizeTitle(op.Content)
+		oldKey, newKey := TopicKey(block.Content), TopicKey(op.Content)
 		if oldKey == "" || oldKey == newKey {
 			continue
 		}

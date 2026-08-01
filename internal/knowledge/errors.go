@@ -29,11 +29,12 @@ var (
 	// stay unique.
 	ErrDuplicateTopic = errors.New("topic name already taken")
 
-	// ErrUnreferenceableTopic reports a write that would leave a topic root
-	// with a name no [[Topic]] reference can reach: one carrying a bracket,
-	// which cannot be written inside [[...]] at all, or none at all while
-	// other blocks still reference the name being dropped. Either way the
-	// references that pointed at it would resolve to nothing, silently.
+	// ErrUnreferenceableTopic reports a write that would take a topic root to a
+	// name no [[Topic]] reference can reach — an empty one, or one carrying a
+	// bracket, which cannot be written inside [[...]] at all — while other
+	// blocks still reference the name it is dropping. Those references would
+	// resolve to nothing, silently. The name by itself is fine: a root nothing
+	// points at may carry either and is simply not addressable by name.
 	ErrUnreferenceableTopic = errors.New("topic name cannot be referenced")
 
 	// ErrAtomicGroup reports a review decision covering only part of a batch

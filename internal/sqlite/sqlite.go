@@ -92,28 +92,20 @@ func translate(err error) error {
 	}
 }
 
-// titleKey is the value blocks.title_key takes for a block: the normalized
-// first line of a topic root's content, and NULL for everything else. A root
-// whose first line normalizes to nothing is unnamed, which is also NULL — the
-// partial unique index admits any number of those, and the design says so.
-//
-// A name carrying a bracket is refused with ErrUnreferenceableTopic: it cannot
-// be written inside [[...]], so it would name a topic no reference can reach
-// and no autocomplete can offer. This is the one place the column is computed —
-// add, edit, move and the revision projection all come through here — so it is
-// also the one place the rule has to hold.
-func titleKey(parent any, content string) (any, error) {
+// titleKey is the value blocks.title_key takes for a block: the key a topic
+// root is addressable by (knowledge.TopicKey), and NULL for everything else.
+// A root nothing can reference — an empty name, or one carrying a bracket — is
+// unnamed, which is also NULL; the partial unique index admits any number of
+// those, so such titles are ordinary content rather than a refused write.
+func titleKey(parent any, content string) any {
 	if parent != nil {
-		return nil, nil
+		return nil
 	}
-	if name := knowledge.TopicName(content); strings.ContainsAny(name, "[]") {
-		return nil, fmt.Errorf("topic name %q: %w", name, knowledge.ErrUnreferenceableTopic)
-	}
-	key := knowledge.NormalizeTitle(content)
+	key := knowledge.TopicKey(content)
 	if key == "" {
-		return nil, nil
+		return nil
 	}
-	return key, nil
+	return key
 }
 
 // Repo implements knowledge.Repository.
@@ -360,10 +352,7 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if err != nil {
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
-	key, err := titleKey(parent, op.Content)
-	if err != nil {
-		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
-	}
+	key := titleKey(parent, op.Content)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -413,10 +402,7 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if parent.Valid && parent.String != "" {
 		parentArg = parent.String
 	}
-	key, err := titleKey(parentArg, op.Content)
-	if err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
-	}
+	key := titleKey(parentArg, op.Content)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
 		op.Content, key, b.now, string(op.BlockID)); err != nil {
@@ -456,10 +442,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
-	key, err := titleKey(parent, content)
-	if err != nil {
-		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
-	}
+	key := titleKey(parent, content)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))

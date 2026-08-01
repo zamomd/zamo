@@ -295,7 +295,9 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	for _, name := range []string{"", "   ", "###"} {
+	// A bracketed name belongs here too: the root would be created and the
+	// [[...]] that asked for it would still resolve to nothing.
+	for _, name := range []string{"", "   ", "###", "Notes [WIP]"} {
 		if _, err := svc.CreateTopic(t.Context(), name); !errors.Is(err, ErrInvalidOps) {
 			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
 		}

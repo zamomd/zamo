@@ -43,7 +43,7 @@ const readable: Record<string, string> = {
 	invalid_rollback: "That version can't be rolled back to.",
 	duplicate_topic: "A topic with that name already exists.",
 	unreferenceable_topic:
-		"That name can't be linked to. A topic name can't contain [ or ], and a topic other blocks link to can't be left unnamed.",
+		"Other blocks link to this topic by name, so it can't be left with a name nothing can link to — an empty one, or one containing [ or ].",
 	atomic_group: "This is part of a topic rename — accept or reject the whole batch on the Changes screen.",
 	busy: "The database is busy. Try again in a moment.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",

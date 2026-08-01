@@ -112,20 +112,23 @@ func TestDuplicateTopicNameRejected(t *testing.T) {
 	}
 }
 
-// A bracket cannot be written inside [[...]], so a root carrying one would be
-// named yet unreachable: no reference resolves to it and autocomplete cannot
-// offer it. Every path that sets a root's name goes through titleKey, so every
-// path refuses it.
-func TestBracketedTopicNameRefusedOnEveryWritePath(t *testing.T) {
+// A bracket cannot be written inside [[...]], so a root carrying one is not
+// referenceable — which is the state an empty name already has, and the design
+// admits: the root is stored and renders, it just has no key. Refusing the name
+// instead would kill a whole batch over ordinary titles like "- [ ] Ship v1".
+func TestBracketedTopicNameIsUnnamed(t *testing.T) {
 	t.Run("add", func(t *testing.T) {
 		repo := testRepo(t)
-		err := ownerOps(t, repo, "01G1",
-			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Topic [draft]"})
-		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
-			t.Fatalf("add: got %v, want ErrUnreferenceableTopic", err)
+		if err := ownerOps(t, repo, "01G1",
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "- [ ] Ship v1"}); err != nil {
+			t.Fatalf("add: %v", err)
 		}
-		if _, _, _, ok := blockRow(t, repo, "01ROOT"); ok {
-			t.Error("the refused add left a row behind")
+		_, _, content, ok := blockRow(t, repo, "01ROOT")
+		if !ok || content != "- [ ] Ship v1" {
+			t.Errorf("content = %q (present %v), want the title stored verbatim", content, ok)
+		}
+		if got := titleKeyOf(t, repo, "01ROOT"); got != "" {
+			t.Errorf("title_key = %q, want empty: nothing can reference this name", got)
 		}
 	})
 
@@ -135,13 +138,12 @@ func TestBracketedTopicNameRefusedOnEveryWritePath(t *testing.T) {
 			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Local-first"}); err != nil {
 			t.Fatalf("add: %v", err)
 		}
-		err := ownerOps(t, repo, "01G2",
-			knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01ROOT", Content: "Topic [draft]"})
-		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
-			t.Fatalf("edit: got %v, want ErrUnreferenceableTopic", err)
+		if err := ownerOps(t, repo, "01G2",
+			knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01ROOT", Content: "Reading list [2026]"}); err != nil {
+			t.Fatalf("edit: %v", err)
 		}
-		if got, want := titleKeyOf(t, repo, "01ROOT"), "local-first"; got != want {
-			t.Errorf("title_key = %q, want %q: the refused edit must leave nothing behind", got, want)
+		if got := titleKeyOf(t, repo, "01ROOT"); got != "" {
+			t.Errorf("title_key = %q, want empty", got)
 		}
 	})
 
@@ -153,13 +155,28 @@ func TestBracketedTopicNameRefusedOnEveryWritePath(t *testing.T) {
 		); err != nil {
 			t.Fatalf("add: %v", err)
 		}
-		err := ownerOps(t, repo, "01G2", knowledge.Op{Kind: knowledge.OpMove, BlockID: "01KID"})
-		if !errors.Is(err, knowledge.ErrUnreferenceableTopic) {
-			t.Fatalf("promote: got %v, want ErrUnreferenceableTopic", err)
+		if err := ownerOps(t, repo, "01G2", knowledge.Op{Kind: knowledge.OpMove, BlockID: "01KID"}); err != nil {
+			t.Fatalf("promote: %v", err)
 		}
 		parent, _, _, ok := blockRow(t, repo, "01KID")
-		if !ok || parent != "01ROOT" {
-			t.Errorf("parent after the refused move = %q (present %v), want 01ROOT", parent, ok)
+		if !ok || parent != "" {
+			t.Errorf("parent after the move = %q (present %v), want a root", parent, ok)
+		}
+		if got := titleKeyOf(t, repo, "01KID"); got != "" {
+			t.Errorf("title_key = %q, want empty", got)
+		}
+	})
+
+	// NULL is not constrained by the partial unique index, so several such
+	// roots coexist exactly as several unnamed ones do.
+	t.Run("several coexist", func(t *testing.T) {
+		repo := testRepo(t)
+		if err := ownerOps(t, repo, "01G1",
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01R1", Content: "Notes [WIP]"},
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01R2", Content: "TODO: fix [bug]"},
+			knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01R3", Content: "[Zig](https://ziglang.org)"},
+		); err != nil {
+			t.Fatalf("apply: %v", err)
 		}
 	})
 }

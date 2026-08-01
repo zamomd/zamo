@@ -18,11 +18,11 @@ describe("callError", () => {
 });
 
 describe("messageFor", () => {
-	it("explains a name no reference can reach", () => {
+	it("explains a rename that would strand the blocks linking here", () => {
 		const err = new Error("x", {
 			cause: { code: "unreferenceable_topic", message: "topic name cannot be referenced" },
 		});
-		expect(messageFor(err)).toMatch(/can't be linked to/);
+		expect(messageFor(err)).toMatch(/Other blocks link to this topic/);
 	});
 
 	it("points at the batch when a rename is reviewed piecemeal", () => {

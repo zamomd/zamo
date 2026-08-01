@@ -332,18 +332,34 @@ func TestUnnamingATopicTheBatchAlreadyRewritesIsAllowed(t *testing.T) {
 	}
 }
 
-// Storage refuses the batch outright (see titleKey); what is asserted here is
-// that the domain does not build a mangled rewrite on the way there.
-func TestRenameToANameThatCannotBeWrittenLeavesReferencesAlone(t *testing.T) {
+// A bracketed name cannot be written inside [[...]], so taking a topic to one
+// is the same transition as unnaming it: the backlinks have nothing to point
+// at. What is refused is that transition, not the name — see the sibling test.
+func TestRenamingAReferencedTopicToABracketedNameIsRefused(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first [[or so]]"); err != nil {
+	err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first [draft]")
+	if !errors.Is(err, ErrUnreferenceableTopic) {
+		t.Errorf("error = %v, want ErrUnreferenceableTopic: [[Local-first]] would resolve to nothing", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("a batch was applied despite the refusal: %d calls", repo.applyCalls)
+	}
+}
+
+// Nothing resolved by the old name, so nothing is orphaned and the title is
+// ordinary content. Refusing it would kill the whole batch over a checkbox.
+func TestRenamingAnUnreferencedTopicToABracketedNameIsAllowed(t *testing.T) {
+	repo := renameRepo(blk("01ROOT", "", 0, "Ship list"))
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if err := svc.EditBlockContent(t.Context(), "01ROOT", "- [ ] Ship v1"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
 	}
-	if len(repo.applyOps) != 1 || repo.applyOps[0].BlockID != "01ROOT" {
-		t.Errorf("ops = %+v, want the root edit alone rather than a corrupted rewrite", repo.applyOps)
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "- [ ] Ship v1" {
+		t.Errorf("ops = %+v, want the edit applied verbatim", repo.applyOps)
 	}
 }
 
