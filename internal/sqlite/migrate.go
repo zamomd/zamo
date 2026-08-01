@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -93,6 +94,15 @@ END;
 `,
 }
 
+// ErrSchemaTooOld reports a database written before inline references replaced
+// semantic links. migrations[0] was rewritten in place rather than followed by
+// a second migration, so such a file already reports the current schema version
+// and no migration can bring it forward. The message names the only remedy,
+// because it is what the user reads when the app refuses to start.
+var ErrSchemaTooOld = errors.New(
+	"this database was created before inline references and cannot be upgraded: " +
+		"delete the database file to start fresh")
+
 // Migrate applies missing migrations. The current schema version is kept
 // in PRAGMA user_version.
 func Migrate(ctx context.Context, db *sql.DB) error {
@@ -102,9 +112,28 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		if done {
-			return nil
+			return checkCurrent(ctx, db)
 		}
 	}
+}
+
+// checkCurrent verifies that a database already at the current schema version
+// carries the current schema. A base from an earlier release passes the version
+// check and then opens and reads perfectly well — the tree renders — while
+// every write and every backlink query hits a missing refs table or title_key
+// column. Probing here turns that into one legible refusal at startup instead
+// of an unexplained failure on the first edit.
+func checkCurrent(ctx context.Context, db *sql.DB) error {
+	var exists bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("check schema: %w", err)
+	}
+	if !exists {
+		return ErrSchemaTooOld
+	}
+	return nil
 }
 
 // migrateStep applies at most one pending migration and reports whether

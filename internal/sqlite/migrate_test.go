@@ -1,10 +1,48 @@
 package sqlite
 
 import (
+	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
+
+// TestOpenRefusesAPreReferencesDatabase pins the one failure migrations[0]
+// being rewritten in place left behind: a base from an earlier release reports
+// the current schema version, so nothing is applied and nothing complains until
+// the first write.
+func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	// The shape of a released base: current version, no refs table.
+	if _, err := old.ExecContext(ctx, `
+		CREATE TABLE blocks (id TEXT PRIMARY KEY, parent_id TEXT, content TEXT NOT NULL);
+		PRAGMA user_version = 1`); err != nil {
+		t.Fatalf("build the old schema: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close raw database: %v", err)
+	}
+
+	db, err := Open(ctx, path)
+	if err == nil {
+		db.Close()
+		t.Fatal("Open succeeded on a database predating inline references, want a refusal")
+	}
+	if !errors.Is(err, ErrSchemaTooOld) {
+		t.Fatalf("error = %v, want ErrSchemaTooOld", err)
+	}
+	if got := err.Error(); !strings.Contains(got, "delete the database file") {
+		t.Errorf("message = %q, want the remedy spelled out for the user", got)
+	}
+}
 
 func TestMigrateConcurrentStarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "race.db")
