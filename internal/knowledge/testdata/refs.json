@@ -83,6 +83,51 @@
     "refs": [{"kind": "topic", "targetKey": "rust"}]
   },
   {
+    "name": "a three-backtick line does not close a four-backtick fence",
+    "content": "````\n[[Zig]]\n```\n[[Rust]]",
+    "refs": []
+  },
+  {
+    "name": "a closing fence may be longer than its opener",
+    "content": "```\n[[Zig]]\n`````\n[[Rust]]",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "an info string does not close a fence",
+    "content": "```\n[[Zig]]\n```go\n[[Rust]]\n```\n[[Elixir]]",
+    "refs": [{"kind": "topic", "targetKey": "elixir"}]
+  },
+  {
+    "name": "a tilde line does not close a backtick fence",
+    "content": "```\n[[Zig]]\n~~~\n[[Rust]]",
+    "refs": []
+  },
+  {
+    "name": "a three-tilde line does not close a four-tilde fence",
+    "content": "~~~~\n[[Zig]]\n~~~\n[[Rust]]",
+    "refs": []
+  },
+  {
+    "name": "a longer tilde closer ends its fence",
+    "content": "~~~\n[[Zig]]\n~~~~\n[[Rust]]",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "an info string does not close a tilde fence",
+    "content": "~~~\n[[Zig]]\n~~~ js\n[[Rust]]",
+    "refs": []
+  },
+  {
+    "name": "a tilde fence takes a backtick in its info string",
+    "content": "~~~ `js`\n[[Zig]]\n~~~\n[[Rust]]",
+    "refs": [{"kind": "topic", "targetKey": "rust"}]
+  },
+  {
+    "name": "a backtick in the info string opens no fence",
+    "content": "``` a`b\n[[Zig]]",
+    "refs": [{"kind": "topic", "targetKey": "zig"}]
+  },
+  {
     "name": "inline code is ignored",
     "content": "Write `[[Zig]]` to link. Then [[Rust]].",
     "refs": [{"kind": "topic", "targetKey": "rust"}]

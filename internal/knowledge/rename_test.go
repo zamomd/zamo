@@ -50,6 +50,48 @@ func TestRewriteTopicRef(t *testing.T) {
 			want:    "```\n[[Zig]]\n```\n[[Ziglang]]",
 		},
 		{
+			name:    "a shorter run does not close a fence, so its content stays code",
+			content: "````\n[[Zig]]\n```\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "````\n[[Zig]]\n```\n[[Zig]]",
+		},
+		{
+			name:    "rewrites after a closer longer than its opener",
+			content: "```\n[[Zig]]\n`````\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "```\n[[Zig]]\n`````\n[[Ziglang]]",
+		},
+		{
+			name:    "an info string does not close a fence",
+			content: "```\n[[Zig]]\n```go\n[[Zig]]\n```\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "```\n[[Zig]]\n```go\n[[Zig]]\n```\n[[Ziglang]]",
+		},
+		{
+			name:    "a tilde line does not close a backtick fence",
+			content: "```\n[[Zig]]\n~~~\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "```\n[[Zig]]\n~~~\n[[Zig]]",
+		},
+		{
+			name:    "tilde fences follow the same rules",
+			content: "~~~~\n[[Zig]]\n~~~\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "~~~~\n[[Zig]]\n~~~\n[[Zig]]",
+		},
+		{
+			name:    "a backtick in the info string opens no fence",
+			content: "``` a`b\n[[Zig]]",
+			oldKey:  "zig",
+			newName: "Ziglang",
+			want:    "``` a`b\n[[Ziglang]]",
+		},
+		{
 			// ParseRefs does not index a reference inside a backtick span, so
 			// there is no backlink a rewrite would keep true — only a code
 			// sample it would silently edit.

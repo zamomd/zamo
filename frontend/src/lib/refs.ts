@@ -138,25 +138,69 @@ function until(line: string, start: number, closer: string): { body: string; end
 // it.
 //
 // The single definition of a code fence: the reader drops what it reports,
-// and nothing here can drift from that.
+// and nothing here can drift from that. What matters more is that it agrees
+// with markdown-it, which is what actually renders the block: a reference the
+// reader sees as code must be code to the index too.
 function* fencedLines(content: string): Generator<[line: string, fenced: boolean]> {
-	let fence = "";
+	let char = "";
+	let open = 0;
 	for (const line of content.split("\n")) {
 		const trimmed = line.trim();
-		if (fence !== "") {
-			if (trimmed.startsWith(fence)) {
-				fence = "";
+		if (open > 0) {
+			if (closesFence(trimmed, char, open)) {
+				open = 0;
 			}
-		} else if (trimmed.startsWith("```")) {
-			fence = "```";
-		} else if (trimmed.startsWith("~~~")) {
-			fence = "~~~";
 		} else {
-			yield [line, false];
-			continue;
+			const fence = opensFence(trimmed);
+			if (fence === null) {
+				yield [line, false];
+				continue;
+			}
+			char = fence.char;
+			open = fence.n;
 		}
 		yield [line, true];
 	}
+}
+
+// opensFence reports the fence a line opens: its delimiter character and the
+// length of the run, following CommonMark. A run of at least three backticks or
+// tildes opens one; the text after the run is the info string, which for a
+// backtick fence may not itself contain a backtick, so a line of prose carrying
+// a code span never opens a block.
+function opensFence(trimmed: string): { char: string; n: number } | null {
+	const char = trimmed[0];
+	if (char !== "`" && char !== "~") {
+		return null;
+	}
+	const n = runLen(trimmed, char);
+	if (n < 3) {
+		return null;
+	}
+	if (char === "`" && trimmed.slice(n).includes("`")) {
+		return null;
+	}
+	return { char, n };
+}
+
+// closesFence reports whether a line closes the open fence: the same character,
+// a run at least as long as the opening one, and nothing after it. CommonMark
+// allows no info string on a closing fence, so ```go inside a fence is content.
+function closesFence(trimmed: string, char: string, open: number): boolean {
+	if (trimmed[0] !== char) {
+		return false;
+	}
+	const n = runLen(trimmed, char);
+	return n >= open && n === trimmed.length;
+}
+
+// runLen returns the length of the run of char starting s.
+function runLen(s: string, char: string): number {
+	let i = 0;
+	while (i < s.length && s[i] === char) {
+		i++;
+	}
+	return i;
 }
 
 // stripInlineCode replaces every closed backtick span with spaces, preserving

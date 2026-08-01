@@ -193,32 +193,75 @@ func until(line string, start int, closer string) (body string, end int, ok bool
 //
 // The single definition of a code fence: the reader drops what it reports,
 // the rewriter passes it through untouched, and neither can drift from the
-// other.
+// other. What matters more is that both agree with markdown-it, which is what
+// actually renders the block: a reference the reader sees as code must be code
+// to the index too, or a backlink points into a sample and a rename edits it.
 func fencedLines(content string) iter.Seq2[string, bool] {
 	return func(yield func(string, bool) bool) {
-		fence := ""
+		var char byte
+		open := 0
 		for line := range strings.SplitSeq(content, "\n") {
 			trimmed := strings.TrimSpace(line)
 			switch {
-			case fence != "":
-				if strings.HasPrefix(trimmed, fence) {
-					fence = ""
+			case open > 0:
+				if closesFence(trimmed, char, open) {
+					open = 0
 				}
-			case strings.HasPrefix(trimmed, "```"):
-				fence = "```"
-			case strings.HasPrefix(trimmed, "~~~"):
-				fence = "~~~"
 			default:
-				if !yield(line, false) {
-					return
+				c, n, ok := opensFence(trimmed)
+				if !ok {
+					if !yield(line, false) {
+						return
+					}
+					continue
 				}
-				continue
+				char, open = c, n
 			}
 			if !yield(line, true) {
 				return
 			}
 		}
 	}
+}
+
+// opensFence reports the fence a line opens: its delimiter character and the
+// length of the run, following CommonMark. A run of at least three backticks or
+// tildes opens one; the text after the run is the info string, which for a
+// backtick fence may not itself contain a backtick, so a line of prose carrying
+// a code span never opens a block.
+func opensFence(trimmed string) (char byte, n int, ok bool) {
+	if trimmed == "" || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return 0, 0, false
+	}
+	char = trimmed[0]
+	n = runLen(trimmed, char)
+	if n < 3 {
+		return 0, 0, false
+	}
+	if char == '`' && strings.ContainsRune(trimmed[n:], '`') {
+		return 0, 0, false
+	}
+	return char, n, true
+}
+
+// closesFence reports whether a line closes the open fence: the same character,
+// a run at least as long as the opening one, and nothing after it. CommonMark
+// allows no info string on a closing fence, so ```go inside a fence is content.
+func closesFence(trimmed string, char byte, open int) bool {
+	if trimmed == "" || trimmed[0] != char {
+		return false
+	}
+	n := runLen(trimmed, char)
+	return n >= open && n == len(trimmed)
+}
+
+// runLen returns the length of the run of char starting s.
+func runLen(s string, char byte) int {
+	i := 0
+	for i < len(s) && s[i] == char {
+		i++
+	}
+	return i
 }
 
 // stripInlineCode replaces every closed backtick span with spaces, preserving
