@@ -422,6 +422,16 @@ class BaseStore {
 		this.editCaret = offset;
 	}
 
+	// acceptRef replaces [from, to) of the open edit with text and lands the
+	// caret just past it — how RefAutocomplete completes a reference.
+	acceptRef(from: number, to: number, text: string): void {
+		const before = this.editText.slice(0, from);
+		const after = this.editText.slice(to);
+		this.editText = before + text + after;
+		this.editCaret = before.length + text.length;
+		this.editCaretNonce++;
+	}
+
 	private async writeIfChanged(id: string): Promise<boolean> {
 		const stored = findBlock(this.forest, id);
 		const text = this.editText;

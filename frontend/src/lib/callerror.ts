@@ -41,6 +41,7 @@ const readable: Record<string, string> = {
 	invalid_ops: "That change is malformed and can't be applied.",
 	empty_ops: "There's nothing to apply.",
 	invalid_rollback: "That version can't be rolled back to.",
+	duplicate_topic: "A topic with that name already exists.",
 	invalid_link: "That link isn't valid.",
 	busy: "The database is busy. Try again in a moment.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
