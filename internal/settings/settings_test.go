@@ -382,3 +382,60 @@ func TestSaveTurnsAIBackOn(t *testing.T) {
 		t.Error("the live client still refuses after AI was switched back on")
 	}
 }
+
+// The winning layer and the stored override are different questions. Once the
+// environment wins, the screen must still know what settings.toml holds, or a
+// save of an unrelated field submits "not overridden" and silently erases the
+// owner's decision — which comes back as AI switching itself on the day the
+// variable goes away.
+func TestCurrentReportsTheStoredSwitchUnderAnEnvOverride(t *testing.T) {
+	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
+
+	no := false
+	if err := m.Save(t.Context(), In{AIEnabled: &no, Provider: config.ProviderAnthropic}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("COMIND_AI_ENABLED", "true")
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.AIEnabled || v.AIEnabledOrigin != string(config.OriginEnv) {
+		t.Fatalf("effective = %v from %q, want true from env", v.AIEnabled, v.AIEnabledOrigin)
+	}
+	if v.AIEnabledOverride == nil || *v.AIEnabledOverride {
+		t.Fatalf("stored override = %v, want the saved false", v.AIEnabledOverride)
+	}
+
+	// Resubmitting what the screen was told keeps the decision on disk.
+	err = m.Save(t.Context(), In{
+		AIEnabled: v.AIEnabledOverride,
+		Provider:  config.ProviderAnthropic,
+		Model:     "claude-sonnet-5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := config.LoadOverrides(setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.AIEnabled == nil || *o.AIEnabled {
+		t.Errorf("stored ai_enabled = %v, want it kept at false", o.AIEnabled)
+	}
+}
+
+func TestCurrentReportsNoStoredSwitchWhenUntouched(t *testing.T) {
+	m, _, _ := newManager(t, "ai_enabled = false\n")
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AIEnabled {
+		t.Error("effective = true, want the declared false")
+	}
+	if v.AIEnabledOverride != nil {
+		t.Errorf("stored override = %v, want nil — config.toml declared it, not the GUI", v.AIEnabledOverride)
+	}
+}
