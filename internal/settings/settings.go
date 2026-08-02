@@ -186,6 +186,12 @@ func (m *Manager) Save(_ context.Context, in In) error {
 // provider whether it is reachable. It writes nothing and does not swap the
 // live client, so it works in declarative mode too. Like Save, it resolves
 // against the raw config.Load result.
+//
+// It answers for the submission, not for the saved policy: a submission that
+// turns AI on reaches the provider even while the stored switch is still off.
+// That is the point of checking before saving — the owner is asking whether
+// enabling it would work. A submission that leaves AI off never gets past
+// BuildClient, so nothing is sent.
 func (m *Manager) Check(ctx context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
