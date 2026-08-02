@@ -203,6 +203,143 @@ func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 	}
 }
 
+func TestAIEnabledPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		config     string
+		settings   string
+		want       bool
+		wantOrigin Origin
+	}{
+		{
+			name:       "on by default",
+			config:     "",
+			want:       true,
+			wantOrigin: OriginDefault,
+		},
+		{
+			name:       "config turns it off",
+			config:     "ai_enabled = false\n",
+			want:       false,
+			wantOrigin: OriginConfig,
+		},
+		{
+			name:       "config on is still a declared value",
+			config:     "ai_enabled = true\n",
+			want:       true,
+			wantOrigin: OriginConfig,
+		},
+		{
+			name:       "the GUI turns it off with nothing declared",
+			config:     "",
+			settings:   "ai_enabled = false\n",
+			want:       false,
+			wantOrigin: OriginGUI,
+		},
+		{
+			name:       "the GUI turns it back on over a declared off",
+			config:     "ai_enabled = false\n",
+			settings:   "ai_enabled = true\n",
+			want:       true,
+			wantOrigin: OriginGUI,
+		},
+		{
+			name:       "declarative pins the declared value",
+			config:     "declarative = true\nai_enabled = false\n",
+			settings:   "ai_enabled = true\n",
+			want:       false,
+			wantOrigin: OriginConfig,
+		},
+		{
+			name:       "the environment beats every file",
+			env:        "false",
+			config:     "ai_enabled = true\n",
+			settings:   "ai_enabled = true\n",
+			want:       false,
+			wantOrigin: OriginEnv,
+		},
+		{
+			name:       "the environment turns it on over a declared off",
+			env:        "true",
+			config:     "ai_enabled = false\n",
+			want:       true,
+			wantOrigin: OriginEnv,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(aiEnabledEnv, tt.env)
+
+			cfgPath := writeAt(t, "config.toml", tt.config)
+			setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
+			if tt.settings != "" {
+				if err := os.WriteFile(setPath, []byte(tt.settings), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			r, err := ResolveFrom(cfgPath, setPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.AIEnabled(); got != tt.want {
+				t.Errorf("AIEnabled() = %v, want %v", got, tt.want)
+			}
+			if r.Origins.AIEnabled != tt.wantOrigin {
+				t.Errorf("origin = %q, want %q", r.Origins.AIEnabled, tt.wantOrigin)
+			}
+		})
+	}
+}
+
+// An unparsable value must not silently read as "off": a typo in the
+// environment would disable AI without saying so.
+func TestAIEnabledRejectsUnparsableEnv(t *testing.T) {
+	t.Setenv(aiEnabledEnv, "yes-please")
+
+	cfgPath := writeAt(t, "config.toml", "")
+	_, err := ResolveFrom(cfgPath, filepath.Join(filepath.Dir(cfgPath), "settings.toml"))
+	if err == nil {
+		t.Fatal("resolve succeeded, want an error naming the variable")
+	}
+	if !strings.Contains(err.Error(), aiEnabledEnv) {
+		t.Errorf("error %q does not name %s", err, aiEnabledEnv)
+	}
+}
+
+// Turning AI off must not cost the user their provider configuration.
+func TestAIDisabledKeepsProviderConfig(t *testing.T) {
+	t.Setenv(aiEnabledEnv, "")
+
+	cfgPath := writeAt(t, "config.toml", `
+ai_enabled = false
+
+[llm]
+provider = "openai-compatible"
+model = "qwen2.5:3b"
+base_url = "http://localhost:11434/v1"
+`)
+
+	r, err := ResolveFrom(cfgPath, filepath.Join(filepath.Dir(cfgPath), "settings.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.AIEnabled() {
+		t.Fatal("AIEnabled() = true, want false")
+	}
+	if r.Config.LLM.Provider != ProviderOpenAICompat {
+		t.Errorf("provider = %q, want it preserved while AI is off", r.Config.LLM.Provider)
+	}
+	if r.Config.LLM.Model != "qwen2.5:3b" {
+		t.Errorf("model = %q, want it preserved while AI is off", r.Config.LLM.Model)
+	}
+	if r.Config.LLM.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("base URL = %q, want it preserved while AI is off", r.Config.LLM.BaseURL)
+	}
+}
+
 func TestNoProviderIgnoresEnvAPIKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-key")
 	t.Setenv("OPENAI_API_KEY", "")
