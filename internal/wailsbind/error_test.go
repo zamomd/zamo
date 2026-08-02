@@ -36,6 +36,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrUnreferenceableTopic, "unreferenceable_topic"},
 		{knowledge.ErrAtomicGroup, "atomic_group"},
 		{knowledge.ErrBusy, "busy"},
+		{knowledge.ErrAIDisabled, "ai_disabled"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 		{knowledge.ErrLLMBadResponse, "llm_bad_response"},
 		{settings.ErrDeclarative, "declarative"},

@@ -59,6 +59,12 @@ var (
 	// changed before the rename transaction began.
 	ErrConcurrentWrite = errors.New("block changed while preparing the rename")
 
+	// ErrAIDisabled reports a request refused because the owner switched AI
+	// off application-wide. Distinct from ErrLLMUnavailable on purpose: the
+	// provider is configured and reachable, and nothing about it needs
+	// fixing — the answer is a policy, not a failure.
+	ErrAIDisabled = errors.New("AI features are switched off")
+
 	// ErrLLMUnavailable reports that the model could not be reached:
 	// network, API key, timeout.
 	ErrLLMUnavailable = errors.New("LLM is unavailable")

@@ -31,6 +31,13 @@ type Field struct {
 // View is what the settings screen renders. It carries no key value in any
 // form — only whether one is set and where it comes from.
 type View struct {
+	// AIEnabled is the application-wide AI policy. The screen keeps showing
+	// the provider fields while it is off: the configuration is preserved, not
+	// forgotten.
+	AIEnabled bool `json:"aiEnabled"`
+	// AIEnabledOrigin uses config.Origin's string form directly.
+	AIEnabledOrigin string `json:"aiEnabledOrigin"`
+
 	Provider  Field `json:"provider"`
 	Model     Field `json:"model"`
 	BaseURL   Field `json:"baseUrl"`
@@ -45,6 +52,9 @@ type View struct {
 // dropped from the mutable layer, which is how "reset to config" is expressed.
 // An empty APIKey leaves the stored key alone; ClearAPIKey removes it.
 type In struct {
+	// AIEnabled follows the same rule as the string fields: nil means "not
+	// overridden", so config.toml keeps deciding.
+	AIEnabled   *bool  `json:"aiEnabled"`
 	Provider    string `json:"provider"`
 	Model       string `json:"model"`
 	BaseURL     string `json:"baseUrl"`
@@ -68,6 +78,12 @@ func New(holder *llm.Holder, path string) *Manager {
 // llm.KeySource). An empty provider is a supported state — AI features off —
 // and yields llm.Disabled rather than an error.
 func BuildClient(r config.Resolved) (knowledge.LLMClient, error) {
+	// The switch is read before the provider so that turning AI off reaches
+	// every LLM entry point at once, whatever is configured behind it, and so
+	// that turning it back on needs no reconfiguration.
+	if !r.AIEnabled() {
+		return llm.Off{}, nil
+	}
 	switch r.Config.LLM.Provider {
 	case "":
 		return llm.Disabled{}, nil
@@ -87,6 +103,9 @@ func (m *Manager) Current(_ context.Context) (View, error) {
 		return View{}, err
 	}
 	return View{
+		AIEnabled:       r.AIEnabled(),
+		AIEnabledOrigin: string(r.Origins.AIEnabled),
+
 		Provider:     Field{Value: r.Config.LLM.Provider, Origin: string(r.Origins.Provider)},
 		Model:        Field{Value: r.Config.LLM.Model, Origin: string(r.Origins.Model)},
 		BaseURL:      Field{Value: r.Config.LLM.BaseURL, Origin: string(r.Origins.BaseURL)},
@@ -190,7 +209,7 @@ func (m *Manager) overrides(current config.Resolved, in In) (config.Overrides, e
 		return config.Overrides{}, err
 	}
 
-	o := config.Overrides{LLM: config.LLMOverrides{
+	o := config.Overrides{AIEnabled: in.AIEnabled, LLM: config.LLMOverrides{
 		Provider: in.Provider,
 		Model:    in.Model,
 		BaseURL:  in.BaseURL,

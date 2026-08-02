@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -243,4 +244,20 @@ func (s *Server) writeBlocks(
 		ids[temp] = string(id)
 	}
 	return nil, writeOutput{GroupID: string(applied.GroupID), IDs: ids}, nil
+}
+
+// DeniedWriter is the Writer installed when the owner has switched AI off: the
+// read tools stay served while the only write path refuses. It fails closed at
+// the capability rather than by dropping the tool, so a client that already
+// knows write_blocks is told why instead of losing the tool from under it.
+type DeniedWriter struct{}
+
+var _ Writer = DeniedWriter{}
+
+// ApplyOps implements Writer by refusing every batch.
+func (DeniedWriter) ApplyOps(
+	_ context.Context, _ knowledge.WriteMeta, _ []knowledge.Op,
+) (knowledge.Applied, error) {
+	return knowledge.Applied{}, fmt.Errorf(
+		"%w: this base is in manual mode, so nothing may be written over MCP", knowledge.ErrAIDisabled)
 }
