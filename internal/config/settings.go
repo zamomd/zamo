@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
@@ -35,8 +36,17 @@ const (
 // GUI are present: an absent field means "not overridden", which is what makes
 // "reset to config" expressible at all.
 type Overrides struct {
+	// AIEnabled is the GUI's copy of the global AI policy; nil means the user
+	// never touched the switch, so config.toml keeps deciding.
+	AIEnabled *bool `toml:"ai_enabled,omitempty"`
+
 	LLM LLMOverrides `toml:"llm"`
 }
+
+// aiEnabledEnv overrides the AI policy from the environment. It is the last
+// word: a host that must guarantee no model is reached cannot be argued with
+// by either file.
+const aiEnabledEnv = "COMIND_AI_ENABLED"
 
 // LLMOverrides mirrors the settable subset of LLM. Fields are omitted when
 // empty so an untouched field never lands in the file.
@@ -51,10 +61,11 @@ type LLMOverrides struct {
 
 // Origins reports the origin of each settable field.
 type Origins struct {
-	Provider Origin
-	Model    Origin
-	BaseURL  Origin
-	APIKey   Origin
+	AIEnabled Origin
+	Provider  Origin
+	Model     Origin
+	BaseURL   Origin
+	APIKey    Origin
 }
 
 // Resolved is the effective configuration with the origin of every settable
@@ -167,9 +178,10 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	r := Resolved{Config: cfg, Overrides: o}
 	r.Origins = Origins{
-		Provider: declaredOrigin(cfg.LLM.Provider != ""),
-		Model:    declaredOrigin(cfg.LLM.Model != ""),
-		BaseURL:  declaredOrigin(cfg.LLM.BaseURL != ""),
+		AIEnabled: declaredOrigin(cfg.AIEnabled != nil),
+		Provider:  declaredOrigin(cfg.LLM.Provider != ""),
+		Model:     declaredOrigin(cfg.LLM.Model != ""),
+		BaseURL:   declaredOrigin(cfg.LLM.BaseURL != ""),
 	}
 	if o.LLM.Provider != "" {
 		r.Config.LLM.Provider = o.LLM.Provider
@@ -185,10 +197,44 @@ func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	}
 	r.Origins.APIKey = keyOrigin(cfg, o)
 
+	if o.AIEnabled != nil {
+		r.Config.AIEnabled = o.AIEnabled
+		r.Origins.AIEnabled = OriginGUI
+	}
+	env, err := aiEnabledFromEnv()
+	if err != nil {
+		return Resolved{}, err
+	}
+	if env != nil {
+		r.Config.AIEnabled = env
+		r.Origins.AIEnabled = OriginEnv
+	}
+
 	if err := ValidateProvider(r.Config.LLM.Provider); err != nil {
 		return Resolved{}, err
 	}
 	return r, nil
+}
+
+// aiEnabledFromEnv reads the environment override; nil means the variable is
+// unset. An unparsable value is an error rather than a silent "off" — a typo
+// must not disable AI without saying so.
+func aiEnabledFromEnv() (*bool, error) {
+	raw := os.Getenv(aiEnabledEnv)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s=%q: %w", aiEnabledEnv, raw, err)
+	}
+	return &v, nil
+}
+
+// AIEnabled reports the effective AI policy. Unset in every layer means on:
+// the switch exists to turn AI off deliberately, not to gate a fresh install.
+func (r Resolved) AIEnabled() bool {
+	return r.Config.AIEnabled == nil || *r.Config.AIEnabled
 }
 
 // declaredOrigin maps "config.toml set this field" to an Origin.

@@ -43,6 +43,12 @@ type Config struct {
 	// unlock itself.
 	Declarative bool `toml:"declarative"`
 
+	// AIEnabled is the application-wide AI policy; nil means unset, which
+	// reads as on. It is a pointer because an absent field and an explicit
+	// false must stay distinguishable across the merge. Read it through
+	// Resolved.AIEnabled rather than here.
+	AIEnabled *bool `toml:"ai_enabled"`
+
 	LLM LLM `toml:"llm"`
 }
 
