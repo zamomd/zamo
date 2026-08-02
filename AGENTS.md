@@ -48,6 +48,12 @@ just check          # lint + race tests + go mod tidy -diff
 
 ## Gotchas
 
+- Never edit an existing entry of `migrations` — change the schema by
+  appending a new one. An edited entry silently stops describing every
+  database that already ran it: those files keep reporting the version they
+  were stamped with, so nothing is applied and the mismatch surfaces much
+  later. `internal/sqlite/repair.go` exists to undo two such edits and is not
+  a licence for a third.
 - `go build ./...` needs `frontend/dist` to exist; the committed
   `.gitkeep` guarantees it. Don't delete it.
 - After changing `internal/wailsbind` methods, regenerate the frontend
