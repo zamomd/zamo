@@ -116,6 +116,13 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		if done {
+			// Repair before the check: a database written before
+			// migrations[0] was edited in place reports this version while
+			// missing pieces of it, and repair is what closes that gap.
+			// checkCurrent then still has the last word.
+			if err := repair(ctx, db); err != nil {
+				return err
+			}
 			return checkCurrent(ctx, db)
 		}
 	}

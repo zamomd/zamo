@@ -9,11 +9,12 @@ import (
 	"testing"
 )
 
-// TestOpenRefusesAPreReferencesDatabase pins the one failure migrations[0]
-// being rewritten in place left behind: a base from an earlier release reports
-// the current schema version, so nothing is applied and nothing complains until
-// the first write.
-func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
+// TestOpenRefusesAnUnreadableDatabase pins what is left of the old refusal.
+// A base whose blocks table this code cannot read is one it has no account of
+// — a corrupt file, or a shape from a branch that never shipped. Repair skips
+// what it cannot make sense of rather than failing on a raw driver error, and
+// the refusal the user reads is the written one, with the remedy in it.
+func TestOpenRefusesAnUnreadableDatabase(t *testing.T) {
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "old.db")
 
@@ -21,9 +22,9 @@ func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open raw database: %v", err)
 	}
-	// The shape of a released base: current version, no refs table.
+	// Current version, and a blocks table missing everything a repair reads.
 	if _, err := old.ExecContext(ctx, `
-		CREATE TABLE blocks (id TEXT PRIMARY KEY, parent_id TEXT, content TEXT NOT NULL);
+		CREATE TABLE blocks (id TEXT PRIMARY KEY);
 		PRAGMA user_version = 1`); err != nil {
 		t.Fatalf("build the old schema: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
 	db, err := Open(ctx, path)
 	if err == nil {
 		db.Close()
-		t.Fatal("Open succeeded on a database predating inline references, want a refusal")
+		t.Fatal("Open succeeded on a schema nothing can repair, want a refusal")
 	}
 	if !errors.Is(err, ErrSchemaTooOld) {
 		t.Fatalf("error = %v, want ErrSchemaTooOld", err)
@@ -44,23 +45,27 @@ func TestOpenRefusesAPreReferencesDatabase(t *testing.T) {
 	}
 }
 
-// Every in-place edit of migrations[0] leaves a shape behind: a base created
-// mid-branch reports the current version and carries part of the schema. It
-// opens and renders, then fails on the first write with an untranslated driver
-// error the user reads as "Something went wrong".
-func TestOpenRefusesAMidBranchDatabase(t *testing.T) {
+// Every in-place edit of migrations[0] left a shape behind: a base created
+// mid-branch reports the current version while carrying part of the schema.
+// Those shapes are now repaired on open rather than refused, which is the
+// whole point of the repair — the user never learns the schema moved.
+func TestOpenRepairsAMidBranchDatabase(t *testing.T) {
 	schemas := map[string]string{
-		"no refs table": `
-			CREATE TABLE blocks (id TEXT PRIMARY KEY, title_key TEXT);
-			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, atomic INTEGER NOT NULL DEFAULT 0)`,
-		"no blocks.title_key": `
-			CREATE TABLE blocks (id TEXT PRIMARY KEY);
-			CREATE TABLE refs (source_id TEXT NOT NULL);
-			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, atomic INTEGER NOT NULL DEFAULT 0)`,
 		"no revision_groups.atomic": `
-			CREATE TABLE blocks (id TEXT PRIMARY KEY, title_key TEXT);
-			CREATE TABLE refs (source_id TEXT NOT NULL);
+			CREATE TABLE blocks (
+				id TEXT PRIMARY KEY, parent_id TEXT, position INTEGER NOT NULL DEFAULT 0,
+				content TEXT NOT NULL, title_key TEXT, metadata TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+			CREATE TABLE refs (source_id TEXT NOT NULL, kind TEXT NOT NULL, target_key TEXT NOT NULL);
+			CREATE TABLE block_revisions (id TEXT PRIMARY KEY);
 			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, title TEXT NOT NULL)`,
+		"no refs table": `
+			CREATE TABLE blocks (
+				id TEXT PRIMARY KEY, parent_id TEXT, position INTEGER NOT NULL DEFAULT 0,
+				content TEXT NOT NULL, title_key TEXT, metadata TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+			CREATE TABLE block_revisions (id TEXT PRIMARY KEY);
+			CREATE TABLE revision_groups (id TEXT PRIMARY KEY, atomic INTEGER NOT NULL DEFAULT 0)`,
 	}
 	for name, schema := range schemas {
 		t.Run(name, func(t *testing.T) {
@@ -79,13 +84,10 @@ func TestOpenRefusesAMidBranchDatabase(t *testing.T) {
 			}
 
 			db, err := Open(ctx, path)
-			if err == nil {
-				db.Close()
-				t.Fatal("Open succeeded on a partial schema, want a refusal")
+			if err != nil {
+				t.Fatalf("Open on a repairable schema = %v, want it brought forward", err)
 			}
-			if !errors.Is(err, ErrSchemaTooOld) {
-				t.Fatalf("error = %v, want ErrSchemaTooOld", err)
-			}
+			db.Close()
 		})
 	}
 }

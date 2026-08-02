@@ -102,15 +102,15 @@ func openLegacy(t *testing.T, schema string, seed ...string) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.ExecContext(t.Context(), schema); err != nil {
 		t.Fatalf("create legacy schema: %v", err)
 	}
 	for _, stmt := range seed {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+	if _, err := db.ExecContext(t.Context(), "PRAGMA user_version = 1"); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -123,20 +123,20 @@ func TestMigrateRepairsBaseWithoutRefs(t *testing.T) {
 		        ('b2', 'b1', 0, 'See [[Marine navigation basics]] for the analogy', '2026-07-20', '2026-07-20'),
 		        ('b3', NULL, 1, 'Marine navigation basics', '2026-07-20', '2026-07-20')`)
 
-	if err := Migrate(context.Background(), db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	// The topic name is what a [[reference]] resolves by, so it has to be
 	// backfilled for roots and left alone for children.
 	var key sql.NullString
-	if err := db.QueryRow(`SELECT title_key FROM blocks WHERE id = 'b3'`).Scan(&key); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT title_key FROM blocks WHERE id = 'b3'`).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
 	if !key.Valid || key.String == "" {
 		t.Errorf("title_key of the root = %v, want the normalized topic name", key)
 	}
-	if err := db.QueryRow(`SELECT title_key FROM blocks WHERE id = 'b2'`).Scan(&key); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT title_key FROM blocks WHERE id = 'b2'`).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
 	if key.Valid {
@@ -146,7 +146,7 @@ func TestMigrateRepairsBaseWithoutRefs(t *testing.T) {
 	// The reference already written in the text must be found after the
 	// upgrade, or a base that reads fine still answers "no backlinks".
 	var refs int
-	if err := db.QueryRow(`SELECT count(*) FROM refs WHERE source_id = 'b2'`).Scan(&refs); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM refs WHERE source_id = 'b2'`).Scan(&refs); err != nil {
 		t.Fatal(err)
 	}
 	if refs != 1 {
@@ -161,14 +161,14 @@ func TestMigrateRepairsBaseWithoutRevisions(t *testing.T) {
 		        ('b2', 'b1', 0, 'Cancellation propagates down', '{}', '2026-07-10', '2026-07-10')`,
 		`INSERT INTO edges (source_id, target_id, kind) VALUES ('b2', 'b1', 'related')`)
 
-	if err := Migrate(context.Background(), db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	// Every block needs a head revision: blocks is a projection of one, and
 	// without it history, review and undo have nothing to stand on.
 	var revs int
-	if err := db.QueryRow(`SELECT count(*) FROM block_revisions`).Scan(&revs); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM block_revisions`).Scan(&revs); err != nil {
 		t.Fatal(err)
 	}
 	if revs != 2 {
@@ -178,7 +178,8 @@ func TestMigrateRepairsBaseWithoutRevisions(t *testing.T) {
 	// Authorship was recorded in metadata under the old model; losing it would
 	// erase the answer to "was this mine or the AI's".
 	var author string
-	if err := db.QueryRow(`SELECT author FROM block_revisions WHERE block_id = 'b1'`).Scan(&author); err != nil {
+	const authorOfB1 = `SELECT author FROM block_revisions WHERE block_id = 'b1'`
+	if err := db.QueryRowContext(t.Context(), authorOfB1).Scan(&author); err != nil {
 		t.Fatal(err)
 	}
 	if author != "ai" {
@@ -188,7 +189,8 @@ func TestMigrateRepairsBaseWithoutRevisions(t *testing.T) {
 	// Blocks that predate the upgrade are the owner's settled knowledge, not a
 	// pile of changes to review.
 	var unreviewed int
-	if err := db.QueryRow(`SELECT count(*) FROM block_revisions WHERE reviewed = 0`).Scan(&unreviewed); err != nil {
+	const unreviewedCount = `SELECT count(*) FROM block_revisions WHERE reviewed = 0`
+	if err := db.QueryRowContext(t.Context(), unreviewedCount).Scan(&unreviewed); err != nil {
 		t.Fatal(err)
 	}
 	if unreviewed != 0 {
@@ -203,12 +205,12 @@ func TestMigrateKeepsContent(t *testing.T) {
 		`INSERT INTO blocks (id, parent_id, position, content, created_at, updated_at)
 		 VALUES ('b1', NULL, 0, 'Contexts in Go', '2026-07-10', '2026-07-10')`)
 
-	if err := Migrate(context.Background(), db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	var content string
-	if err := db.QueryRow(`SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content); err != nil {
 		t.Fatal(err)
 	}
 	if content != "Contexts in Go" {
