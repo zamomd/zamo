@@ -37,6 +37,12 @@ type View struct {
 	AIEnabled bool `json:"aiEnabled"`
 	// AIEnabledOrigin uses config.Origin's string form directly.
 	AIEnabledOrigin string `json:"aiEnabledOrigin"`
+	// AIEnabledOverride is what the mutable layer holds, null when the GUI
+	// never set it. Separate from AIEnabled because the winning layer and the
+	// stored decision are different questions: the environment can win while
+	// settings.toml still holds the owner's choice, and a submission that
+	// dropped it because it could not see it would erase that choice.
+	AIEnabledOverride *bool `json:"aiEnabledOverride"`
 
 	Provider  Field `json:"provider"`
 	Model     Field `json:"model"`
@@ -103,8 +109,9 @@ func (m *Manager) Current(_ context.Context) (View, error) {
 		return View{}, err
 	}
 	return View{
-		AIEnabled:       r.AIEnabled(),
-		AIEnabledOrigin: string(r.Origins.AIEnabled),
+		AIEnabled:         r.AIEnabled(),
+		AIEnabledOrigin:   string(r.Origins.AIEnabled),
+		AIEnabledOverride: r.Overrides.AIEnabled,
 
 		Provider:     Field{Value: r.Config.LLM.Provider, Origin: string(r.Origins.Provider)},
 		Model:        Field{Value: r.Config.LLM.Model, Origin: string(r.Origins.Model)},

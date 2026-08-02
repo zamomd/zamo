@@ -3,6 +3,7 @@
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
+	import { submittedSwitch } from "./lib/settingsinput";
 	import { ai } from "./stores/ai.svelte";
 
 	let view = $state<View | null>(null);
@@ -97,10 +98,10 @@
 	// offering a control that cannot take effect.
 	let aiLocked = $derived(ro || view?.aiEnabledOrigin === "env");
 
-	// submittedAIEnabled follows the string fields' rule: null means "not
-	// overridden", so an untouched switch leaves config.toml deciding.
+	// submittedAIEnabled keys on the stored override, not on the winning layer:
+	// see submittedSwitch for why the difference matters.
 	function submittedAIEnabled(): boolean | null {
-		return aiEnabledDirty || view?.aiEnabledOrigin === "gui" ? aiEnabled : null;
+		return submittedSwitch(aiEnabledDirty, aiEnabled, view?.aiEnabledOverride ?? null);
 	}
 
 	function input(): In {

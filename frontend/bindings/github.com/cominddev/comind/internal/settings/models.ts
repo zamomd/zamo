@@ -43,6 +43,15 @@ export interface View {
      * AIEnabledOrigin uses config.Origin's string form directly.
      */
     "aiEnabledOrigin": string;
+
+    /**
+     * AIEnabledOverride is what the mutable layer holds, null when the GUI
+     * never set it. Separate from AIEnabled because the winning layer and the
+     * stored decision are different questions: the environment can win while
+     * settings.toml still holds the owner's choice, and a submission that
+     * dropped it because it could not see it would erase that choice.
+     */
+    "aiEnabledOverride": boolean | null;
     "provider": Field;
     "model": Field;
     "baseUrl": Field;
