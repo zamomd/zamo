@@ -60,64 +60,71 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	svc, holder, resolved, cleanup, err := buildService(ctx)
+	resolved, err := config.Resolve()
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-
 	settingsPath, err := config.SettingsPath()
 	if err != nil {
 		return err
 	}
 
+	// Each mode reads the AI policy the way it can learn about a change. The
+	// GUI owns the switch, so it holds one in memory and flips it on save. The
+	// MCP server has no such event and outlives its client's session, so it
+	// re-reads the files; a policy that cannot be read refuses, because the
+	// safe answer to "may the AI write" is no.
+	sw := settings.NewSwitch(resolved.AIEnabled())
+	policy := knowledge.AIPolicy(sw.AIEnabled)
+	if mode == "mcp" {
+		policy = func() bool {
+			r, err := config.Resolve()
+			return err == nil && r.AIEnabled()
+		}
+	}
+
+	svc, holder, cleanup, err := buildService(ctx, resolved, policy)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	switch mode {
 	case "gui":
-		return runGUI(svc, settings.New(holder, settingsPath))
+		return runGUI(svc, settings.New(holder, sw, settingsPath))
 	case "mcp":
-		// The policy is read once, at startup: an MCP server is spawned per
-		// client session, so a switch flipped in the GUI applies to the next
-		// one. ponytail: the ceiling is a stale long session; lifting it means
-		// watching settings.toml here, which needs a reason beyond neatness.
-		var writer mcp.Writer = svc
-		if !resolved.AIEnabled() {
-			writer = mcp.DeniedWriter{}
-		}
-		return mcp.NewServer(svc, svc, writer, version).Run(ctx)
+		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
 		return fmt.Errorf("unknown mode %q (available: gui, mcp)", mode)
 	}
 }
 
 // buildService wires the dependencies: the only place where adapters
-// meet the core. It also hands back the live client holder and the resolved
-// configuration, which the run modes need to wire up the settings screen and
-// the AI policy.
-func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, config.Resolved, func(), error) {
-	resolved, err := config.Resolve()
-	if err != nil {
-		return nil, nil, resolved, nil, err
-	}
-
+// meet the core. It also hands back the live client holder, which the GUI
+// needs to wire up the settings screen.
+func buildService(
+	ctx context.Context, resolved config.Resolved, policy knowledge.AIPolicy,
+) (*knowledge.Service, *llm.Holder, func(), error) {
 	dbPath, err := resolved.Config.DatabasePath()
 	if err != nil {
-		return nil, nil, resolved, nil, err
+		return nil, nil, nil, err
 	}
 	db, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
-		return nil, nil, resolved, nil, err
+		return nil, nil, nil, err
 	}
 
 	client, err := settings.BuildClient(resolved)
 	if err != nil {
 		db.Close()
-		return nil, nil, resolved, nil, err
+		return nil, nil, nil, err
 	}
 	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{})
-	return svc, holder, resolved, func() { db.Close() }, nil
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{},
+		knowledge.WithAIPolicy(policy))
+	return svc, holder, func() { db.Close() }, nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.

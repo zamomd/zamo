@@ -42,7 +42,7 @@ func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string)
 
 	setPath := filepath.Join(dir, "settings.toml")
 	h := llm.NewHolder(stubClient{})
-	return New(h, setPath), h, setPath
+	return New(h, NewSwitch(true), setPath), h, setPath
 }
 
 func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {

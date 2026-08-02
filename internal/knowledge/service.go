@@ -22,20 +22,42 @@ type FileWriter interface {
 	WriteFiles(ctx context.Context, dir string, files []ExportFile) error
 }
 
+// AIPolicy reports whether AI-authored writes are allowed. It is a function
+// rather than a value because the owner flips the switch while the application
+// runs, and it is asked on every write so a process that is already going —
+// including a long-lived MCP server — obeys the change without a restart.
+type AIPolicy func() bool
+
+// Option adjusts a Service at construction.
+type Option func(*Service)
+
+// WithAIPolicy installs the switch consulted before every AI-authored write.
+func WithAIPolicy(p AIPolicy) Option {
+	return func(s *Service) { s.aiAllowed = p }
+}
+
 // Service holds the product's use cases. It is the only place where the
 // logic lives; every input calls its methods.
 type Service struct {
-	llm    LLMClient
-	repo   Repository
-	newID  IDGenerator
-	writer FileWriter
+	llm       LLMClient
+	repo      Repository
+	newID     IDGenerator
+	writer    FileWriter
+	aiAllowed AIPolicy
 }
 
 // NewService wires the domain to its boundaries: the LLM provider, storage,
 // and the injected ID and file-writer sources. Nothing in the domain stamps
 // time — storage does — so no time source is injected here.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, writer: writer}
+//
+// With no AIPolicy given, AI-authored writes are allowed: that is the
+// product's default, and the switch exists to turn it off deliberately.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, opts ...Option) *Service {
+	s := &Service{llm: llm, repo: repo, newID: newID, writer: writer}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // ApplyOps validates and applies a write batch directly. Every touched
@@ -50,6 +72,11 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWr
 // path, an AI rename is expanded exactly like the owner's and inherits the
 // batch's review state.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
+	// Checked first, and here rather than at each entry point: this is the one
+	// door every write goes through, so a producer added later cannot miss it.
+	if meta.Author == AuthorAI && s.aiAllowed != nil && !s.aiAllowed() {
+		return Applied{}, fmt.Errorf("%w: this batch is AI-authored", ErrAIDisabled)
+	}
 	if strings.TrimSpace(meta.Title) == "" {
 		return Applied{}, fmt.Errorf("empty title: %w", ErrInvalidOps)
 	}

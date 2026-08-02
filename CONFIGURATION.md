@@ -41,7 +41,9 @@ ai_enabled = false
 With AI off, Comind is a local knowledge base you maintain by hand. No AI
 control is rendered anywhere in the window, nothing is sent to a provider, and
 the MCP server keeps serving its read tools (`search`, `get_subtree`,
-`topic_map`, `get_backlinks`) while refusing `write_blocks`. Everything else —
+`topic_map`, `get_backlinks`) while refusing `write_blocks` — including a
+server that was already running when you flipped the switch, because it reads
+the policy on every write rather than at startup. Everything else —
 browsing, search, editing, links, history, review, export — works unchanged.
 Blocks written earlier stay where they are, and changes still awaiting your
 review stay reviewable: switching AI off neither deletes nor accepts them.

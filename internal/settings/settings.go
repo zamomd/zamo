@@ -71,12 +71,15 @@ type In struct {
 // Manager owns the settings use case.
 type Manager struct {
 	holder *llm.Holder
+	sw     *Switch
 	path   string
 }
 
-// New wires the manager to the live client holder and the mutable layer's path.
-func New(holder *llm.Holder, path string) *Manager {
-	return &Manager{holder: holder, path: path}
+// New wires the manager to the live client holder, the live AI switch, and the
+// mutable layer's path. A nil switch is allowed for callers with no running
+// service to update.
+func New(holder *llm.Holder, sw *Switch, path string) *Manager {
+	return &Manager{holder: holder, sw: sw, path: path}
 }
 
 // BuildClient assembles a provider client from a resolved configuration. The
@@ -173,6 +176,9 @@ func (m *Manager) Save(_ context.Context, in In) error {
 		return err
 	}
 	m.holder.Set(client)
+	if m.sw != nil {
+		m.sw.Set(resolved.AIEnabled())
+	}
 	return nil
 }
 
