@@ -597,3 +597,78 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 		t.Errorf("writer was handed %+v; a read failure must write nothing", writer.files)
 	}
 }
+
+// The switch is a rule about writes, not about reaching a provider, so it is
+// enforced on the single write path: any producer of an AI-authored batch is
+// refused, whatever transport carried it.
+func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
+	off := func() bool { return false }
+
+	tests := []struct {
+		name       string
+		meta       WriteMeta
+		wantRefuse bool
+	}{
+		{
+			name:       "an AI batch is refused",
+			meta:       WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "from an agent"},
+			wantRefuse: true,
+		},
+		{
+			name:       "the owner's own batch still applies",
+			meta:       WriteMeta{Author: AuthorOwner, Source: SourceGUIEdit, Title: "by hand"},
+			wantRefuse: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepo{}
+			svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(off))
+
+			_, err := svc.ApplyOps(t.Context(), tt.meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
+			switch {
+			case tt.wantRefuse && !errors.Is(err, ErrAIDisabled):
+				t.Errorf("error = %v, want ErrAIDisabled", err)
+			case !tt.wantRefuse && err != nil:
+				t.Errorf("error = %v, want the write to go through", err)
+			}
+			if tt.wantRefuse && repo.applyCalls != 0 {
+				t.Errorf("a batch reached storage while AI is off: %d calls", repo.applyCalls)
+			}
+		})
+	}
+}
+
+// The policy is asked on every write, so flipping the switch takes effect for
+// a process that is already running — including a long-lived MCP server.
+func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
+	enabled := true
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(func() bool { return enabled }))
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
+	ops := []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}
+
+	if _, err := svc.ApplyOps(t.Context(), meta, ops); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	enabled = false
+	if _, err := svc.ApplyOps(t.Context(), meta, ops); !errors.Is(err, ErrAIDisabled) {
+		t.Errorf("second write: error = %v, want ErrAIDisabled", err)
+	}
+	if repo.applyCalls != 1 {
+		t.Errorf("storage saw %d batches, want only the one written while AI was on", repo.applyCalls)
+	}
+}
+
+// Nothing configured means the product default: AI on.
+func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
+	if _, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}); err != nil {
+		t.Errorf("error = %v, want the write to go through", err)
+	}
+}
