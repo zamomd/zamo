@@ -1,4 +1,5 @@
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { base } from "./base.svelte";
 
 // AIStore holds the application-wide AI policy for the whole window. It is one
 // store rather than a prop threaded through the views because the switch has
@@ -26,9 +27,14 @@ class AIStore {
 
 	// set records a policy the caller already knows — the settings screen after
 	// a save — so the window never disagrees with itself while a reload is in
-	// flight.
+	// flight. Switching off also drops the AI command's target: it is
+	// AI-specific state whose only clear control goes away with the command
+	// box, so leaving it would paint a row nothing can unpaint.
 	set(enabled: boolean): void {
 		this.enabled = enabled;
+		if (!enabled) {
+			base.clearScope();
+		}
 	}
 }
 

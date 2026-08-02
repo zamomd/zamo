@@ -178,7 +178,7 @@ func ResolveFrom(configPath, settingsPath string) (Resolved, error) {
 func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	r := Resolved{Config: cfg, Overrides: o}
 	r.Origins = Origins{
-		AIEnabled: declaredOrigin(cfg.AIEnabled != nil),
+		AIEnabled: declaredOrigin(cfg.AIEnabledRaw != nil),
 		Provider:  declaredOrigin(cfg.LLM.Provider != ""),
 		Model:     declaredOrigin(cfg.LLM.Model != ""),
 		BaseURL:   declaredOrigin(cfg.LLM.BaseURL != ""),
@@ -198,7 +198,7 @@ func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 	r.Origins.APIKey = keyOrigin(cfg, o)
 
 	if o.AIEnabled != nil {
-		r.Config.AIEnabled = o.AIEnabled
+		r.Config.AIEnabledRaw = o.AIEnabled
 		r.Origins.AIEnabled = OriginGUI
 	}
 	env, err := aiEnabledFromEnv()
@@ -206,7 +206,7 @@ func ResolveWith(cfg Config, o Overrides) (Resolved, error) {
 		return Resolved{}, err
 	}
 	if env != nil {
-		r.Config.AIEnabled = env
+		r.Config.AIEnabledRaw = env
 		r.Origins.AIEnabled = OriginEnv
 	}
 
@@ -234,7 +234,7 @@ func aiEnabledFromEnv() (*bool, error) {
 // AIEnabled reports the effective AI policy. Unset in every layer means on:
 // the switch exists to turn AI off deliberately, not to gate a fresh install.
 func (r Resolved) AIEnabled() bool {
-	return r.Config.AIEnabled == nil || *r.Config.AIEnabled
+	return r.Config.AIEnabledRaw == nil || *r.Config.AIEnabledRaw
 }
 
 // declaredOrigin maps "config.toml set this field" to an Origin.

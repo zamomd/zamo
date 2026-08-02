@@ -52,5 +52,5 @@ func (Off) GenerateEdit(ctx context.Context, scope []knowledge.Block, instructio
 func (Off) Ping(ctx context.Context) error { return offError() }
 
 func offError() error {
-	return fmt.Errorf("%w: turn AI back on in settings to use this", knowledge.ErrAIDisabled)
+	return fmt.Errorf("%w: no request was sent", knowledge.ErrAIDisabled)
 }
