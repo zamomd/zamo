@@ -28,6 +28,15 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	},
 }));
 
+const baseFixture = vi.hoisted(() => ({ cleared: 0 }));
+vi.mock("./base.svelte", () => ({
+	base: {
+		clearScope: () => {
+			baseFixture.cleared++;
+		},
+	},
+}));
+
 import { ai } from "./ai.svelte";
 
 describe("ai policy store", () => {
@@ -36,6 +45,7 @@ describe("ai policy store", () => {
 		settingsFixture.aiEnabledOrigin = "default";
 		settingsFixture.error = null;
 		settingsFixture.calls = 0;
+		baseFixture.cleared = 0;
 		ai.set(true);
 	});
 
@@ -65,5 +75,20 @@ describe("ai policy store", () => {
 		settingsFixture.error = new Error("boom");
 		await ai.load();
 		expect(ai.enabled).toBe(true);
+	});
+
+	// The AI command's target is AI-specific state, and the only control that
+	// clears it lives in the command box — which is gone once AI is off. Left
+	// alone it paints a row that nothing can unpaint.
+	it("clears the AI command target when AI goes off", () => {
+		baseFixture.cleared = 0;
+		ai.set(false);
+		expect(baseFixture.cleared).toBe(1);
+	});
+
+	it("does not clear the target when AI stays on", () => {
+		baseFixture.cleared = 0;
+		ai.set(true);
+		expect(baseFixture.cleared).toBe(0);
 	});
 });
