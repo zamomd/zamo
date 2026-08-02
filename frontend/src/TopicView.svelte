@@ -3,6 +3,7 @@
 	import CommandBox from "./lib/CommandBox.svelte";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import TreeNode from "./lib/TreeNode.svelte";
+	import { ai } from "./stores/ai.svelte";
 	import { base } from "./stores/base.svelte";
 
 	const tree = $derived(base.viewRoot);
@@ -10,7 +11,13 @@
 
 <section>
 	{#if tree === null}
-		<p class="empty">No topic selected. Ask the AI below to expand one.</p>
+		<p class="empty">
+			{#if ai.enabled}
+				No topic selected. Ask the AI below to expand one.
+			{:else}
+				No topic selected. Pick one in the sidebar, or add a topic there to start writing.
+			{/if}
+		</p>
 	{:else}
 		<Breadcrumbs />
 		<div class="tree">
@@ -22,7 +29,9 @@
 
 	<footer>
 		<StatusLine status={base.status} error={base.error} />
-		<CommandBox />
+		{#if ai.enabled}
+			<CommandBox />
+		{/if}
 	</footer>
 </section>
 

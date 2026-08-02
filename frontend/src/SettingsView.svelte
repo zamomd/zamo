@@ -3,8 +3,11 @@
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
+	import { ai } from "./stores/ai.svelte";
 
 	let view = $state<View | null>(null);
+	let aiEnabled = $state(true);
+	let aiEnabledDirty = $state(false);
 	let provider = $state("");
 	let model = $state("");
 	let baseUrl = $state("");
@@ -20,15 +23,21 @@
 	let resetConfirming = $state(false);
 
 	let ro = $derived(view?.declarative ?? false);
-	let aiOff = $derived(provider === "");
+	// Two distinct states, deliberately not merged: the switch is the owner's
+	// policy, while no provider is an unfinished configuration. Turning AI off
+	// keeps the provider fields on screen, because it keeps them in the file.
+	let noProvider = $derived(provider === "");
 
 	async function load(): Promise<void> {
 		const v = await App.Settings();
 		view = v;
+		aiEnabled = v.aiEnabled;
+		ai.set(v.aiEnabled);
 		provider = v.provider.value;
 		model = v.model.value;
 		baseUrl = v.baseUrl.value;
 		apiKey = "";
+		aiEnabledDirty = false;
 		providerDirty = false;
 		modelDirty = false;
 		baseUrlDirty = false;
@@ -65,20 +74,57 @@
 		if (provider === "" && view.provider.origin === "config" && view.provider.value !== "") {
 			return (
 				`config.toml declares "${view.provider.value}" here - saving with no provider selected ` +
-				"falls back to that value instead of turning AI off. Edit config.toml directly to disable AI."
+				"falls back to that value instead. Use the switch above to turn AI off."
 			);
 		}
 		return "";
 	});
 
+	let aiEnabledNote = $derived.by((): string => {
+		if (!view) return "";
+		switch (view.aiEnabledOrigin) {
+			case "env":
+				return "set from COMIND_AI_ENABLED; it cannot be changed here";
+			case "config":
+				return "set in config.toml";
+			case "gui":
+				return "overridden here";
+			default:
+				return "";
+		}
+	});
+	// The environment wins over both files, so offering the switch would be
+	// offering a control that cannot take effect.
+	let aiLocked = $derived(ro || view?.aiEnabledOrigin === "env");
+
+	// submittedAIEnabled follows the string fields' rule: null means "not
+	// overridden", so an untouched switch leaves config.toml deciding.
+	function submittedAIEnabled(): boolean | null {
+		return aiEnabledDirty || view?.aiEnabledOrigin === "gui" ? aiEnabled : null;
+	}
+
 	function input(): In {
 		const submittedProvider = providerDirty || view?.provider.origin === "gui" ? provider : "";
-		if (aiOff) {
-			return { provider: submittedProvider, model: "", baseUrl: "", apiKey: "", clearApiKey: false };
+		if (noProvider) {
+			return {
+				aiEnabled: submittedAIEnabled(),
+				provider: submittedProvider,
+				model: "",
+				baseUrl: "",
+				apiKey: "",
+				clearApiKey: false,
+			};
 		}
 		const submittedModel = modelDirty || view?.model.origin === "gui" ? model : "";
 		const submittedBaseUrl = baseUrlDirty || view?.baseUrl.origin === "gui" ? baseUrl : "";
-		return { provider: submittedProvider, model: submittedModel, baseUrl: submittedBaseUrl, apiKey, clearApiKey: false };
+		return {
+			aiEnabled: submittedAIEnabled(),
+			provider: submittedProvider,
+			model: submittedModel,
+			baseUrl: submittedBaseUrl,
+			apiKey,
+			clearApiKey: false,
+		};
 	}
 
 	// submit runs one settings action, reporting done on success. Every action
@@ -110,8 +156,7 @@
 
 	function clearKey(): Promise<void> {
 		return submit(async () => {
-			const { provider: p, model: m, baseUrl: b } = input();
-			await App.SaveSettings({ provider: p, model: m, baseUrl: b, apiKey: "", clearApiKey: true });
+			await App.SaveSettings({ ...input(), apiKey: "", clearApiKey: true });
 			await load();
 		}, "GUI key override removed.");
 	}
@@ -127,7 +172,14 @@
 	function confirmReset(): Promise<void> {
 		resetConfirming = false;
 		return submit(async () => {
-			await App.SaveSettings({ provider: "", model: "", baseUrl: "", apiKey: "", clearApiKey: true });
+			await App.SaveSettings({
+				aiEnabled: null,
+				provider: "",
+				model: "",
+				baseUrl: "",
+				apiKey: "",
+				clearApiKey: true,
+			});
 			await load();
 		}, "Reset to config.toml.");
 	}
@@ -147,10 +199,29 @@
 			</p>
 		{/if}
 
+		<div class="field switch">
+			<label class="switch-label">
+				<input
+					type="checkbox"
+					bind:checked={aiEnabled}
+					disabled={aiLocked}
+					onchange={() => (aiEnabledDirty = true)}
+				/>
+				Enable AI features
+			</label>
+			{#if aiEnabledNote !== ""}<small>{aiEnabledNote}</small>{/if}
+			{#if !aiEnabled}
+				<small>
+					Every AI control is hidden and nothing is sent to a provider. Blocks written earlier stay
+					where they are and unreviewed ones stay reviewable. Your provider settings below are kept.
+				</small>
+			{/if}
+		</div>
+
 		<label>
 			Provider
 			<select bind:value={provider} disabled={ro} onchange={() => (providerDirty = true)}>
-				<option value="">None — AI features off</option>
+				<option value="">None — no provider configured</option>
 				<option value="anthropic">Anthropic</option>
 				<option value="openai-compatible">OpenAI-compatible</option>
 			</select>
@@ -158,10 +229,10 @@
 			{#if providerFallbackNote !== ""}<small class="warning">{providerFallbackNote}</small>{/if}
 		</label>
 
-		{#if aiOff}
+		{#if noProvider}
 			<p class="hint">
-				AI features are off. Choose a provider above to configure a model, an API key, and (for
-				OpenAI-compatible) a base URL. There is nothing to check while no provider is selected.
+				No provider is configured. Choose one above to set a model, an API key, and (for
+				OpenAI-compatible) a base URL. There is nothing to check until then.
 			</p>
 		{:else}
 			<label>
@@ -206,7 +277,7 @@
 
 		<div class="actions">
 			<button type="button" onclick={save} disabled={ro || busy}>Save</button>
-			<button type="button" onclick={check} disabled={busy || aiOff}>Check</button>
+			<button type="button" onclick={check} disabled={busy || noProvider || !aiEnabled}>Check</button>
 			{#if !resetConfirming}
 				<button type="button" onclick={requestReset} disabled={ro || busy}>
 					Reset to config (clears key too)
@@ -238,6 +309,22 @@
 	}
 	.field-label {
 		margin-bottom: 0.25rem;
+	}
+	/* The switch governs every other field on the screen, so it is separated
+	   from them rather than sitting in the same run of inputs. */
+	.switch {
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid var(--hairline);
+	}
+	.switch-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.25rem;
+	}
+	.switch-label input {
+		width: auto;
+		margin: 0;
 	}
 	small {
 		display: block;
