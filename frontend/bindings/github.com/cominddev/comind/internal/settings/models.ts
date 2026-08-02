@@ -15,6 +15,11 @@ export interface Field {
  * An empty APIKey leaves the stored key alone; ClearAPIKey removes it.
  */
 export interface In {
+    /**
+     * AIEnabled follows the same rule as the string fields: nil means "not
+     * overridden", so config.toml keeps deciding.
+     */
+    "aiEnabled": boolean | null;
     "provider": string;
     "model": string;
     "baseUrl": string;
@@ -27,6 +32,17 @@ export interface In {
  * form — only whether one is set and where it comes from.
  */
 export interface View {
+    /**
+     * AIEnabled is the application-wide AI policy. The screen keeps showing
+     * the provider fields while it is off: the configuration is preserved, not
+     * forgotten.
+     */
+    "aiEnabled": boolean;
+
+    /**
+     * AIEnabledOrigin uses config.Origin's string form directly.
+     */
+    "aiEnabledOrigin": string;
     "provider": Field;
     "model": Field;
     "baseUrl": Field;
