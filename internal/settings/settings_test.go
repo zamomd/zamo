@@ -262,3 +262,123 @@ func TestCheckDoesNotSave(t *testing.T) {
 		t.Error("Check wrote settings.toml; it must not save")
 	}
 }
+
+// off reports whether the client refuses to reach a model because AI is
+// switched off, as opposed to any other unavailability.
+func off(t *testing.T, c knowledge.LLMClient) bool {
+	t.Helper()
+	_, err := c.GenerateTree(t.Context(), "topic", "")
+	return errors.Is(err, knowledge.ErrAIDisabled)
+}
+
+func TestBuildClientRefusesWhileAIIsOff(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantOff bool
+	}{
+		{
+			name:    "anthropic stays configured but unreachable",
+			config:  "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n",
+			wantOff: true,
+		},
+		{
+			name:    "openai-compatible stays configured but unreachable",
+			config:  "ai_enabled = false\n\n[llm]\nprovider = \"openai-compatible\"\nbase_url = \"http://localhost:11434/v1\"\n",
+			wantOff: true,
+		},
+		{
+			name:    "no provider is a different state, not this one",
+			config:  "",
+			wantOff: false,
+		},
+		{
+			name:    "AI on with a provider builds a real client",
+			config:  "ai_enabled = true\n\n[llm]\nprovider = \"anthropic\"\n",
+			wantOff: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			t.Setenv("OPENAI_API_KEY", "")
+			t.Setenv("COMIND_AI_ENABLED", "")
+
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.toml")
+			if err := os.WriteFile(cfgPath, []byte(tt.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r, err := config.ResolveFrom(cfgPath, filepath.Join(dir, "settings.toml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := BuildClient(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := off(t, c); got != tt.wantOff {
+				t.Errorf("client refuses with ErrAIDisabled = %v, want %v", got, tt.wantOff)
+			}
+		})
+	}
+}
+
+func TestCurrentReportsTheAIPolicy(t *testing.T) {
+	m, _, _ := newManager(t, "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n")
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.AIEnabled {
+		t.Error("AIEnabled = true, want false")
+	}
+	if v.AIEnabledOrigin != string(config.OriginConfig) {
+		t.Errorf("origin = %q, want config", v.AIEnabledOrigin)
+	}
+	if v.Provider.Value != config.ProviderAnthropic {
+		t.Errorf("provider = %q, want it still reported while AI is off", v.Provider.Value)
+	}
+}
+
+func TestSaveTurnsAIOffLiveAndKeepsTheProvider(t *testing.T) {
+	m, h, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
+
+	no := false
+	if err := m.Save(t.Context(), In{AIEnabled: &no}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !off(t, h) {
+		t.Error("the live client still reaches a model after AI was switched off")
+	}
+
+	o, err := config.LoadOverrides(setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.AIEnabled == nil || *o.AIEnabled {
+		t.Errorf("saved ai_enabled = %v, want false", o.AIEnabled)
+	}
+
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Provider.Value != config.ProviderAnthropic {
+		t.Errorf("provider = %q, want the declared provider kept while AI is off", v.Provider.Value)
+	}
+}
+
+func TestSaveTurnsAIBackOn(t *testing.T) {
+	m, h, _ := newManager(t, "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n")
+
+	yes := true
+	if err := m.Save(t.Context(), In{AIEnabled: &yes, Provider: config.ProviderAnthropic}); err != nil {
+		t.Fatal(err)
+	}
+	if off(t, h) {
+		t.Error("the live client still refuses after AI was switched back on")
+	}
+}
