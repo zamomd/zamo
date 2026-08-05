@@ -41,6 +41,24 @@ describe("TreeNode", () => {
 		expect(content?.querySelector("strong")).not.toBeNull();
 	});
 
+	// The row's lanes are what reserve horizontal space beside the text. jsdom
+	// lays nothing out, so the width itself is unassertable here; the lane count
+	// is the structural fact behind it, and it must not change when a row enters
+	// edit mode — a narrower or wider text column rewraps the block under the
+	// pointer, which is what lands the caret on the wrong visual line.
+	it("keeps the same lanes beside the text in both states", async () => {
+		base.clearEdit();
+		const { container } = render(TreeNode, {
+			node: { block: block({ Content: "a claim long enough to wrap" }), children: [] },
+		});
+		const rendered = container.querySelectorAll(".gutter").length;
+		await fireEvent.click(container.querySelector(".content") as Element);
+		await waitFor(() => {
+			expect(container.querySelector("textarea")).not.toBeNull();
+		});
+		expect(container.querySelectorAll(".gutter").length).toBe(rendered);
+	});
+
 	it("swaps the rendered row for a textarea on click", async () => {
 		base.clearEdit();
 		const { container } = render(TreeNode, {
