@@ -9,11 +9,22 @@ vi.mock("@wailsio/runtime", () => ({
 	Events: { On: () => () => {} },
 	Browser: { OpenURL: () => {} },
 }));
+const backend = vi.hoisted(() => ({
+	subtree: [] as unknown[],
+	writeGate: null as Promise<void> | null,
+	written: [] as string[],
+}));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
 	App: {
 		TopicMap: async () => [],
-		GetSubtree: async () => [],
-		EditBlockContent: async () => {},
+		GetSubtree: async () => backend.subtree,
+		Backlinks: async () => [],
+		EditBlockContent: async (id: string) => {
+			if (backend.writeGate !== null) {
+				await backend.writeGate;
+			}
+			backend.written.push(id);
+		},
 	},
 }));
 
@@ -72,4 +83,63 @@ describe("TreeNode", () => {
 		});
 		expect(container.querySelector(".content")).toBeNull();
 	});
+
+	// Clicking from an edited block into another one commits the first, and that
+	// commit is a round trip to the backend. The offset is measured against the
+	// DOM as it stood at the click; nothing between there and the mounted
+	// textarea may drop or recompute it.
+	it("carries the clicked offset into the next block across an async commit", async () => {
+		const root = block({ ID: "root", ParentID: "", Content: "Topic" });
+		const first = block({ ID: "b1", Content: "first block" });
+		const second = block({ ID: "b2", Position: 2, Content: "second block, wrapping over lines" });
+		backend.subtree = [root, first, second];
+		backend.written = [];
+		base.forest = [
+			{
+				block: root,
+				children: [
+					{ block: first, children: [] },
+					{ block: second, children: [] },
+				],
+			},
+		];
+		base.selectedTopicID = "root";
+
+		await base.startEdit(first, 0);
+		base.editText = "first block, edited";
+
+		const { container } = render(TreeNode, { node: { block: second, children: [] } });
+		const content = container.querySelector(".content") as HTMLElement;
+		const text = content.firstChild?.firstChild as Node;
+		let release: () => void = () => {};
+		backend.writeGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		stubCaretFromPoint(text, 7);
+
+		await fireEvent.click(content);
+		expect(base.editingID).toBe("b1"); // the commit is still in flight
+
+		release();
+		await waitFor(() => {
+			expect(base.editingID).toBe("b2");
+		});
+		expect(backend.written).toEqual(["b1"]);
+		expect(base.editCaret).toBe(7);
+		backend.writeGate = null;
+	});
 });
+
+// stubCaretFromPoint makes the DOM's hit test land on a known text position:
+// jsdom implements no caretRangeFromPoint, and without one the click falls back
+// to the end of the block, which is precisely the answer that would hide a lost
+// offset.
+function stubCaretFromPoint(node: Node, offset: number): void {
+	const stub = (): Range => {
+		const range = document.createRange();
+		range.setStart(node, offset);
+		range.collapse(true);
+		return range;
+	};
+	(document as Document & { caretRangeFromPoint?: () => Range }).caretRangeFromPoint = stub;
+}
