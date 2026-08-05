@@ -8,7 +8,7 @@
 	import { createRefSearch } from "./refsearch";
 	import { refLabel, type Trigger, topicReferenceable } from "./reftrigger";
 
-	let { trigger, target }: { trigger: Trigger; target: HTMLTextAreaElement | undefined } = $props();
+	let { trigger, target }: { trigger: Trigger; target: HTMLTextAreaElement | null } = $props();
 
 	type Entry =
 		| { kind: "topic"; id: string; label: string }

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
@@ -27,7 +28,7 @@ function block(overrides: Partial<Block> = {}): Block {
 		UpdatedAt: "",
 		Unreviewed: false,
 		...overrides,
-	} as Block;
+	};
 }
 
 describe("TreeNode", () => {
