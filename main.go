@@ -119,7 +119,10 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
-			application.NewService(bind),
+			// Registered through wailsbind.Service so the bound methods carry
+			// the error marshaler: the option below governs the application's
+			// own errors and never reaches a service's methods.
+			wailsbind.Service(bind),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the

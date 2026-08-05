@@ -10,7 +10,7 @@ import "github.com/wailsapp/wails/v3/pkg/application"
 // marshaler. That default renders a wrapped error as an empty JSON object, and
 // every mapped message in the frontend degrades to the generic fallback.
 func ServiceOptions() application.ServiceOptions {
-	return application.ServiceOptions{}
+	return application.ServiceOptions{MarshalError: MarshalError}
 }
 
 // Service wraps the App for registration with the Wails application.
