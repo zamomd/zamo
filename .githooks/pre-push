@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# The whole branch against main, which catches commits made with --no-verify
+# or by a tool that skipped the pre-commit hook.
+exec "$(git rev-parse --show-toplevel)/scripts/comment-hygiene.sh" --branch

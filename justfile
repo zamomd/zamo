@@ -57,6 +57,17 @@ changelog:
 check: lint web-lint english-only test web-test
     go mod tidy -diff
 
+# comments a change adds: BLOCK on a note about what the code used to be,
+# WARN on contrast phrasing and long blocks. Local only — CI does not run it.
+comments *args:
+    ./scripts/comment-hygiene.sh {{args}}
+
+# install the local hooks: pre-commit on the staged change, pre-push on the
+# branch. Writes core.hooksPath into .git/config; git config --unset undoes it.
+hooks:
+    git config core.hooksPath .githooks
+    @echo "hooks installed (bypass a single run with --no-verify)"
+
 # per-package coverage (atomic mode: the only one correct under -race)
 cover:
     go test -race -covermode=atomic -coverprofile=cover.out ./...

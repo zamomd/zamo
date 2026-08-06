@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Judges the comments in what is about to be committed. Install with
+# `just hooks`; bypass with `git commit --no-verify` when you must.
+exec "$(git rev-parse --show-toplevel)/scripts/comment-hygiene.sh"

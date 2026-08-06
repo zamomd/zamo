@@ -28,7 +28,12 @@ just check          # lint + race tests + go mod tidy -diff
   comments are only for non-obvious invariants, constraints, or safety reasons.
   Never record implementation history, rejected approaches, task references,
   debugging evidence, or the steps used to reach a solution. Do not narrate
-  code or duplicate assertions and test names.
+  code or duplicate assertions and test names. Before committing, read your
+  own diff and delete the comments that describe the change instead of the
+  code. `just hooks` installs a local check that stops the phrasings which
+  only ever mean history ("used to be", "previously"), and flags contrast
+  phrasing ("X, not Y") and long blocks for you to judge; it is a local gate,
+  not part of CI.
 - Go 1.26 idioms: `errors.AsType`, `wg.Go`, `t.Context()`, `omitzero`,
   `for i := range n`, `new(expr)`.
 - `context.Context` is the first argument of every method that crosses
