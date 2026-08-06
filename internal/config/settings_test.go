@@ -16,6 +16,8 @@ func writeAt(t *testing.T, name, content string) string {
 	return path
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestResolveOverridesBeatConfig(t *testing.T) {
 	cfgPath := writeAt(t, "config.toml", `
 [llm]
@@ -42,6 +44,47 @@ model = "claude-sonnet-4-5"
 	}
 	if r.Origins.Provider != OriginConfig {
 		t.Errorf("provider origin = %q, want %q", r.Origins.Provider, OriginConfig)
+	}
+}
+
+func TestResolveExplicitEmptyOverrideBeatsConfig(t *testing.T) {
+	cfgPath := writeAt(t, "config.toml", "[llm]\nmodel = \"declared-model\"\n")
+	setPath := writeAt(t, "settings.toml", "[llm]\nmodel = \"\"\n")
+
+	r, err := ResolveFrom(cfgPath, setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Config.LLM.Model != "" || r.Origins.Model != OriginGUI {
+		t.Errorf("model = %q from %q, want an explicit empty GUI override", r.Config.LLM.Model, r.Origins.Model)
+	}
+}
+
+func TestSchemaEnvironmentName(t *testing.T) {
+	if got := environmentName("llm.base-url"); got != "COMIND_LLM_BASE_URL" {
+		t.Errorf("envName = %q, want COMIND_LLM_BASE_URL", got)
+	}
+}
+
+func TestSchemaResolvesLLMEnvironment(t *testing.T) {
+	t.Setenv("COMIND_LLM_PROVIDER", ProviderOpenAICompat)
+	t.Setenv("COMIND_LLM_MODEL", "env-model")
+	t.Setenv("COMIND_LLM_BASE_URL", "http://localhost:11434/v1")
+
+	r, err := ResolveWith(Config{LLM: LLM{Provider: ProviderAnthropic, Model: "config-model"}}, Overrides{
+		LLM: LLMOverrides{Model: ptr("gui-model")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Config.LLM.Provider != ProviderOpenAICompat || r.Origins.Provider != OriginEnv {
+		t.Errorf("provider = %q from %q", r.Config.LLM.Provider, r.Origins.Provider)
+	}
+	if r.Config.LLM.Model != "env-model" || r.Origins.Model != OriginEnv {
+		t.Errorf("model = %q from %q", r.Config.LLM.Model, r.Origins.Model)
+	}
+	if r.Config.LLM.BaseURL != "http://localhost:11434/v1" || r.Origins.BaseURL != OriginEnv {
+		t.Errorf("base URL = %q from %q", r.Config.LLM.BaseURL, r.Origins.BaseURL)
 	}
 }
 
@@ -167,7 +210,7 @@ func TestAPIKeyValueIsReadLazily(t *testing.T) {
 
 func TestSaveOverridesRoundTripsAndIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.toml")
-	o := Overrides{LLM: LLMOverrides{Model: "qwen3", APIKey: "secret"}}
+	o := Overrides{LLM: LLMOverrides{Model: ptr("qwen3"), APIKey: "secret"}}
 	if err := SaveOverrides(path, o); err != nil {
 		t.Fatal(err)
 	}
@@ -184,14 +227,15 @@ func TestSaveOverridesRoundTripsAndIsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != o {
+	if got.AIEnabled != nil || got.LLM.Provider != nil || got.LLM.BaseURL != nil ||
+		got.LLM.Model == nil || *got.LLM.Model != "qwen3" || got.LLM.APIKey != "secret" {
 		t.Errorf("round trip = %+v, want %+v", got, o)
 	}
 }
 
 func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.toml")
-	if err := SaveOverrides(path, Overrides{LLM: LLMOverrides{Model: "qwen3"}}); err != nil {
+	if err := SaveOverrides(path, Overrides{LLM: LLMOverrides{Model: ptr("qwen3")}}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -270,7 +314,7 @@ func TestAIEnabledPrecedence(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(aiEnabledEnv, tt.env)
+			t.Setenv(environmentName("ai_enabled"), tt.env)
 
 			cfgPath := writeAt(t, "config.toml", tt.config)
 			setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
@@ -297,21 +341,22 @@ func TestAIEnabledPrecedence(t *testing.T) {
 // An unparsable value must not silently read as "off": a typo in the
 // environment would disable AI without saying so.
 func TestAIEnabledRejectsUnparsableEnv(t *testing.T) {
-	t.Setenv(aiEnabledEnv, "yes-please")
+	aiEnv := environmentName("ai_enabled")
+	t.Setenv(aiEnv, "yes-please")
 
 	cfgPath := writeAt(t, "config.toml", "")
 	_, err := ResolveFrom(cfgPath, filepath.Join(filepath.Dir(cfgPath), "settings.toml"))
 	if err == nil {
 		t.Fatal("resolve succeeded, want an error naming the variable")
 	}
-	if !strings.Contains(err.Error(), aiEnabledEnv) {
-		t.Errorf("error %q does not name %s", err, aiEnabledEnv)
+	if !strings.Contains(err.Error(), aiEnv) {
+		t.Errorf("error %q does not name %s", err, aiEnv)
 	}
 }
 
 // Turning AI off must not cost the user their provider configuration.
 func TestAIDisabledKeepsProviderConfig(t *testing.T) {
-	t.Setenv(aiEnabledEnv, "")
+	t.Setenv(environmentName("ai_enabled"), "")
 
 	cfgPath := writeAt(t, "config.toml", `
 ai_enabled = false

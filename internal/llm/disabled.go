@@ -29,28 +29,3 @@ func (Disabled) GenerateEdit(ctx context.Context, scope []knowledge.Block, instr
 func (Disabled) Ping(ctx context.Context) error {
 	return fmt.Errorf("%w: no LLM provider configured", knowledge.ErrLLMUnavailable)
 }
-
-// Off is a null-object knowledge.LLMClient for the owner's application-wide
-// "no AI" policy. It is a separate state from Disabled: the provider stays
-// configured and reachable, so the answer names the switch rather than sending
-// the owner off to fix credentials that are not broken.
-type Off struct{}
-
-var _ knowledge.LLMClient = Off{}
-
-// GenerateTree implements knowledge.LLMClient.
-func (Off) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
-	return nil, offError()
-}
-
-// GenerateEdit implements knowledge.LLMClient.
-func (Off) GenerateEdit(ctx context.Context, scope []knowledge.Block, instruction string) ([]knowledge.Op, error) {
-	return nil, offError()
-}
-
-// Ping implements knowledge.LLMClient.
-func (Off) Ping(ctx context.Context) error { return offError() }
-
-func offError() error {
-	return fmt.Errorf("%w: no request was sent", knowledge.ErrAIDisabled)
-}

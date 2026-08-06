@@ -8,9 +8,9 @@ only the fields you actually changed land there.
 
 ## Where the files live
 
-| | Linux | macOS | Windows |
-|---|---|---|---|
-| `config.toml` | `$XDG_CONFIG_HOME/comind/` (default `~/.config/comind/`) | `~/Library/Application Support/comind/` | `%AppData%\comind\` |
+|                              | Linux                                                       | macOS                                   | Windows             |
+|------------------------------|-------------------------------------------------------------|-----------------------------------------|---------------------|
+| `config.toml`                | `$XDG_CONFIG_HOME/comind/` (default `~/.config/comind/`)    | `~/Library/Application Support/comind/` | `%AppData%\comind\` |
 | `settings.toml`, `comind.db` | `$XDG_DATA_HOME/comind/` (default `~/.local/share/comind/`) | `~/Library/Application Support/comind/` | `%AppData%\comind\` |
 
 `settings.toml` is written with mode `0600` because it may hold an API key.
@@ -102,13 +102,16 @@ env-provided and will not let the GUI override it.
 
 ## Environment variables
 
-| Variable | Effect |
-|---|---|
-| `COMIND_CONFIG` | path to `config.toml` |
-| `COMIND_DB` | path to the SQLite database |
-| `COMIND_AI_ENABLED` | `true` / `false`; overrides both files |
-| `ANTHROPIC_API_KEY` | key for the `anthropic` provider |
-| `OPENAI_API_KEY` | key for the `openai-compatible` provider |
+| Variable              | Effect                                           |
+|-----------------------|--------------------------------------------------|
+| `COMIND_CONFIG`       | path to `config.toml`                            |
+| `COMIND_DB`           | path to the SQLite database                      |
+| `COMIND_AI_ENABLED`   | `true` / `false`; overrides both files           |
+| `COMIND_LLM_PROVIDER` | LLM provider; overrides both files               |
+| `COMIND_LLM_MODEL`    | model name; overrides both files                 |
+| `COMIND_LLM_BASE_URL` | OpenAI-compatible endpoint; overrides both files |
+| `ANTHROPIC_API_KEY`   | key for the `anthropic` provider                 |
+| `OPENAI_API_KEY`      | key for the `openai-compatible` provider         |
 
 An unparsable `COMIND_AI_ENABLED` is an error rather than a silent "off": a
 typo must not disable AI without saying so.

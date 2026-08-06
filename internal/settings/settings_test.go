@@ -18,6 +18,8 @@ import (
 
 type stubClient struct{}
 
+func ptr[T any](v T) *T { return &v }
+
 func (stubClient) GenerateTree(_ context.Context, _, _ string) ([]knowledge.Op, error) {
 	return nil, nil
 }
@@ -42,7 +44,7 @@ func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string)
 
 	setPath := filepath.Join(dir, "settings.toml")
 	h := llm.NewHolder(stubClient{})
-	return New(h, NewSwitch(true), setPath), h, setPath
+	return New(h, NewPolicy(true), setPath), h, setPath
 }
 
 func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
@@ -57,9 +59,9 @@ func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
 	m, h, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
 
 	err := m.Save(t.Context(), In{
-		Provider: config.ProviderOpenAICompat,
-		Model:    "qwen3",
-		BaseURL:  srv.URL + "/v1",
+		Provider: ptr(config.ProviderOpenAICompat),
+		Model:    ptr("qwen3"),
+		BaseURL:  ptr(srv.URL + "/v1"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,8 +71,8 @@ func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.LLM.Model != "qwen3" {
-		t.Errorf("saved model = %q, want qwen3", o.LLM.Model)
+	if o.LLM.Model == nil || *o.LLM.Model != "qwen3" {
+		t.Errorf("saved model = %v, want qwen3", o.LLM.Model)
 	}
 
 	if err := h.Ping(t.Context()); err != nil {
@@ -91,7 +93,7 @@ func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
 
 func TestSaveRejectsUnknownProvider(t *testing.T) {
 	m, _, setPath := newManager(t, "")
-	err := m.Save(t.Context(), In{Provider: "gemini"})
+	err := m.Save(t.Context(), In{Provider: ptr("gemini")})
 	if err == nil {
 		t.Fatal("Save = nil, want an error for an unknown provider")
 	}
@@ -102,7 +104,7 @@ func TestSaveRejectsUnknownProvider(t *testing.T) {
 
 func TestSaveInDeclarativeModeIsRefused(t *testing.T) {
 	m, _, setPath := newManager(t, "declarative = true\n")
-	err := m.Save(t.Context(), In{Model: "qwen3"})
+	err := m.Save(t.Context(), In{Model: ptr("qwen3")})
 	if !errors.Is(err, ErrDeclarative) {
 		t.Fatalf("error = %v, want ErrDeclarative", err)
 	}
@@ -117,18 +119,18 @@ func TestCurrentNeverExposesTheKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.APIKeySet {
+	if !v.APIKey.Set {
 		t.Error("APIKeySet = false, want true")
 	}
-	if v.APIKeyOrigin != string(config.OriginConfig) {
-		t.Errorf("key origin = %q, want config", v.APIKeyOrigin)
+	if v.APIKey.Origin != string(config.OriginConfig) {
+		t.Errorf("key origin = %q, want config", v.APIKey.Origin)
 	}
 }
 
 func TestSaveResetToConfigSwapsLiveClient(t *testing.T) {
 	m, h, _ := newManager(t, "")
 
-	if err := m.Save(t.Context(), In{Provider: config.ProviderAnthropic}); err != nil {
+	if err := m.Save(t.Context(), In{Provider: ptr(config.ProviderAnthropic)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Save(t.Context(), In{}); err != nil {
@@ -159,7 +161,7 @@ func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
 	configTOML := "[llm]\nprovider = \"openai-compatible\"\nmodel = \"from-config\"\nbase_url = \"" + srv.URL + "/v1\"\n"
 	m, h, _ := newManager(t, configTOML)
 
-	if err := m.Save(t.Context(), In{Model: "from-gui", BaseURL: "http://127.0.0.1:1/v1"}); err != nil {
+	if err := m.Save(t.Context(), In{Model: ptr("from-gui"), BaseURL: ptr("http://127.0.0.1:1/v1")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Save(t.Context(), In{}); err != nil {
@@ -183,6 +185,21 @@ func TestSaveResetFallsBackToConfigNotOverride(t *testing.T) {
 	}
 }
 
+func TestSaveCanOverrideDeclaredModelWithProviderDefault(t *testing.T) {
+	m, _, _ := newManager(t, "[llm]\nprovider = \"anthropic\"\nmodel = \"declared-model\"\n")
+
+	if err := m.Save(t.Context(), In{Model: ptr("")}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Model.Value != "" || v.Model.Origin != string(config.OriginGUI) {
+		t.Errorf("model = %+v, want an explicit empty GUI override", v.Model)
+	}
+}
+
 func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -190,8 +207,8 @@ func TestSaveProviderSwitchNotBlockedByOtherProvidersEnvVar(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
 
 	err := m.Save(t.Context(), In{
-		Provider: config.ProviderOpenAICompat,
-		BaseURL:  "http://127.0.0.1:1/v1",
+		Provider: ptr(config.ProviderOpenAICompat),
+		BaseURL:  ptr("http://127.0.0.1:1/v1"),
 		APIKey:   "sk-openai",
 	})
 	if err != nil {
@@ -212,8 +229,8 @@ func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-openai-key")
 
 	err := m.Save(t.Context(), In{
-		Provider: config.ProviderOpenAICompat,
-		BaseURL:  "http://127.0.0.1:1/v1",
+		Provider: ptr(config.ProviderOpenAICompat),
+		BaseURL:  ptr("http://127.0.0.1:1/v1"),
 		APIKey:   "sk-typed",
 	})
 	if err == nil {
@@ -230,7 +247,7 @@ func TestSaveGuardFiresForSubmittedProvidersOwnEnvVar(t *testing.T) {
 func TestSaveRejectsOpenAICompatWithoutBaseURL(t *testing.T) {
 	m, _, setPath := newManager(t, "")
 
-	err := m.Save(t.Context(), In{Provider: config.ProviderOpenAICompat})
+	err := m.Save(t.Context(), In{Provider: ptr(config.ProviderOpenAICompat)})
 	if err == nil {
 		t.Fatal("Save = nil, want an error: openai-compatible needs a base URL")
 	}
@@ -243,7 +260,7 @@ func TestSaveAllowsOpenAICompatWithBaseURLFromConfig(t *testing.T) {
 	configTOML := "[llm]\nprovider = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n"
 	m, _, setPath := newManager(t, configTOML)
 
-	err := m.Save(t.Context(), In{Provider: config.ProviderOpenAICompat})
+	err := m.Save(t.Context(), In{Provider: ptr(config.ProviderOpenAICompat)})
 	if err != nil {
 		t.Fatalf("Save = %v, want nil: a base URL declared in config.toml should satisfy the guard", err)
 	}
@@ -255,73 +272,11 @@ func TestSaveAllowsOpenAICompatWithBaseURLFromConfig(t *testing.T) {
 func TestCheckDoesNotSave(t *testing.T) {
 	m, _, setPath := newManager(t, "")
 	_ = m.Check(t.Context(), In{
-		Provider: config.ProviderOpenAICompat,
-		BaseURL:  "http://127.0.0.1:1/v1",
+		Provider: ptr(config.ProviderOpenAICompat),
+		BaseURL:  ptr("http://127.0.0.1:1/v1"),
 	})
 	if _, err := os.Stat(setPath); !os.IsNotExist(err) {
 		t.Error("Check wrote settings.toml; it must not save")
-	}
-}
-
-// off reports whether the client refuses to reach a model because AI is
-// switched off, as opposed to any other unavailability.
-func off(t *testing.T, c knowledge.LLMClient) bool {
-	t.Helper()
-	_, err := c.GenerateTree(t.Context(), "topic", "")
-	return errors.Is(err, knowledge.ErrAIDisabled)
-}
-
-func TestBuildClientRefusesWhileAIIsOff(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  string
-		wantOff bool
-	}{
-		{
-			name:    "anthropic stays configured but unreachable",
-			config:  "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n",
-			wantOff: true,
-		},
-		{
-			name:    "openai-compatible stays configured but unreachable",
-			config:  "ai_enabled = false\n\n[llm]\nprovider = \"openai-compatible\"\nbase_url = \"http://localhost:11434/v1\"\n",
-			wantOff: true,
-		},
-		{
-			name:    "no provider is a different state, not this one",
-			config:  "",
-			wantOff: false,
-		},
-		{
-			name:    "AI on with a provider builds a real client",
-			config:  "ai_enabled = true\n\n[llm]\nprovider = \"anthropic\"\n",
-			wantOff: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("ANTHROPIC_API_KEY", "")
-			t.Setenv("OPENAI_API_KEY", "")
-			t.Setenv("COMIND_AI_ENABLED", "")
-
-			dir := t.TempDir()
-			cfgPath := filepath.Join(dir, "config.toml")
-			if err := os.WriteFile(cfgPath, []byte(tt.config), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			r, err := config.ResolveFrom(cfgPath, filepath.Join(dir, "settings.toml"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			c, err := BuildClient(r)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := off(t, c); got != tt.wantOff {
-				t.Errorf("client refuses with ErrAIDisabled = %v, want %v", got, tt.wantOff)
-			}
-		})
 	}
 }
 
@@ -331,11 +286,11 @@ func TestCurrentReportsTheAIPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.AIEnabled {
+	if v.AIEnabled.Value {
 		t.Error("AIEnabled = true, want false")
 	}
-	if v.AIEnabledOrigin != string(config.OriginConfig) {
-		t.Errorf("origin = %q, want config", v.AIEnabledOrigin)
+	if v.AIEnabled.Origin != string(config.OriginConfig) {
+		t.Errorf("origin = %q, want config", v.AIEnabled.Origin)
 	}
 	if v.Provider.Value != config.ProviderAnthropic {
 		t.Errorf("provider = %q, want it still reported while AI is off", v.Provider.Value)
@@ -343,15 +298,15 @@ func TestCurrentReportsTheAIPolicy(t *testing.T) {
 }
 
 func TestSaveTurnsAIOffLiveAndKeepsTheProvider(t *testing.T) {
-	m, h, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
+	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
 
 	no := false
 	if err := m.Save(t.Context(), In{AIEnabled: &no}); err != nil {
 		t.Fatal(err)
 	}
 
-	if !off(t, h) {
-		t.Error("the live client still reaches a model after AI was switched off")
+	if m.policy.AIEnabled() {
+		t.Error("the live policy is still enabled after AI was switched off")
 	}
 
 	o, err := config.LoadOverrides(setPath)
@@ -372,27 +327,22 @@ func TestSaveTurnsAIOffLiveAndKeepsTheProvider(t *testing.T) {
 }
 
 func TestSaveTurnsAIBackOn(t *testing.T) {
-	m, h, _ := newManager(t, "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n")
+	m, _, _ := newManager(t, "ai_enabled = false\n\n[llm]\nprovider = \"anthropic\"\n")
 
 	yes := true
-	if err := m.Save(t.Context(), In{AIEnabled: &yes, Provider: config.ProviderAnthropic}); err != nil {
+	if err := m.Save(t.Context(), In{AIEnabled: &yes, Provider: ptr(config.ProviderAnthropic)}); err != nil {
 		t.Fatal(err)
 	}
-	if off(t, h) {
-		t.Error("the live client still refuses after AI was switched back on")
+	if !m.policy.AIEnabled() {
+		t.Error("the live policy is still disabled after AI was switched back on")
 	}
 }
 
-// The winning layer and the stored override are different questions. Once the
-// environment wins, the screen must still know what settings.toml holds, or a
-// save of an unrelated field submits "not overridden" and silently erases the
-// owner's decision — which comes back as AI switching itself on the day the
-// variable goes away.
 func TestCurrentReportsTheStoredSwitchUnderAnEnvOverride(t *testing.T) {
 	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
 
 	no := false
-	if err := m.Save(t.Context(), In{AIEnabled: &no, Provider: config.ProviderAnthropic}); err != nil {
+	if err := m.Save(t.Context(), In{AIEnabled: &no, Provider: ptr(config.ProviderAnthropic)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -401,18 +351,17 @@ func TestCurrentReportsTheStoredSwitchUnderAnEnvOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.AIEnabled || v.AIEnabledOrigin != string(config.OriginEnv) {
-		t.Fatalf("effective = %v from %q, want true from env", v.AIEnabled, v.AIEnabledOrigin)
+	if !v.AIEnabled.Value || v.AIEnabled.Origin != string(config.OriginEnv) {
+		t.Fatalf("effective = %v from %q, want true from env", v.AIEnabled.Value, v.AIEnabled.Origin)
 	}
-	if v.AIEnabledOverride == nil || *v.AIEnabledOverride {
-		t.Fatalf("stored override = %v, want the saved false", v.AIEnabledOverride)
+	if v.AIEnabled.Override == nil || *v.AIEnabled.Override {
+		t.Fatalf("stored override = %v, want the saved false", v.AIEnabled.Override)
 	}
 
-	// Resubmitting what the screen was told keeps the decision on disk.
 	err = m.Save(t.Context(), In{
-		AIEnabled: v.AIEnabledOverride,
-		Provider:  config.ProviderAnthropic,
-		Model:     "claude-sonnet-5",
+		AIEnabled: v.AIEnabled.Override,
+		Provider:  ptr(config.ProviderAnthropic),
+		Model:     ptr("claude-sonnet-5"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,16 +375,36 @@ func TestCurrentReportsTheStoredSwitchUnderAnEnvOverride(t *testing.T) {
 	}
 }
 
+func TestCurrentReportsStoredStringOverrideUnderEnvironment(t *testing.T) {
+	m, _, _ := newManager(t, "[llm]\nprovider = \"anthropic\"\nmodel = \"config-model\"\n")
+
+	if err := m.Save(t.Context(), In{Model: ptr("gui-model")}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COMIND_LLM_MODEL", "env-model")
+
+	v, err := m.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Model.Value != "env-model" || v.Model.Origin != string(config.OriginEnv) {
+		t.Fatalf("effective model = %q from %q", v.Model.Value, v.Model.Origin)
+	}
+	if v.Model.Override == nil || *v.Model.Override != "gui-model" {
+		t.Fatalf("stored model override = %v, want gui-model", v.Model.Override)
+	}
+}
+
 func TestCurrentReportsNoStoredSwitchWhenUntouched(t *testing.T) {
 	m, _, _ := newManager(t, "ai_enabled = false\n")
 	v, err := m.Current(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.AIEnabled {
+	if v.AIEnabled.Value {
 		t.Error("effective = true, want the declared false")
 	}
-	if v.AIEnabledOverride != nil {
-		t.Errorf("stored override = %v, want nil — config.toml declared it, not the GUI", v.AIEnabledOverride)
+	if v.AIEnabled.Override != nil {
+		t.Errorf("stored override = %v, want nil — config.toml declared it, not the GUI", v.AIEnabled.Override)
 	}
 }

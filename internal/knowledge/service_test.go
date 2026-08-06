@@ -451,6 +451,34 @@ func TestExpandTopicSurfacesLLMError(t *testing.T) {
 	}
 }
 
+func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.ExpandTopic(t.Context(), "private topic", "private hint")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if llm.gotTopic != "" || llm.gotHint != "" {
+		t.Error("the model was called while AI was disabled")
+	}
+}
+
+func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
+	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "should not be used"}}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "private"}}}}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.EditWithAI(t.Context(), "01A", "private instruction")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if repo.gotSubtree != "" || llm.gotInstruction != "" {
+		t.Error("storage or the model was called while AI was disabled")
+	}
+}
+
 func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
@@ -598,9 +626,6 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 	}
 }
 
-// The switch is a rule about writes, not about reaching a provider, so it is
-// enforced on the single write path: any producer of an AI-authored batch is
-// refused, whatever transport carried it.
 func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 	off := func() bool { return false }
 
@@ -640,8 +665,6 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 	}
 }
 
-// The policy is asked on every write, so flipping the switch takes effect for
-// a process that is already running — including a long-lived MCP server.
 func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 	enabled := true
 	repo := &fakeRepo{}
@@ -662,7 +685,6 @@ func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 	}
 }
 
-// Nothing configured means the product default: AI on.
 func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)

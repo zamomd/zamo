@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { submittedSwitch } from "./settingsinput";
+import { submittedSwitch, submittedText } from "./settingsinput";
 
 describe("submittedSwitch", () => {
 	it("submits what the user just set", () => {
@@ -18,5 +18,16 @@ describe("submittedSwitch", () => {
 	it("resubmits the stored override the user cannot currently edit", () => {
 		expect(submittedSwitch(false, true, false)).toBe(false);
 		expect(submittedSwitch(false, false, true)).toBe(true);
+	});
+});
+
+describe("submittedText", () => {
+	it("submits an explicitly empty value", () => {
+		expect(submittedText(true, "", null)).toBe("");
+	});
+
+	it("preserves a stored override and otherwise inherits", () => {
+		expect(submittedText(false, "effective", "stored")).toBe("stored");
+		expect(submittedText(false, "declared", null)).toBeNull();
 	});
 });

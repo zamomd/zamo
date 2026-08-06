@@ -3,7 +3,7 @@
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
-	import { submittedSwitch } from "./lib/settingsinput";
+	import { submittedSwitch, submittedText } from "./lib/settingsinput";
 	import { ai } from "./stores/ai.svelte";
 
 	let view = $state<View | null>(null);
@@ -24,16 +24,13 @@
 	let resetConfirming = $state(false);
 
 	let ro = $derived(view?.declarative ?? false);
-	// Two distinct states, deliberately not merged: the switch is the owner's
-	// policy, while no provider is an unfinished configuration. Turning AI off
-	// keeps the provider fields on screen, because it keeps them in the file.
 	let noProvider = $derived(provider === "");
 
 	async function load(): Promise<void> {
 		const v = await App.Settings();
 		view = v;
-		aiEnabled = v.aiEnabled;
-		ai.set(v.aiEnabled);
+		aiEnabled = v.aiEnabled.value;
+		ai.set(v.aiEnabled.value);
 		provider = v.provider.value;
 		model = v.model.value;
 		baseUrl = v.baseUrl.value;
@@ -46,6 +43,7 @@
 	}
 
 	function fieldNote(field: { origin: string }): string {
+		if (field.origin === "env") return "set from the environment; it cannot be changed here";
 		if (field.origin === "config") return "set in config.toml";
 		if (field.origin === "gui") return "overridden here";
 		return "";
@@ -56,7 +54,7 @@
 
 	let apiKeyNote = $derived.by((): string => {
 		if (!view) return "";
-		switch (view.apiKeyOrigin) {
+		switch (view.apiKey.origin) {
 			case "env":
 				return "set from the environment; it cannot be changed here";
 			case "api_key_file":
@@ -83,7 +81,7 @@
 
 	let aiEnabledNote = $derived.by((): string => {
 		if (!view) return "";
-		switch (view.aiEnabledOrigin) {
+		switch (view.aiEnabled.origin) {
 			case "env":
 				return "set from COMIND_AI_ENABLED; it cannot be changed here";
 			case "config":
@@ -94,30 +92,26 @@
 				return "";
 		}
 	});
-	// The environment wins over both files, so offering the switch would be
-	// offering a control that cannot take effect.
-	let aiLocked = $derived(ro || view?.aiEnabledOrigin === "env");
+	let aiLocked = $derived(ro || view?.aiEnabled.origin === "env");
 
-	// submittedAIEnabled keys on the stored override, not on the winning layer:
-	// see submittedSwitch for why the difference matters.
 	function submittedAIEnabled(): boolean | null {
-		return submittedSwitch(aiEnabledDirty, aiEnabled, view?.aiEnabledOverride ?? null);
+		return submittedSwitch(aiEnabledDirty, aiEnabled, view?.aiEnabled.override ?? null);
 	}
 
 	function input(): In {
-		const submittedProvider = providerDirty || view?.provider.origin === "gui" ? provider : "";
+		const submittedProvider = submittedText(providerDirty, provider, view?.provider.override ?? null);
 		if (noProvider) {
 			return {
 				aiEnabled: submittedAIEnabled(),
 				provider: submittedProvider,
-				model: "",
-				baseUrl: "",
+				model: null,
+				baseUrl: null,
 				apiKey: "",
 				clearApiKey: false,
 			};
 		}
-		const submittedModel = modelDirty || view?.model.origin === "gui" ? model : "";
-		const submittedBaseUrl = baseUrlDirty || view?.baseUrl.origin === "gui" ? baseUrl : "";
+		const submittedModel = submittedText(modelDirty, model, view?.model.override ?? null);
+		const submittedBaseUrl = submittedText(baseUrlDirty, baseUrl, view?.baseUrl.override ?? null);
 		return {
 			aiEnabled: submittedAIEnabled(),
 			provider: submittedProvider,
@@ -175,9 +169,9 @@
 		return submit(async () => {
 			await App.SaveSettings({
 				aiEnabled: null,
-				provider: "",
-				model: "",
-				baseUrl: "",
+				provider: null,
+				model: null,
+				baseUrl: null,
 				apiKey: "",
 				clearApiKey: true,
 			});
@@ -221,7 +215,7 @@
 
 		<label>
 			Provider
-			<select bind:value={provider} disabled={ro} onchange={() => (providerDirty = true)}>
+			<select bind:value={provider} disabled={ro || view.provider.origin === "env"} onchange={() => (providerDirty = true)}>
 				<option value="">None — no provider configured</option>
 				<option value="anthropic">Anthropic</option>
 				<option value="openai-compatible">OpenAI-compatible</option>
@@ -238,7 +232,12 @@
 		{:else}
 			<label>
 				Model
-				<input bind:value={model} disabled={ro} placeholder="provider default" oninput={() => (modelDirty = true)} />
+				<input
+					bind:value={model}
+					disabled={ro || view.model.origin === "env"}
+					placeholder="provider default"
+					oninput={() => (modelDirty = true)}
+				/>
 				{#if modelNote !== ""}<small>{modelNote}</small>{/if}
 			</label>
 
@@ -247,7 +246,7 @@
 					Base URL
 					<input
 						bind:value={baseUrl}
-						disabled={ro}
+						disabled={ro || view.baseUrl.origin === "env"}
 						placeholder="http://localhost:11434/v1"
 						oninput={() => (baseUrlDirty = true)}
 					/>
@@ -261,15 +260,15 @@
 					id="api-key"
 					type="password"
 					bind:value={apiKey}
-					disabled={ro || view.apiKeyOrigin === "env"}
-					placeholder={view.apiKeySet ? "set — type to replace" : "not set"}
+					disabled={ro || view.apiKey.origin === "env"}
+					placeholder={view.apiKey.set ? "set — type to replace" : "not set"}
 				/>
 				{#if apiKeyNote !== ""}<small>{apiKeyNote}</small>{/if}
 				<button
 					type="button"
 					class="link"
 					onclick={clearKey}
-					disabled={ro || busy || view.apiKeyOrigin !== "gui"}
+					disabled={ro || busy || view.apiKey.origin !== "gui"}
 				>
 					Clear key
 				</button>
@@ -311,8 +310,6 @@
 	.field-label {
 		margin-bottom: 0.25rem;
 	}
-	/* The switch governs every other field on the screen, so it is separated
-	   from them rather than sitting in the same run of inputs. */
 	.switch {
 		padding-bottom: 0.75rem;
 		border-bottom: 1px solid var(--hairline);

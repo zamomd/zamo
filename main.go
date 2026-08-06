@@ -69,13 +69,8 @@ func run() error {
 		return err
 	}
 
-	// Each mode reads the AI policy the way it can learn about a change. The
-	// GUI owns the switch, so it holds one in memory and flips it on save. The
-	// MCP server has no such event and outlives its client's session, so it
-	// re-reads the files; a policy that cannot be read refuses, because the
-	// safe answer to "may the AI write" is no.
-	sw := settings.NewSwitch(resolved.AIEnabled())
-	policy := knowledge.AIPolicy(sw.AIEnabled)
+	livePolicy := settings.NewPolicy(resolved.AIEnabled())
+	policy := knowledge.AIPolicy(livePolicy.AIEnabled)
 	if mode == "mcp" {
 		policy = func() bool {
 			r, err := config.Resolve()
@@ -91,7 +86,7 @@ func run() error {
 
 	switch mode {
 	case "gui":
-		return runGUI(svc, settings.New(holder, sw, settingsPath))
+		return runGUI(svc, settings.New(holder, livePolicy, settingsPath))
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -99,9 +94,7 @@ func run() error {
 	}
 }
 
-// buildService wires the dependencies: the only place where adapters
-// meet the core. It also hands back the live client holder, which the GUI
-// needs to wire up the settings screen.
+// buildService creates the knowledge service and its runtime dependencies.
 func buildService(
 	ctx context.Context, resolved config.Resolved, policy knowledge.AIPolicy,
 ) (*knowledge.Service, *llm.Holder, func(), error) {
