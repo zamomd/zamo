@@ -200,9 +200,8 @@
 		line-height: var(--row-height);
 		overflow: hidden;
 		resize: none;
-		/* Stated on both sides of the swap rather than left to the UA sheet,
-		   which gives a textarea break-word and the rendered row's div normal —
-		   see .content in TreeNode.svelte. */
+		/* The UA sheet wraps a textarea and a div differently, and both sides
+		   of the swap must agree — see .content in TreeNode.svelte. */
 		overflow-wrap: break-word;
 	}
 	.editor:focus-visible {

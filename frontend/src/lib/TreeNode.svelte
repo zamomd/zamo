@@ -485,11 +485,8 @@
 		color: inherit;
 		min-width: 0;
 		line-height: var(--row-height);
-		/* Stated rather than inherited from the UA sheet, which breaks a long
-		   unbroken run inside a textarea but not inside a div: left to the
-		   defaults, a pasted URL or a run of keyboard noise wraps one way while
-		   the row is read and another way while it is edited, which moves the
-		   text under the pointer exactly like the missing lane did. */
+		/* A pasted URL or a run of keyboard noise must break at the same place
+		   here and in the editor — see .editor in InlineEditor.svelte. */
 		overflow-wrap: break-word;
 	}
 	.content.busy {

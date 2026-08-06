@@ -52,11 +52,9 @@ describe("TreeNode", () => {
 		expect(content?.querySelector("strong")).not.toBeNull();
 	});
 
-	// The row's lanes are what reserve horizontal space beside the text. jsdom
-	// lays nothing out, so the width itself is unassertable here; the lane count
-	// is the structural fact behind it, and it must not change when a row enters
-	// edit mode — a narrower or wider text column rewraps the block under the
-	// pointer, which is what lands the caret on the wrong visual line.
+	// The lanes reserve the width beside the text; jsdom lays nothing out, so
+	// their count is the assertable half of it. A text column that changes
+	// width rewraps the block under the pointer.
 	it("keeps the same lanes beside the text in both states", async () => {
 		base.clearEdit();
 		const { container } = render(TreeNode, {
@@ -84,10 +82,8 @@ describe("TreeNode", () => {
 		expect(container.querySelector(".content")).toBeNull();
 	});
 
-	// Clicking from an edited block into another one commits the first, and that
-	// commit is a round trip to the backend. The offset is measured against the
-	// DOM as it stood at the click; nothing between there and the mounted
-	// textarea may drop or recompute it.
+	// The offset is measured against the DOM as it stood at the click, and the
+	// commit of the previous block is a round trip to the backend in between.
 	it("carries the clicked offset into the next block across an async commit", async () => {
 		const root = block({ ID: "root", ParentID: "", Content: "Topic" });
 		const first = block({ ID: "b1", Content: "first block" });
@@ -130,10 +126,9 @@ describe("TreeNode", () => {
 	});
 });
 
-// stubCaretFromPoint makes the DOM's hit test land on a known text position:
-// jsdom implements no caretRangeFromPoint, and without one the click falls back
-// to the end of the block, which is precisely the answer that would hide a lost
-// offset.
+// stubCaretFromPoint lands the DOM's hit test on a known text position. jsdom
+// implements no caretRangeFromPoint, and the fallback — the end of the block —
+// is the one answer that would hide a lost offset.
 function stubCaretFromPoint(node: Node, offset: number): void {
 	const stub = (): Range => {
 		const range = document.createRange();
