@@ -11,6 +11,17 @@ func ownerMeta(title string) knowledge.WriteMeta {
 	return knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: title}
 }
 
+// modeOf reads a block's stored mode.
+func modeOf(t *testing.T, repo *Repo, id string) knowledge.Mode {
+	t.Helper()
+	var mode knowledge.Mode
+	if err := repo.db.QueryRowContext(t.Context(),
+		`SELECT mode FROM blocks WHERE id = ?`, id).Scan(&mode); err != nil {
+		t.Fatalf("read mode of %s: %v", id, err)
+	}
+	return mode
+}
+
 func TestDeleteHeadRevisionRevertsProjection(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -200,14 +211,16 @@ func TestRejectRestoresTheModeTheBlockHad(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
 		t.Fatalf("apply convert: %v", err)
 	}
+	// Assert the conversion landed before rejecting it. Without this the test
+	// passes on a build where the edit never wrote the mode at all: the row
+	// would read outline throughout and the final assertion would be vacuous.
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Fatalf("before reject mode = %q, want %q", got, knowledge.ModeDoc)
+	}
 	if err := repo.RejectBlock(t.Context(), "t1"); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
-	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
 		t.Errorf("after reject mode = %q, want %q", got, knowledge.ModeOutline)
 	}
 }
@@ -223,15 +236,42 @@ func TestUndoGroupRestoresTheModeTheBlockHad(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g2", owner, convert); err != nil {
 		t.Fatalf("apply convert: %v", err)
 	}
+	// Assert the conversion landed before undoing it. Without this the test
+	// passes on a build where the edit never wrote the mode at all: the row
+	// would read outline throughout and the final assertion would be vacuous.
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Fatalf("before undo mode = %q, want %q", got, knowledge.ModeDoc)
+	}
 	if err := repo.UndoGroup(t.Context(), "g2"); err != nil {
 		t.Fatalf("undo: %v", err)
 	}
-	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
 		t.Errorf("after undo mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestRejectLeavesADocumentADocument(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	// A content-only AI edit: it names no mode, so the surviving revision is
+	// the only place the mode can come back from. A projectHead that writes the
+	// column's default instead of the snapshot's value silently turns the
+	// document into an outline here, and nothing else in the system complains.
+	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic\n\nBody."}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit); err != nil {
+		t.Fatalf("apply edit: %v", err)
+	}
+	if err := repo.RejectBlock(t.Context(), "t1"); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Errorf("after reject mode = %q, want %q", got, knowledge.ModeDoc)
 	}
 }
 
