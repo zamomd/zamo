@@ -451,6 +451,34 @@ func TestExpandTopicSurfacesLLMError(t *testing.T) {
 	}
 }
 
+func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
+	repo := &fakeRepo{}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.ExpandTopic(t.Context(), "private topic", "private hint")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if llm.gotTopic != "" || llm.gotHint != "" {
+		t.Error("the model was called while AI was disabled")
+	}
+}
+
+func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
+	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "should not be used"}}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "private"}}}}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.EditWithAI(t.Context(), "01A", "private instruction")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if repo.gotSubtree != "" || llm.gotInstruction != "" {
+		t.Error("storage or the model was called while AI was disabled")
+	}
+}
+
 func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
@@ -595,5 +623,74 @@ func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
 	}
 	if writer.files != nil {
 		t.Errorf("writer was handed %+v; a read failure must write nothing", writer.files)
+	}
+}
+
+func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
+	off := func() bool { return false }
+
+	tests := []struct {
+		name       string
+		meta       WriteMeta
+		wantRefuse bool
+	}{
+		{
+			name:       "an AI batch is refused",
+			meta:       WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "from an agent"},
+			wantRefuse: true,
+		},
+		{
+			name:       "the owner's own batch still applies",
+			meta:       WriteMeta{Author: AuthorOwner, Source: SourceGUIEdit, Title: "by hand"},
+			wantRefuse: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepo{}
+			svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(off))
+
+			_, err := svc.ApplyOps(t.Context(), tt.meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
+			switch {
+			case tt.wantRefuse && !errors.Is(err, ErrAIDisabled):
+				t.Errorf("error = %v, want ErrAIDisabled", err)
+			case !tt.wantRefuse && err != nil:
+				t.Errorf("error = %v, want the write to go through", err)
+			}
+			if tt.wantRefuse && repo.applyCalls != 0 {
+				t.Errorf("a batch reached storage while AI is off: %d calls", repo.applyCalls)
+			}
+		})
+	}
+}
+
+func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
+	enabled := true
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(func() bool { return enabled }))
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
+	ops := []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}
+
+	if _, err := svc.ApplyOps(t.Context(), meta, ops); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	enabled = false
+	if _, err := svc.ApplyOps(t.Context(), meta, ops); !errors.Is(err, ErrAIDisabled) {
+		t.Errorf("second write: error = %v, want ErrAIDisabled", err)
+	}
+	if repo.applyCalls != 1 {
+		t.Errorf("storage saw %d batches, want only the one written while AI was on", repo.applyCalls)
+	}
+}
+
+func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
+	if _, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}); err != nil {
+		t.Errorf("error = %v, want the write to go through", err)
 	}
 }

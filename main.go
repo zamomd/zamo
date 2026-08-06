@@ -60,7 +60,25 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	svc, holder, settingsPath, cleanup, err := buildService(ctx)
+	resolved, err := config.Resolve()
+	if err != nil {
+		return err
+	}
+	settingsPath, err := config.SettingsPath()
+	if err != nil {
+		return err
+	}
+
+	livePolicy := settings.NewPolicy(resolved.AIEnabled())
+	policy := knowledge.AIPolicy(livePolicy.AIEnabled)
+	if mode == "mcp" {
+		policy = func() bool {
+			r, err := config.Resolve()
+			return err == nil && r.AIEnabled()
+		}
+	}
+
+	svc, holder, cleanup, err := buildService(ctx, resolved, policy)
 	if err != nil {
 		return err
 	}
@@ -68,7 +86,7 @@ func run() error {
 
 	switch mode {
 	case "gui":
-		return runGUI(svc, settings.New(holder, settingsPath))
+		return runGUI(svc, settings.New(holder, livePolicy, settingsPath))
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -76,40 +94,30 @@ func run() error {
 	}
 }
 
-// buildService wires the dependencies: the only place where adapters
-// meet the core. It also hands back the live client holder and the settings
-// path, which the GUI mode needs to wire up the settings screen.
-func buildService(ctx context.Context) (*knowledge.Service, *llm.Holder, string, func(), error) {
-	resolved, err := config.Resolve()
-	if err != nil {
-		return nil, nil, "", nil, err
-	}
-
+// buildService creates the knowledge service and its runtime dependencies.
+func buildService(
+	ctx context.Context, resolved config.Resolved, policy knowledge.AIPolicy,
+) (*knowledge.Service, *llm.Holder, func(), error) {
 	dbPath, err := resolved.Config.DatabasePath()
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, nil, err
 	}
 	db, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, nil, err
 	}
 
 	client, err := settings.BuildClient(resolved)
 	if err != nil {
 		db.Close()
-		return nil, nil, "", nil, err
+		return nil, nil, nil, err
 	}
 	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	settingsPath, err := config.SettingsPath()
-	if err != nil {
-		db.Close()
-		return nil, nil, "", nil, err
-	}
-
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{})
-	return svc, holder, settingsPath, func() { db.Close() }, nil
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{},
+		knowledge.WithAIPolicy(policy))
+	return svc, holder, func() { db.Close() }, nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.

@@ -22,51 +22,59 @@ import (
 // is not the only caller.
 var ErrDeclarative = errors.New("settings are managed by config.toml")
 
-// Field is one settable value plus where it came from.
-type Field struct {
-	Value  string `json:"value"`
+// Field describes a resolved setting and its mutable override.
+type Field[T any] struct {
+	Value    T      `json:"value"`
+	Origin   string `json:"origin"`
+	Override *T     `json:"override"`
+}
+
+// SecretField describes a resolved secret without exposing its value.
+type SecretField struct {
+	Set    bool   `json:"set"`
 	Origin string `json:"origin"`
 }
 
 // View is what the settings screen renders. It carries no key value in any
 // form — only whether one is set and where it comes from.
 type View struct {
-	Provider  Field `json:"provider"`
-	Model     Field `json:"model"`
-	BaseURL   Field `json:"baseUrl"`
-	APIKeySet bool  `json:"apiKeySet"`
-	// APIKeyOrigin uses config.Origin's string form directly.
-	APIKeyOrigin string `json:"apiKeyOrigin"`
+	AIEnabled Field[bool]   `json:"aiEnabled"`
+	Provider  Field[string] `json:"provider"`
+	Model     Field[string] `json:"model"`
+	BaseURL   Field[string] `json:"baseUrl"`
+	APIKey    SecretField   `json:"apiKey"`
 	// Declarative means every field is read-only: config.toml owns them.
 	Declarative bool `json:"declarative"`
 }
 
-// In is a settings submission. An empty field means "not overridden" and is
+// In is a settings submission. A nil field means "not overridden" and is
 // dropped from the mutable layer, which is how "reset to config" is expressed.
-// An empty APIKey leaves the stored key alone; ClearAPIKey removes it.
+// A non-nil empty string is an explicit empty override. An empty APIKey leaves
+// the stored key alone; ClearAPIKey removes it.
 type In struct {
-	Provider    string `json:"provider"`
-	Model       string `json:"model"`
-	BaseURL     string `json:"baseUrl"`
-	APIKey      string `json:"apiKey"`
-	ClearAPIKey bool   `json:"clearApiKey"`
+	// AIEnabled is nil when the mutable override must be removed.
+	AIEnabled   *bool   `json:"aiEnabled"`
+	Provider    *string `json:"provider"`
+	Model       *string `json:"model"`
+	BaseURL     *string `json:"baseUrl"`
+	APIKey      string  `json:"apiKey"`
+	ClearAPIKey bool    `json:"clearApiKey"`
 }
 
 // Manager owns the settings use case.
 type Manager struct {
 	holder *llm.Holder
+	policy *Policy
 	path   string
 }
 
-// New wires the manager to the live client holder and the mutable layer's path.
-func New(holder *llm.Holder, path string) *Manager {
-	return &Manager{holder: holder, path: path}
+// New returns a manager backed by path. Policy may be nil.
+func New(holder *llm.Holder, policy *Policy, path string) *Manager {
+	return &Manager{holder: holder, policy: policy, path: path}
 }
 
-// BuildClient assembles a provider client from a resolved configuration. The
-// key is passed as a source, not a value, so a rotated key takes effect (see
-// llm.KeySource). An empty provider is a supported state — AI features off —
-// and yields llm.Disabled rather than an error.
+// BuildClient creates the configured provider client.
+// An empty provider returns llm.Disabled.
 func BuildClient(r config.Resolved) (knowledge.LLMClient, error) {
 	switch r.Config.LLM.Provider {
 	case "":
@@ -87,22 +95,26 @@ func (m *Manager) Current(_ context.Context) (View, error) {
 		return View{}, err
 	}
 	return View{
-		Provider:     Field{Value: r.Config.LLM.Provider, Origin: string(r.Origins.Provider)},
-		Model:        Field{Value: r.Config.LLM.Model, Origin: string(r.Origins.Model)},
-		BaseURL:      Field{Value: r.Config.LLM.BaseURL, Origin: string(r.Origins.BaseURL)},
-		APIKeySet:    r.APIKeySet(),
-		APIKeyOrigin: string(r.Origins.APIKey),
-		Declarative:  r.Config.Declarative,
+		AIEnabled: Field[bool]{
+			Value: r.AIEnabled(), Origin: string(r.Origins.AIEnabled), Override: r.Overrides.AIEnabled,
+		},
+		Provider: Field[string]{
+			Value: r.Config.LLM.Provider, Origin: string(r.Origins.Provider), Override: r.Overrides.LLM.Provider,
+		},
+		Model: Field[string]{
+			Value: r.Config.LLM.Model, Origin: string(r.Origins.Model), Override: r.Overrides.LLM.Model,
+		},
+		BaseURL: Field[string]{
+			Value: r.Config.LLM.BaseURL, Origin: string(r.Origins.BaseURL), Override: r.Overrides.LLM.BaseURL,
+		},
+		APIKey: SecretField{
+			Set: r.APIKeySet(), Origin: string(r.Origins.APIKey),
+		},
+		Declarative: r.Config.Declarative,
 	}, nil
 }
 
-// Save validates the submission, writes the mutable layer, and swaps the live
-// client. The order matters: a submission that cannot produce a client must
-// leave both the file and the running client untouched.
-//
-// It resolves against the raw config.Load result, not current.Config: that one
-// already has settings.toml folded in, and merging it again would keep a
-// dropped override alive as if config.toml had declared it.
+// Save validates and persists mutable settings, then updates runtime state.
 func (m *Manager) Save(_ context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -125,15 +137,9 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	if err != nil {
 		return err
 	}
-	// Checked against the resolved value, not in.BaseURL, so a base_url
-	// declared in config.toml still counts. Without one, openai-compatible
-	// can never work and would fail later with an opaque transport error.
 	if resolved.Config.LLM.Provider == config.ProviderOpenAICompat && resolved.Config.LLM.BaseURL == "" {
 		return errors.New("openai-compatible requires a base URL")
 	}
-	// Guards the env var of the provider being submitted, not the one
-	// currently in effect: switching away from a provider whose variable
-	// happens to be set must stay possible.
 	if resolved.Origins.APIKey == config.OriginEnv && in.APIKey != "" {
 		envName := config.KeyEnvName(resolved.Config.LLM.Provider)
 		return fmt.Errorf("%s already supplies the API key and is in use; "+
@@ -147,13 +153,13 @@ func (m *Manager) Save(_ context.Context, in In) error {
 		return err
 	}
 	m.holder.Set(client)
+	if m.policy != nil {
+		m.policy.Set(resolved.AIEnabled())
+	}
 	return nil
 }
 
-// Check builds a client from a submission that has not been saved and asks the
-// provider whether it is reachable. It writes nothing and does not swap the
-// live client, so it works in declarative mode too. Like Save, it resolves
-// against the raw config.Load result.
+// Check tests an unsaved submission without changing runtime state or files.
 func (m *Manager) Check(ctx context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -173,6 +179,9 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 	if err != nil {
 		return err
 	}
+	if !resolved.AIEnabled() {
+		return knowledge.ErrAIDisabled
+	}
 	client, err := BuildClient(resolved)
 	if err != nil {
 		return err
@@ -180,17 +189,15 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 	return client.Ping(ctx)
 }
 
-// overrides folds a submission into the mutable layer, validating the
-// provider. An empty field drops the override rather than storing an empty
-// string: absent means "not overridden", "" would be a real override. An
-// empty provider is accepted too — it means "not overridden", not "AI off";
-// BuildClient is what turns an all-empty result into the disabled state.
+// overrides converts a submission to the mutable configuration layer.
 func (m *Manager) overrides(current config.Resolved, in In) (config.Overrides, error) {
-	if err := config.ValidateProvider(in.Provider); err != nil {
-		return config.Overrides{}, err
+	if in.Provider != nil {
+		if err := config.ValidateProvider(*in.Provider); err != nil {
+			return config.Overrides{}, err
+		}
 	}
 
-	o := config.Overrides{LLM: config.LLMOverrides{
+	o := config.Overrides{AIEnabled: in.AIEnabled, LLM: config.LLMOverrides{
 		Provider: in.Provider,
 		Model:    in.Model,
 		BaseURL:  in.BaseURL,
