@@ -9,9 +9,7 @@
 
 	// $state, not a plain let: passed to RefAutocomplete as the `target` prop,
 	// and a prop sourced from a non-reactive binding would not propagate.
-	// Null, not undefined: unmounting writes null back into a bind:this, and
-	// the textarea's own select event arrives as a queued task, so a handler
-	// can still run one turn after the row left the DOM.
+	// Unmounting writes null here, and a queued select event still finds it.
 	let el: HTMLTextAreaElement | null = $state(null);
 
 	const trigger = $derived(triggerAt(base.editText, base.editCaret));
