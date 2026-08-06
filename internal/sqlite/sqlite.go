@@ -263,6 +263,9 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 			return err
 		}
 	}
+	if err := refuseDocumentChildren(ctx, tx); err != nil {
+		return fmt.Errorf("apply ops group %s: %w", groupID, err)
+	}
 	return tx.Commit()
 }
 
@@ -305,6 +308,24 @@ SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY sour
 		}
 	}
 	return nil
+}
+
+// refuseDocumentChildren fails the batch when it leaves any block under a topic
+// root in ModeDoc. Checked once after every op has run rather than per op: a
+// conversion sets the mode and removes the children in one batch, and the order
+// its ops happen to take must not decide whether it is legal.
+func refuseDocumentChildren(ctx context.Context, tx *sql.Tx) error {
+	var offender sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT c.id FROM blocks c JOIN blocks p ON p.id = c.parent_id
+		WHERE p.mode = 'doc' LIMIT 1`).Scan(&offender); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
+		return translate(err)
+	}
+	if !offender.Valid {
+		return nil
+	}
+	return fmt.Errorf("block %s: %w", offender.String, knowledge.ErrDocumentHasChildren)
 }
 
 // applyOp applies one resolved operation inside the apply transaction.

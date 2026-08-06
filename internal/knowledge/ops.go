@@ -139,6 +139,17 @@ func (op Op) validate() error {
 			return fmt.Errorf("%s op carries an anchor, which it ignores: %w", op.Kind, ErrInvalidOps)
 		}
 	}
+	if op.Mode != "" {
+		if !op.Mode.valid() {
+			return fmt.Errorf("unknown mode %q: %w", op.Mode, ErrInvalidOps)
+		}
+		if op.Parent != "" {
+			return fmt.Errorf("%s op sets a mode on a child of %q: %w", op.Kind, op.Parent, ErrInvalidOps)
+		}
+		if op.Kind != OpAdd && op.Kind != OpEdit {
+			return fmt.Errorf("%s op carries a mode, which it ignores: %w", op.Kind, ErrInvalidOps)
+		}
+	}
 	switch op.Kind {
 	case OpAdd:
 		if op.TempID == "" {

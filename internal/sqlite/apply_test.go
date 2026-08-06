@@ -391,3 +391,36 @@ func TestApplyOpsAtomic(t *testing.T) {
 		t.Errorf("revision_groups has %d rows after a rolled-back apply, want 0", n)
 	}
 }
+
+func TestApplyRefusesAChildUnderADocument(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	err := repo.ApplyOps(t.Context(), "g1", aiMeta("bad"), ops)
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "t1"); ok {
+		t.Error("the refused batch left a block behind")
+	}
+}
+
+func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
