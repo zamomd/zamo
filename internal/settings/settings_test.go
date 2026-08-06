@@ -91,6 +91,39 @@ func TestSaveWritesOverridesAndSwapsClient(t *testing.T) {
 	}
 }
 
+func TestSaveKeepsKeysFromANewerBuild(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	m, _, setPath := newManager(t, "[llm]\nprovider = \"anthropic\"\n")
+	if err := os.WriteFile(setPath, []byte("future_mode = false\n[llm]\nmodel = \"old\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := m.Save(t.Context(), In{
+		Provider: ptr(config.ProviderOpenAICompat),
+		Model:    ptr("qwen3"),
+		BaseURL:  ptr(srv.URL + "/v1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(setPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "future_mode") {
+		t.Errorf("the save dropped a key this build does not know:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "qwen3") {
+		t.Errorf("the save lost the change it was made for:\n%s", raw)
+	}
+}
+
 func TestSaveRejectsUnknownProvider(t *testing.T) {
 	m, _, setPath := newManager(t, "")
 	err := m.Save(t.Context(), In{Provider: ptr("gemini")})

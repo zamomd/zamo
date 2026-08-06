@@ -247,6 +247,43 @@ func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 	}
 }
 
+func TestLoadOverridesAcceptsUnknownKeys(t *testing.T) {
+	for _, content := range []string{
+		"future = true\n[llm]\nmodel = \"qwen3\"\n",
+		"[llm]\nmodel = \"qwen3\"\ntemperature = 0.7\n",
+		"future = true\n\n[llm]\n",
+	} {
+		o, err := LoadOverrides(writeAt(t, "settings.toml", content))
+		if err != nil {
+			t.Errorf("LoadOverrides(%q): %v", content, err)
+		}
+		if strings.Contains(content, "qwen3") && (o.LLM.Model == nil || *o.LLM.Model != "qwen3") {
+			t.Errorf("model = %v, want qwen3", o.LLM.Model)
+		}
+	}
+}
+
+func TestSaveOverridesPreservesUnknownKeys(t *testing.T) {
+	path := writeAt(t, "settings.toml", "future = false\n[llm]\nmodel = \"qwen3\"\ntemperature = 0.7\n")
+	o, err := LoadOverrides(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.LLM.Model = ptr("llama4")
+	if err := SaveOverrides(path, o); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"future", "false", "temperature", "0.7", "llama4"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("file lost %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestAIEnabledPrecedence(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,11 +34,12 @@ type Overrides struct {
 	// never touched the switch, so config.toml keeps deciding.
 	AIEnabled *bool `toml:"ai_enabled,omitempty"`
 
-	LLM LLMOverrides `toml:"llm"`
+	LLM     LLMOverrides `toml:"llm"`
+	unknown map[string]any
 }
 
-// LLMOverrides mirrors the settable subset of LLM. Fields are omitted when
-// empty so an untouched field never lands in the file.
+// LLMOverrides contains explicitly set mutable LLM values.
+// Nil fields are omitted; non-nil empty strings are preserved.
 type LLMOverrides struct {
 	Provider *string `toml:"provider,omitempty"`
 	Model    *string `toml:"model,omitempty"`
@@ -76,21 +78,71 @@ func SettingsPath() (string, error) {
 // means nothing has been overridden.
 func LoadOverrides(path string) (Overrides, error) {
 	var o Overrides
-	meta, err := toml.DecodeFile(path, &o)
+	raw, err := os.ReadFile(path)
 	switch {
 	case os.IsNotExist(err):
 		return o, nil
 	case err != nil:
 		return o, fmt.Errorf("read settings %s: %w", path, err)
 	}
+	meta, err := toml.Decode(string(raw), &o)
+	if err != nil {
+		return o, fmt.Errorf("read settings %s: %w", path, err)
+	}
 	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
-		return o, fmt.Errorf("settings %s: unknown key %q", path, undecoded[0].String())
+		var document map[string]any
+		if _, err := toml.Decode(string(raw), &document); err != nil {
+			return o, fmt.Errorf("read settings %s: %w", path, err)
+		}
+		o.unknown = pickUnknown(document, undecoded)
 	}
 	return o, nil
 }
 
+func pickUnknown(document map[string]any, keys []toml.Key) map[string]any {
+	unknown := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value, ok := lookupKey(document, key); ok {
+			putKey(unknown, key, value)
+		}
+	}
+	return unknown
+}
+
+func lookupKey(document map[string]any, key toml.Key) (any, bool) {
+	var current any = document
+	for _, part := range key {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = table[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func putKey(document map[string]any, key toml.Key, value any) {
+	table := document
+	for _, part := range key[:len(key)-1] {
+		next, ok := table[part].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			table[part] = next
+		}
+		table = next
+	}
+	table[key[len(key)-1]] = value
+}
+
 // SaveOverrides writes settings atomically with mode 0600.
 func SaveOverrides(path string, o Overrides) error {
+	document, err := overrideDocument(o)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("settings directory: %w", err)
 	}
@@ -105,7 +157,7 @@ func SaveOverrides(path string, o Overrides) error {
 		tmp.Close()
 		return fmt.Errorf("chmod temp settings: %w", err)
 	}
-	if err := toml.NewEncoder(tmp).Encode(o); err != nil {
+	if err := toml.NewEncoder(tmp).Encode(document); err != nil {
 		tmp.Close()
 		return fmt.Errorf("encode settings: %w", err)
 	}
@@ -116,6 +168,31 @@ func SaveOverrides(path string, o Overrides) error {
 		return fmt.Errorf("replace settings %s: %w", path, err)
 	}
 	return nil
+}
+
+func overrideDocument(o Overrides) (map[string]any, error) {
+	var encoded bytes.Buffer
+	if err := toml.NewEncoder(&encoded).Encode(o); err != nil {
+		return nil, fmt.Errorf("encode settings: %w", err)
+	}
+	document := map[string]any{}
+	if err := toml.Unmarshal(encoded.Bytes(), &document); err != nil {
+		return nil, fmt.Errorf("encode settings: %w", err)
+	}
+	mergeUnknown(document, o.unknown)
+	return document, nil
+}
+
+func mergeUnknown(document, unknown map[string]any) {
+	for key, value := range unknown {
+		if nested, ok := value.(map[string]any); ok {
+			if target, ok := document[key].(map[string]any); ok {
+				mergeUnknown(target, nested)
+				continue
+			}
+		}
+		document[key] = value
+	}
 }
 
 // Resolve merges the layers at their default locations.

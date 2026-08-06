@@ -197,12 +197,14 @@ func (m *Manager) overrides(current config.Resolved, in In) (config.Overrides, e
 		}
 	}
 
-	o := config.Overrides{AIEnabled: in.AIEnabled, LLM: config.LLMOverrides{
+	o := current.Overrides
+	o.AIEnabled = in.AIEnabled
+	o.LLM = config.LLMOverrides{
 		Provider: in.Provider,
 		Model:    in.Model,
 		BaseURL:  in.BaseURL,
 		APIKey:   current.Overrides.LLM.APIKey,
-	}}
+	}
 	switch {
 	case in.ClearAPIKey:
 		o.LLM.APIKey = ""
