@@ -369,6 +369,23 @@ func requireAnchor(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op kn
 	return nil
 }
 
+// storedMode resolves the mode a write leaves on a block. Only a root has one,
+// so a block with a parent is always ModeOutline — including a root moved under
+// one, which stops being a topic. An op that names no mode leaves current
+// standing.
+func storedMode(parent any, current, asked knowledge.Mode) knowledge.Mode {
+	if parent != nil {
+		return knowledge.ModeOutline
+	}
+	if asked != "" {
+		return asked
+	}
+	if current == "" {
+		return knowledge.ModeOutline
+	}
+	return current
+}
+
 // applyAdd inserts a new block, appended under its parent or inserted next to
 // an anchor sibling when op.After or op.Before is set, tagged with the
 // batch's authorship and source as provenance, and writes its creation
@@ -398,10 +415,11 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
 	key := titleKey(parent, op.Content)
+	mode := storedMode(parent, "", op.Mode)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(op.BlockID), parent, pos, op.Content, key,
+		`INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(op.BlockID), parent, pos, op.Content, key, string(mode),
 		string(payload), b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
@@ -410,6 +428,7 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		Content:  op.Content,
 		ParentID: knowledge.ID(op.Parent),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))

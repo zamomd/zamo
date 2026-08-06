@@ -285,6 +285,36 @@ func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
 	}
 }
 
+func TestApplyAddCarriesMode(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "doc-1", Content: "# Go Contexts\n\nBody.", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpAdd, BlockID: "out-1", Content: "Go Idioms"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("two topics"), ops); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"doc-1", "out-1"})
+	if err != nil {
+		t.Fatalf("get blocks: %v", err)
+	}
+	if got := blocks["doc-1"].Mode; got != knowledge.ModeDoc {
+		t.Errorf("doc-1 mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if got := blocks["out-1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("out-1 mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+
+	revs, err := repo.ListRevisions(t.Context(), "doc-1")
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	if got := revs[0].Mode; got != knowledge.ModeDoc {
+		t.Errorf("revision mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+}
+
 func TestApplyOpsAtomic(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()

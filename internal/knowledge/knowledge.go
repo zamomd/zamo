@@ -18,11 +18,16 @@ type Metadata map[string]any
 // tree. Portability rule: Content is pure markdown; all structure lives
 // in fields, never as service markup inside the text.
 type Block struct {
-	ID        ID
-	ParentID  ID // empty means the block is a topic root
-	Position  int
-	Content   string
-	Meta      Metadata
+	ID       ID
+	ParentID ID // empty means the block is a topic root
+	Position int
+	Content  string
+	Meta     Metadata
+
+	// Mode is the shape of the topic this block roots. Meaningful only when
+	// IsTopic reports true; a child is always ModeOutline.
+	Mode Mode
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 

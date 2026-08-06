@@ -19,6 +19,7 @@ CREATE TABLE blocks (
     position   INTEGER NOT NULL DEFAULT 0,
     content    TEXT NOT NULL,
     title_key  TEXT,
+    mode       TEXT NOT NULL DEFAULT 'outline' CHECK (mode IN ('outline','doc')),
     metadata   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -51,6 +52,7 @@ CREATE TABLE block_revisions (
     content    TEXT NOT NULL,
     parent_id  TEXT,
     position   INTEGER NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'outline',
     deleted    INTEGER NOT NULL DEFAULT 0,
     author     TEXT NOT NULL,
     source     TEXT,
@@ -133,6 +135,7 @@ var schemaFeatures = []struct {
 	{"refs", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`},
 	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
 	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
+	{"blocks.mode", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'mode')`},
 }
 
 // checkCurrent verifies that a database already at the current schema version

@@ -19,7 +19,7 @@ import (
 // revision carries whether its batch has to be reviewed whole, so no caller
 // has to look that up separately and none can forget to.
 const revisionSelect = `
-SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position,
+SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position, r.mode,
        r.deleted, r.author, r.source, r.origin, r.rationale, r.reviewed,
        r.group_id, r.created_at, COALESCE(g.atomic, 0)
 FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id`
@@ -54,11 +54,11 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev knowledge.Revision, now
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO block_revisions
-		(id, block_id, seq, content, parent_id, position, deleted, author,
+		(id, block_id, seq, content, parent_id, position, mode, deleted, author,
 		 source, origin, rationale, reviewed, group_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(rev.ID), string(rev.BlockID), rev.Seq, rev.Content, parent,
-		rev.Position, rev.Deleted, string(rev.Author), string(rev.Source),
+		rev.Position, string(rev.Mode), rev.Deleted, string(rev.Author), string(rev.Source),
 		rev.Origin, rev.Rationale, rev.Reviewed, string(rev.GroupID), now)
 	return err
 }
@@ -90,8 +90,8 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 		created                                  string
 	)
 	if err := row.Scan(&id, &blockID, &rev.Seq, &rev.Content, &parent, &rev.Position,
-		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created,
-		&rev.Atomic); err != nil {
+		&rev.Mode, &rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed,
+		&group, &created, &rev.Atomic); err != nil {
 		return knowledge.Revision{}, err
 	}
 	rev.ID = knowledge.ID(id)

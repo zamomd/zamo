@@ -23,6 +23,7 @@ type Revision struct {
 	Content   string
 	ParentID  ID // empty means topic root
 	Position  int
+	Mode      Mode // the shape the block had at this change (see Block.Mode)
 	Deleted   bool // tombstone: the block is absent from the projection
 	Author    Author
 	Source    Source
