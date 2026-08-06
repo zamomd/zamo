@@ -3,8 +3,12 @@
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
+	import { submittedSwitch, submittedText } from "./lib/settingsinput";
+	import { ai } from "./stores/ai.svelte";
 
 	let view = $state<View | null>(null);
+	let aiEnabled = $state(true);
+	let aiEnabledDirty = $state(false);
 	let provider = $state("");
 	let model = $state("");
 	let baseUrl = $state("");
@@ -20,15 +24,18 @@
 	let resetConfirming = $state(false);
 
 	let ro = $derived(view?.declarative ?? false);
-	let aiOff = $derived(provider === "");
+	let noProvider = $derived(provider === "");
 
 	async function load(): Promise<void> {
 		const v = await App.Settings();
 		view = v;
+		aiEnabled = v.aiEnabled.value;
+		ai.set(v.aiEnabled.value);
 		provider = v.provider.value;
 		model = v.model.value;
 		baseUrl = v.baseUrl.value;
 		apiKey = "";
+		aiEnabledDirty = false;
 		providerDirty = false;
 		modelDirty = false;
 		baseUrlDirty = false;
@@ -36,6 +43,7 @@
 	}
 
 	function fieldNote(field: { origin: string }): string {
+		if (field.origin === "env") return "set from the environment; it cannot be changed here";
 		if (field.origin === "config") return "set in config.toml";
 		if (field.origin === "gui") return "overridden here";
 		return "";
@@ -46,7 +54,7 @@
 
 	let apiKeyNote = $derived.by((): string => {
 		if (!view) return "";
-		switch (view.apiKeyOrigin) {
+		switch (view.apiKey.origin) {
 			case "env":
 				return "set from the environment; it cannot be changed here";
 			case "api_key_file":
@@ -65,20 +73,53 @@
 		if (provider === "" && view.provider.origin === "config" && view.provider.value !== "") {
 			return (
 				`config.toml declares "${view.provider.value}" here - saving with no provider selected ` +
-				"falls back to that value instead of turning AI off. Edit config.toml directly to disable AI."
+				"falls back to that value instead. Use the switch above to turn AI off."
 			);
 		}
 		return "";
 	});
 
-	function input(): In {
-		const submittedProvider = providerDirty || view?.provider.origin === "gui" ? provider : "";
-		if (aiOff) {
-			return { provider: submittedProvider, model: "", baseUrl: "", apiKey: "", clearApiKey: false };
+	let aiEnabledNote = $derived.by((): string => {
+		if (!view) return "";
+		switch (view.aiEnabled.origin) {
+			case "env":
+				return "set from COMIND_AI_ENABLED; it cannot be changed here";
+			case "config":
+				return "set in config.toml";
+			case "gui":
+				return "overridden here";
+			default:
+				return "";
 		}
-		const submittedModel = modelDirty || view?.model.origin === "gui" ? model : "";
-		const submittedBaseUrl = baseUrlDirty || view?.baseUrl.origin === "gui" ? baseUrl : "";
-		return { provider: submittedProvider, model: submittedModel, baseUrl: submittedBaseUrl, apiKey, clearApiKey: false };
+	});
+	let aiLocked = $derived(ro || view?.aiEnabled.origin === "env");
+
+	function submittedAIEnabled(): boolean | null {
+		return submittedSwitch(aiEnabledDirty, aiEnabled, view?.aiEnabled.override ?? null);
+	}
+
+	function input(): In {
+		const submittedProvider = submittedText(providerDirty, provider, view?.provider.override ?? null);
+		if (noProvider) {
+			return {
+				aiEnabled: submittedAIEnabled(),
+				provider: submittedProvider,
+				model: null,
+				baseUrl: null,
+				apiKey: "",
+				clearApiKey: false,
+			};
+		}
+		const submittedModel = submittedText(modelDirty, model, view?.model.override ?? null);
+		const submittedBaseUrl = submittedText(baseUrlDirty, baseUrl, view?.baseUrl.override ?? null);
+		return {
+			aiEnabled: submittedAIEnabled(),
+			provider: submittedProvider,
+			model: submittedModel,
+			baseUrl: submittedBaseUrl,
+			apiKey,
+			clearApiKey: false,
+		};
 	}
 
 	// submit runs one settings action, reporting done on success. Every action
@@ -110,8 +151,7 @@
 
 	function clearKey(): Promise<void> {
 		return submit(async () => {
-			const { provider: p, model: m, baseUrl: b } = input();
-			await App.SaveSettings({ provider: p, model: m, baseUrl: b, apiKey: "", clearApiKey: true });
+			await App.SaveSettings({ ...input(), apiKey: "", clearApiKey: true });
 			await load();
 		}, "GUI key override removed.");
 	}
@@ -127,7 +167,14 @@
 	function confirmReset(): Promise<void> {
 		resetConfirming = false;
 		return submit(async () => {
-			await App.SaveSettings({ provider: "", model: "", baseUrl: "", apiKey: "", clearApiKey: true });
+			await App.SaveSettings({
+				aiEnabled: null,
+				provider: null,
+				model: null,
+				baseUrl: null,
+				apiKey: "",
+				clearApiKey: true,
+			});
 			await load();
 		}, "Reset to config.toml.");
 	}
@@ -147,10 +194,29 @@
 			</p>
 		{/if}
 
+		<div class="field switch">
+			<label class="switch-label">
+				<input
+					type="checkbox"
+					bind:checked={aiEnabled}
+					disabled={aiLocked}
+					onchange={() => (aiEnabledDirty = true)}
+				/>
+				Enable AI features
+			</label>
+			{#if aiEnabledNote !== ""}<small>{aiEnabledNote}</small>{/if}
+			{#if !aiEnabled}
+				<small>
+					Every AI control is hidden and nothing is sent to a provider. Blocks written earlier stay
+					where they are and unreviewed ones stay reviewable. Your provider settings below are kept.
+				</small>
+			{/if}
+		</div>
+
 		<label>
 			Provider
-			<select bind:value={provider} disabled={ro} onchange={() => (providerDirty = true)}>
-				<option value="">None — AI features off</option>
+			<select bind:value={provider} disabled={ro || view.provider.origin === "env"} onchange={() => (providerDirty = true)}>
+				<option value="">None — no provider configured</option>
 				<option value="anthropic">Anthropic</option>
 				<option value="openai-compatible">OpenAI-compatible</option>
 			</select>
@@ -158,15 +224,20 @@
 			{#if providerFallbackNote !== ""}<small class="warning">{providerFallbackNote}</small>{/if}
 		</label>
 
-		{#if aiOff}
+		{#if noProvider}
 			<p class="hint">
-				AI features are off. Choose a provider above to configure a model, an API key, and (for
-				OpenAI-compatible) a base URL. There is nothing to check while no provider is selected.
+				No provider is configured. Choose one above to set a model, an API key, and (for
+				OpenAI-compatible) a base URL. There is nothing to check until then.
 			</p>
 		{:else}
 			<label>
 				Model
-				<input bind:value={model} disabled={ro} placeholder="provider default" oninput={() => (modelDirty = true)} />
+				<input
+					bind:value={model}
+					disabled={ro || view.model.origin === "env"}
+					placeholder="provider default"
+					oninput={() => (modelDirty = true)}
+				/>
 				{#if modelNote !== ""}<small>{modelNote}</small>{/if}
 			</label>
 
@@ -175,7 +246,7 @@
 					Base URL
 					<input
 						bind:value={baseUrl}
-						disabled={ro}
+						disabled={ro || view.baseUrl.origin === "env"}
 						placeholder="http://localhost:11434/v1"
 						oninput={() => (baseUrlDirty = true)}
 					/>
@@ -189,15 +260,15 @@
 					id="api-key"
 					type="password"
 					bind:value={apiKey}
-					disabled={ro || view.apiKeyOrigin === "env"}
-					placeholder={view.apiKeySet ? "set — type to replace" : "not set"}
+					disabled={ro || view.apiKey.origin === "env"}
+					placeholder={view.apiKey.set ? "set — type to replace" : "not set"}
 				/>
 				{#if apiKeyNote !== ""}<small>{apiKeyNote}</small>{/if}
 				<button
 					type="button"
 					class="link"
 					onclick={clearKey}
-					disabled={ro || busy || view.apiKeyOrigin !== "gui"}
+					disabled={ro || busy || view.apiKey.origin !== "gui"}
 				>
 					Clear key
 				</button>
@@ -206,7 +277,7 @@
 
 		<div class="actions">
 			<button type="button" onclick={save} disabled={ro || busy}>Save</button>
-			<button type="button" onclick={check} disabled={busy || aiOff}>Check</button>
+			<button type="button" onclick={check} disabled={busy || noProvider || !aiEnabled}>Check</button>
 			{#if !resetConfirming}
 				<button type="button" onclick={requestReset} disabled={ro || busy}>
 					Reset to config (clears key too)
@@ -238,6 +309,20 @@
 	}
 	.field-label {
 		margin-bottom: 0.25rem;
+	}
+	.switch {
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid var(--hairline);
+	}
+	.switch-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.25rem;
+	}
+	.switch-label input {
+		width: auto;
+		margin: 0;
 	}
 	small {
 		display: block;

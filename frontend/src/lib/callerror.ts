@@ -49,6 +49,7 @@ const readable: Record<string, string> = {
 	atomic_group: "This is part of a topic rename — accept or reject the whole batch on the Changes screen.",
 	busy: "The database is busy. Try again in a moment.",
 	concurrent_write: "A linked block changed while this topic was being renamed. Try the rename again.",
+	ai_disabled: "AI features are switched off. Turn them back on in Settings.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",
 	declarative: "Settings are locked by your config file (declarative mode).",

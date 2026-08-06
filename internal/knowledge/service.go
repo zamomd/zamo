@@ -22,34 +22,54 @@ type FileWriter interface {
 	WriteFiles(ctx context.Context, dir string, files []ExportFile) error
 }
 
+// AIPolicy reports whether AI operations are allowed.
+type AIPolicy func() bool
+
+// Option adjusts a Service at construction.
+type Option func(*Service)
+
+// WithAIPolicy sets the policy checked by AI operations and writes.
+func WithAIPolicy(p AIPolicy) Option {
+	return func(s *Service) { s.aiAllowed = p }
+}
+
 // Service holds the product's use cases. It is the only place where the
 // logic lives; every input calls its methods.
 type Service struct {
-	llm    LLMClient
-	repo   Repository
-	newID  IDGenerator
-	writer FileWriter
+	llm       LLMClient
+	repo      Repository
+	newID     IDGenerator
+	writer    FileWriter
+	aiAllowed AIPolicy
+}
+
+func (s *Service) requireAI() error {
+	if s.aiAllowed != nil && !s.aiAllowed() {
+		return ErrAIDisabled
+	}
+	return nil
 }
 
 // NewService wires the domain to its boundaries: the LLM provider, storage,
 // and the injected ID and file-writer sources. Nothing in the domain stamps
 // time — storage does — so no time source is injected here.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter) *Service {
-	return &Service{llm: llm, repo: repo, newID: newID, writer: writer}
+// AI operations are allowed when no policy is provided.
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, opts ...Option) *Service {
+	s := &Service{llm: llm, repo: repo, newID: newID, writer: writer}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // ApplyOps validates and applies a write batch directly. Every touched
 // block gains a revision; AI revisions await review, owner revisions are
 // born reviewed. The single write path for MCP, the GUI AI flows, and the
 // owner's manual edits.
-//
-// A batch that renames a topic root additionally rewrites every [[Topic]]
-// reference to it, so the text stays true. The expansion lands in the same
-// batch and therefore the same revision group, so the rename is reviewed and
-// reverted as a unit — and because it happens here rather than on one caller's
-// path, an AI rename is expanded exactly like the owner's and inherits the
-// batch's review state.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
+	if meta.Author == AuthorAI && s.requireAI() != nil {
+		return Applied{}, fmt.Errorf("%w: this batch is AI-authored", ErrAIDisabled)
+	}
 	if strings.TrimSpace(meta.Title) == "" {
 		return Applied{}, fmt.Errorf("empty title: %w", ErrInvalidOps)
 	}
@@ -73,10 +93,6 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 // expansion is not a path a fresh install can rely on to make a topic exist.
 // The name is written verbatim, which is what makes the new root's title_key
 // exactly the key the [[Topic]] reference that asked for it resolves by.
-//
-// A name nothing could reference — empty, or carrying a bracket — is refused
-// rather than creating a root the reference cannot reach after all, and a name
-// already taken reports ErrDuplicateTopic.
 func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
 	if TopicKey(name) == "" {
 		return "", fmt.Errorf("create topic %q: a topic needs a name: %w", name, ErrInvalidOps)
@@ -92,6 +108,9 @@ func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
 // ExpandTopic expands a topic into a block tree and writes it directly,
 // awaiting review.
 func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied, error) {
+	if err := s.requireAI(); err != nil {
+		return Applied{}, err
+	}
 	ops, err := s.llm.GenerateTree(ctx, topic, hint)
 	if err != nil {
 		return Applied{}, err
@@ -102,6 +121,9 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied,
 // EditWithAI turns a user's text command into structure edits and applies
 // them directly, awaiting review.
 func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
+	if err := s.requireAI(); err != nil {
+		return Applied{}, err
+	}
 	blocks, err := s.repo.GetSubtree(ctx, scope)
 	if err != nil {
 		return Applied{}, err
@@ -139,14 +161,6 @@ type rename struct {
 // and names the batch after them when the caller had nothing more specific to
 // say. An edit that takes a still-referenced root to a name nothing can
 // reference has no rewrite to make and is refused instead (see refuseOrphaning).
-//
-// Rewrites are made against the text the batch will actually store, which is
-// what the reader will see: an edit's own content supersedes what storage holds,
-// a move carries none so the stored text stands, and a delete leaves nothing to
-// rewrite. Only text that no longer carries the old name is left alone — that is
-// what makes a batch of "rename a topic and move a block referencing it" come
-// out true, and what makes the renamed root's own self-reference follow the
-// rename rather than go stale.
 func (s *Service) expandRenames(ctx context.Context, meta *WriteMeta, ops []Op) ([]Op, error) {
 	renames, err := s.renamesIn(ctx, ops)
 	if err != nil || len(renames) == 0 {

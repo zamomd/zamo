@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
 	import Backlinks from "./Backlinks.svelte";
@@ -208,21 +209,21 @@
 			<!-- Outside the branch above, so the lane keeps its width while the row
 			     is edited: handing the actions' width to the text column mid-click
 			     rewraps the block under the pointer and lands the caret on a
-			     different visual line than the one that was clicked. The controls
-			     themselves are hidden (and untabbable) while editing — the same
-			     reservation the fade already makes for a row at rest. -->
+			     different visual line than the one that was clicked. -->
 			<span class="gutter" class:reserved={editing}>
-				<button
-					type="button"
-					class="target"
-					title="ask the AI to restructure this block"
-					aria-label="target this block for the AI command"
-					aria-pressed={base.scopeID === node.block.ID}
-					disabled={base.busy || editing}
-					onclick={() => base.setScope(node.block)}
-				>
-					⌖
-				</button>
+				{#if ai.enabled}
+					<button
+						type="button"
+						class="target"
+						title="ask the AI to restructure this block"
+						aria-label="target this block for the AI command"
+						aria-pressed={base.scopeID === node.block.ID}
+						disabled={base.busy || editing}
+						onclick={() => base.setScope(node.block)}
+					>
+						⌖
+					</button>
+				{/if}
 				<button
 					type="button"
 					class="backlinks-toggle"
