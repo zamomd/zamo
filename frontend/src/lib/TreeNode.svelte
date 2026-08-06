@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
 	import Backlinks from "./Backlinks.svelte";
@@ -203,17 +204,19 @@
 				{@html renderMarkdown(node.block.Content, resolveRef)}
 			</div>
 			<span class="gutter">
-				<button
-					type="button"
-					class="target"
-					title="ask the AI to restructure this block"
-					aria-label="target this block for the AI command"
-					aria-pressed={base.scopeID === node.block.ID}
-					disabled={base.busy}
-					onclick={() => base.setScope(node.block)}
-				>
-					⌖
-				</button>
+				{#if ai.enabled}
+					<button
+						type="button"
+						class="target"
+						title="ask the AI to restructure this block"
+						aria-label="target this block for the AI command"
+						aria-pressed={base.scopeID === node.block.ID}
+						disabled={base.busy}
+						onclick={() => base.setScope(node.block)}
+					>
+						⌖
+					</button>
+				{/if}
 				<button
 					type="button"
 					class="backlinks-toggle"

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -33,26 +32,21 @@ func ValidateProvider(provider string) error {
 
 // Config is the root of config.toml.
 type Config struct {
-	// Database is the SQLite file path; empty means the platform data
-	// directory. The COMIND_DB environment variable overrides both.
+	// Database is the SQLite path. Empty selects the platform default.
 	Database string `toml:"database"`
 
-	// Declarative turns off the mutable settings layer: settings.toml is
-	// neither read nor written, and the GUI shows values read-only. It lives
-	// here and not in settings.toml on purpose — otherwise the GUI could
-	// unlock itself.
+	// Declarative disables the mutable settings layer.
 	Declarative bool `toml:"declarative"`
+
+	// AIEnabledRaw is nil when ai_enabled is not declared.
+	AIEnabledRaw *bool `toml:"ai_enabled"`
 
 	LLM LLM `toml:"llm"`
 }
 
 // LLM selects and configures the model provider.
 type LLM struct {
-	// Provider is "anthropic" or "openai-compatible" (OpenAI, OpenRouter,
-	// DeepSeek, local Ollama / LM Studio). Empty is valid and means "no
-	// provider configured": the GUI's AI features (ExpandTopic, EditWithAI)
-	// are off, but the rest of the application — including comind mcp, where
-	// the AI is the MCP client rather than this field — works fully.
+	// Provider selects the LLM backend. Empty means no provider is configured.
 	Provider string `toml:"provider"`
 	// Model is the model name; empty selects the provider's default.
 	Model string `toml:"model"`
@@ -111,13 +105,8 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// DatabasePath resolves the SQLite file location: $COMIND_DB, then the
-// database field, then <data dir>/comind/comind.db. The directory is
-// created if missing.
+// DatabasePath returns the configured database path or the platform default.
 func (c Config) DatabasePath() (string, error) {
-	if p := os.Getenv("COMIND_DB"); p != "" {
-		return p, nil
-	}
 	if c.Database != "" {
 		return c.Database, nil
 	}
@@ -129,40 +118,6 @@ func (c Config) DatabasePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "comind.db"), nil
-}
-
-// APIKeyValue resolves the provider key: environment variable first
-// (per provider; none when the provider is empty), then api_key_file,
-// then the inline api_key. Empty is allowed — local providers need no
-// key, and remote ones fail with a clear error on first use.
-func (l LLM) APIKeyValue() (string, error) {
-	if envName := KeyEnvName(l.Provider); envName != "" {
-		if key := os.Getenv(envName); key != "" {
-			return key, nil
-		}
-	}
-	if l.APIKeyFile != "" {
-		raw, err := os.ReadFile(l.APIKeyFile)
-		if err != nil {
-			return "", fmt.Errorf("read api_key_file: %w", err)
-		}
-		return strings.TrimSpace(string(raw)), nil
-	}
-	return l.APIKey, nil
-}
-
-// KeyEnvName reports the environment variable holding the key for a provider;
-// empty when the provider has none. It is the single source of the mapping —
-// error messages that name the variable must use it too.
-func KeyEnvName(provider string) string {
-	switch provider {
-	case ProviderOpenAICompat:
-		return "OPENAI_API_KEY"
-	case ProviderAnthropic:
-		return "ANTHROPIC_API_KEY"
-	default:
-		return ""
-	}
 }
 
 // dataDir returns the platform directory for application data. Data and

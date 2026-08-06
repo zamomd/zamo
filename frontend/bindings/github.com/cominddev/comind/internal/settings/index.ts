@@ -4,5 +4,6 @@
 export type {
     Field,
     In,
+    SecretField,
     View
 } from "./models.js";

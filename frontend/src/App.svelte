@@ -6,6 +6,7 @@
 	import { jumpToBlock } from "./lib/navigate";
 	import Sidebar from "./lib/Sidebar.svelte";
 	import SettingsView from "./SettingsView.svelte";
+	import { ai } from "./stores/ai.svelte";
 	import { base } from "./stores/base.svelte";
 	import { changes } from "./stores/changes.svelte";
 	import { shell } from "./stores/shell.svelte";
@@ -13,6 +14,7 @@
 
 	onMount(() => {
 		base.activate();
+		void ai.load();
 		return changes.start();
 	});
 </script>
