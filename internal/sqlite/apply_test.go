@@ -315,6 +315,60 @@ func TestApplyAddCarriesMode(t *testing.T) {
 	}
 }
 
+func TestApplyEditKeepsModeUnlessAsked(t *testing.T) {
+	repo := testRepo(t)
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+
+	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Doc\n\nMore."}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit); err != nil {
+		t.Fatalf("apply edit: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeDoc {
+		t.Fatalf("after a plain edit mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Doc", Mode: knowledge.ModeOutline}}
+	if err := repo.ApplyOps(t.Context(), "g3", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	blocks, err = repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("after an edit asking for outline mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "host", Content: "Host"},
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), ops); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	move := []knowledge.Op{{Kind: knowledge.OpMove, BlockID: "t1", Parent: "host"}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("move"), move); err != nil {
+		t.Fatalf("apply move: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("moved under a parent mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
 func TestApplyOpsAtomic(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()

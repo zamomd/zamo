@@ -166,14 +166,15 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		parent = string(head.ParentID)
 	}
 	key := titleKey(parent, head.Content)
+	mode := storedMode(parent, head.Mode, "")
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
+		INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			parent_id = excluded.parent_id, position = excluded.position,
 			content = excluded.content, title_key = excluded.title_key,
-			updated_at = excluded.updated_at`,
-		blockID, parent, head.Position, head.Content, key,
+			mode = excluded.mode, updated_at = excluded.updated_at`,
+		blockID, parent, head.Position, head.Content, key, string(mode),
 		first, formatTime(head.CreatedAt)); err != nil {
 		return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 	}

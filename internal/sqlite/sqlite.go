@@ -445,10 +445,17 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	var parent sql.NullString
 	var pos int
+	var current knowledge.Mode
 	if err := tx.QueryRowContext(ctx,
-		`SELECT parent_id, position FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&parent, &pos); err != nil {
+		`SELECT parent_id, position, mode FROM blocks WHERE id = ?`,
+		string(op.BlockID)).Scan(&parent, &pos, &current); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
+	var parentArg any
+	if parent.Valid && parent.String != "" {
+		parentArg = parent.String
+	}
+	mode := storedMode(parentArg, current, op.Mode)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
@@ -458,18 +465,15 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		Content:  op.Content,
 		ParentID: knowledge.ID(parent.String),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
-	var parentArg any
-	if parent.Valid && parent.String != "" {
-		parentArg = parent.String
-	}
 	key := titleKey(parentArg, op.Content)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
-		op.Content, key, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET content = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
+		op.Content, key, string(mode), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
@@ -494,8 +498,9 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		return err
 	}
 	var content string
+	var current knowledge.Mode
 	if err := tx.QueryRowContext(ctx,
-		`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&content); err != nil {
+		`SELECT content, mode FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&content, &current); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	var parent any
@@ -506,6 +511,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
+	mode := storedMode(parent, current, op.Mode)
 	key := titleKey(parent, content)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
@@ -516,13 +522,14 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		Content:  content,
 		ParentID: knowledge.ID(op.Parent),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, key, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, key, string(mode), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return nil
@@ -578,6 +585,7 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 			Content:  blk.Content,
 			ParentID: blk.ParentID,
 			Position: blk.Position,
+			Mode:     blk.Mode,
 			Deleted:  true,
 		})
 		if err := insertRevision(ctx, tx, rev, b.now); err != nil {

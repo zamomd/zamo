@@ -189,6 +189,52 @@ func TestDeleteRevisionParentGuard(t *testing.T) {
 	}
 }
 
+func TestRejectRestoresTheModeTheBlockHad(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	if err := repo.RejectBlock(t.Context(), "t1"); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("after reject mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestUndoGroupRestoresTheModeTheBlockHad(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g2", owner, convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	if err := repo.UndoGroup(t.Context(), "g2"); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("after undo mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
 func TestRejectBlockDropsUnreviewedChain(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
