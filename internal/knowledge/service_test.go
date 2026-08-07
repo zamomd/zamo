@@ -531,6 +531,9 @@ func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
 	if repo.applyMeta.Author != AuthorAI {
 		t.Errorf("author = %q, want %q", repo.applyMeta.Author, AuthorAI)
 	}
+	if llm.gotDocument.ID != "t" {
+		t.Errorf("model got document %+v, want the block being edited", llm.gotDocument)
+	}
 }
 
 func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
@@ -545,6 +548,47 @@ func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
 	}
 	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "# Go Contexts\n\nBody." {
 		t.Errorf("ops = %#v, want one edit carrying the generated document", repo.applyOps)
+	}
+}
+
+func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts"}},
+	}}
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	got, err := svc.ExpandTopicByID(t.Context(), "t", "cancellation")
+	if err != nil {
+		t.Fatalf("ExpandTopicByID: %v", err)
+	}
+	if llm.gotTopic != "Go Contexts" || llm.gotHint != "cancellation" {
+		t.Errorf("LLM asked for (%q, %q), want (Go Contexts, cancellation)", llm.gotTopic, llm.gotHint)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "# Go contexts" {
+		t.Errorf("ops = %#v, want the tree returned by the model", repo.applyOps)
+	}
+	badMeta := repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand ||
+		repo.applyMeta.Title != "Go Contexts"
+	if badMeta {
+		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
+	}
+	if got.GroupID == "" {
+		t.Errorf("GroupID is empty, want a generated group id")
+	}
+}
+
+func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"t": {{ID: "t", Content: "private topic"}}}}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.ExpandTopicByID(t.Context(), "t", "private hint")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if repo.gotSubtree != "" || llm.gotTopic != "" || llm.gotHint != "" {
+		t.Error("storage or the model was called while AI was disabled")
 	}
 }
 
