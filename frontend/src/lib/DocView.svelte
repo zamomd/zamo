@@ -95,11 +95,13 @@
 	// A document is one block edited whole: Enter inserts a newline (the
 	// textarea's default) and Tab indents two spaces rather than nesting or
 	// leaving the field, which is what a markdown editor is expected to do.
-	// Esc ends editing, so the keyboard is never trapped.
+	// Esc ends editing by committing, same as everywhere else in the app
+	// (InlineEditor) — the keyboard is never trapped, but it also never
+	// silently discards unsaved text.
 	function onKeydown(event: KeyboardEvent): void {
 		if (event.key === "Escape") {
 			event.preventDefault();
-			base.clearEdit();
+			void base.commitEdit();
 			return;
 		}
 		if (event.key !== "Tab") {
