@@ -424,3 +424,44 @@ func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
 		t.Fatalf("apply convert: %v", err)
 	}
 }
+
+func TestConversionRoundTripThroughStorage(t *testing.T) {
+	repo := testRepo(t)
+	svc := knowledge.NewService(nil, repo, func() knowledge.ID {
+		return knowledge.ID(fmt.Sprintf("blk-%d", time.Now().UnixNano()))
+	}, nil)
+
+	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if _, err := svc.ApplyOps(t.Context(), aiMeta("fill"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First."},
+		{Kind: knowledge.OpAdd, TempID: "b", Parent: "a", Content: "Nested."},
+	}); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	before, err := svc.GetSubtree(t.Context(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc); err != nil {
+		t.Fatalf("to doc: %v", err)
+	}
+	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeOutline); err != nil {
+		t.Fatalf("back to outline: %v", err)
+	}
+	after, err := svc.GetSubtree(t.Context(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("round trip left %d blocks, want %d", len(after), len(before))
+	}
+	for i := range before {
+		if before[i].Content != after[i].Content {
+			t.Errorf("block %d content = %q, want %q", i, after[i].Content, before[i].Content)
+		}
+	}
+}
