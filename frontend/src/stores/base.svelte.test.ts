@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { type Block, Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 
 vi.mock("@wailsio/runtime", () => ({
 	Events: { On: () => () => {} },
@@ -35,12 +35,13 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			return reloadFixture.subtrees[id] ?? [];
 		},
 		ExpandTopic: async () => {},
-		CreateTopic: vi.fn(async (_name: string) => {
+		CreateTopic: vi.fn(async (_name: string, _mode: string) => {
 			if (reloadFixture.createTopicError !== null) {
 				throw reloadFixture.createTopicError;
 			}
 			return reloadFixture.createdTopicID;
 		}),
+		SetTopicMode: vi.fn(async () => {}),
 		Backlinks: vi.fn(async (id: string) => {
 			if (reloadFixture.backlinksError !== null) {
 				throw reloadFixture.backlinksError;
@@ -85,6 +86,7 @@ function block(id: string, parent: string, content = id): Block {
 		ParentID: parent,
 		Position: 0,
 		Content: content,
+		Mode: Mode.ModeOutline,
 		Meta: {},
 		CreatedAt: "",
 		UpdatedAt: "",
@@ -637,7 +639,7 @@ describe("createTopic", () => {
 
 		await base.createTopic("Zig");
 
-		expect(App.CreateTopic).toHaveBeenCalledWith("Zig");
+		expect(App.CreateTopic).toHaveBeenCalledWith("Zig", "outline");
 		expect(base.selectedTopicID).toBe("zig");
 		expect(base.error).toBe("");
 	});
@@ -659,6 +661,69 @@ describe("createTopic", () => {
 
 		expect(base.error).toBe("A topic with that name already exists.");
 		expect(base.busy).toBe(false);
+	});
+});
+
+describe("topicMode", () => {
+	it("reads a topic root in doc mode as a document", () => {
+		const doc = node("doc", "", [], "# Doc");
+		doc.block.Mode = Mode.ModeDoc;
+		base.forest = [doc];
+		base.selectedTopicID = "doc";
+
+		expect(base.topicMode).toBe("doc");
+	});
+
+	it("reads an ordinary topic as an outline", () => {
+		expect(base.topicMode).toBe("outline");
+	});
+});
+
+describe("editing a document", () => {
+	it("commits through the ordinary block write path", async () => {
+		const doc = node("doc", "", [], "# Doc\n\nOld.");
+		doc.block.Mode = Mode.ModeDoc;
+		base.forest = [doc];
+		base.selectedTopicID = "doc";
+
+		await base.startEdit(doc.block, 0);
+		base.editText = "# Doc\n\nNew.";
+		expect(await base.commitEdit()).toBe(true);
+
+		expect(App.EditBlockContent).toHaveBeenCalledWith("doc", "# Doc\n\nNew.");
+	});
+});
+
+describe("choosing a topic's shape", () => {
+	it("creates a topic in the mode asked for", async () => {
+		reloadFixture.createdTopicID = "new";
+		await base.createTopic("Go Contexts", "doc");
+
+		expect(App.CreateTopic).toHaveBeenCalledWith("Go Contexts", "doc");
+	});
+
+	it("creates a topic from an unresolved reference as an outline", async () => {
+		reloadFixture.createdTopicID = "new";
+		await base.createTopic("Go Contexts");
+
+		expect(App.CreateTopic).toHaveBeenCalledWith("Go Contexts", "outline");
+	});
+
+	it("converts the selected topic and reloads it", async () => {
+		const seen: string[] = [];
+		reloadFixture.onSubtree = (id) => seen.push(id);
+
+		await base.setTopicMode("doc");
+
+		expect(App.SetTopicMode).toHaveBeenCalledWith("go", "doc");
+		expect(seen).toContain("go");
+	});
+
+	it("does nothing while another write is in flight", async () => {
+		base.busy = true;
+		await base.setTopicMode("doc");
+
+		expect(App.SetTopicMode).not.toHaveBeenCalled();
 	});
 });
 

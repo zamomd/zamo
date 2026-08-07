@@ -3,6 +3,7 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type {
 	Backlink,
 	Block,
+	Mode,
 	OutlineChange,
 	Revision,
 } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
@@ -100,6 +101,12 @@ class BaseStore {
 
 	visibleNodes = $derived<TreeNodeData[]>(this.viewRoot === null ? [] : [this.viewRoot]);
 
+	// topicMode is the shape of the selected topic. An unloaded or missing topic
+	// reads as an outline, which is what an empty screen renders as anyway.
+	get topicMode(): "outline" | "doc" {
+		return this.viewRoot?.block.Mode === "doc" ? "doc" : "outline";
+	}
+
 	constructor() {
 		Events.On(generationProgressEvent, (e) => {
 			if (!this.busy) return;
@@ -125,6 +132,7 @@ class BaseStore {
 				ParentID: u.Head.ParentID,
 				Position: u.Head.Position,
 				Content: u.Head.Content,
+				Mode: u.Head.Mode,
 				Meta: {},
 				CreatedAt: "",
 				UpdatedAt: "",
@@ -389,7 +397,7 @@ class BaseStore {
 	// routing this through the model would make creating a topic impossible on
 	// a fresh install. Expanding a topic with the AI stays its own gesture, the
 	// untargeted half of askAI.
-	async createTopic(name: string): Promise<void> {
+	async createTopic(name: string, mode: "outline" | "doc" = "outline"): Promise<void> {
 		if (this.busy) {
 			return;
 		}
@@ -400,13 +408,38 @@ class BaseStore {
 		}
 		this.error = "";
 		try {
-			const id = await App.CreateTopic(name);
+			const id = await App.CreateTopic(name, mode as Mode);
 			await this.reload();
 			if (this.forest.some((t) => t.block.ID === id)) {
 				this.selectedTopicID = id;
 				this.focusID = null;
 			}
 			this.status = `created "${name}"`;
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	// setTopicMode converts the selected topic. The conversion is one atomic
+	// batch, so the reload afterwards is what shows either shape whole.
+	async setTopicMode(mode: "outline" | "doc"): Promise<void> {
+		const id = this.selectedTopicID;
+		if (this.busy || id === null) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
+		this.error = "";
+		try {
+			await App.SetTopicMode(id, mode as Mode);
+			await this.reloadTopic(id);
+			this.status = mode === "doc" ? "converted to a document" : "converted to blocks";
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";

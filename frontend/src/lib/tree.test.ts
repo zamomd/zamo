@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { type Block, Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import {
 	crumbTrail,
 	findNode,
@@ -18,6 +18,7 @@ function block(id: string, parent: string): Block {
 		ParentID: parent,
 		Position: 0,
 		Content: id,
+		Mode: Mode.ModeOutline,
 		Meta: {},
 		CreatedAt: "",
 		UpdatedAt: "",

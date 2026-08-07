@@ -8,9 +8,9 @@
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
-	import { firstLine, normalizeTitle, type Ref } from "./refs";
+	import { makeResolver, refClick } from "./resolve";
 	import TreeNode from "./TreeNode.svelte";
-	import { findBlock, hasUnreviewed, type TreeNodeData } from "./tree";
+	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	let {
 		node,
@@ -47,23 +47,7 @@
 		});
 	});
 
-	// findTopicRoot looks a [[Topic]] reference up by its normalized key among
-	// the topics the store already holds — the same key blocks.title_key
-	// carries on the Go side, so this is the client-side half of resolution.
-	function findTopicRoot(targetKey: string): TreeNodeData | null {
-		return base.forest.find((t) => normalizeTitle(t.block.Content) === targetKey) ?? null;
-	}
-
-	// resolveRef backs renderMarkdown's live-lookup: null means unresolved, in
-	// which case the renderer falls back to the reference's own written text.
-	function resolveRef(ref: Ref): string | null {
-		if (ref.kind === "topic") {
-			const root = findTopicRoot(ref.targetKey);
-			return root ? firstLine(root.block.Content) : null;
-		}
-		const block = findBlock(base.forest, ref.targetKey);
-		return block ? firstLine(block.Content) : null;
-	}
+	const resolveRef = $derived(makeResolver(base.forest));
 
 	// pendingTopic holds the unresolved [[Topic]] name a click just asked to
 	// create. confirm()/alert()/prompt() are no-ops in the Wails webview (see
@@ -76,22 +60,15 @@
 	// unresolved block reference — nothing points at a gone or not-yet-synced
 	// block — does nothing.
 	function clickRef(el: HTMLElement): void {
-		const targetKey = el.dataset.target ?? "";
-		const isTopic = el.classList.contains("ref-topic");
-		if (el.classList.contains("ref-missing")) {
-			if (isTopic) {
-				pendingTopic = { name: el.textContent ?? targetKey };
-			}
+		const action = refClick(base.forest, el);
+		if (action === null) {
 			return;
 		}
-		if (isTopic) {
-			const root = findTopicRoot(targetKey);
-			if (root) base.reveal(root.block.ID);
+		if (action.kind === "create") {
+			pendingTopic = { name: action.name };
 			return;
 		}
-		if (findBlock(base.forest, targetKey)) {
-			base.reveal(targetKey);
-		}
+		base.reveal(action.id);
 	}
 
 	async function confirmCreateTopic(): Promise<void> {
