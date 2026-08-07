@@ -6,9 +6,12 @@ import (
 	"strconv"
 )
 
-// SetTopicMode converts a topic between its two shapes. The batch is atomic:
-// the root's new content is only true together with the children the conversion
-// removes or creates, so review and undo take it whole.
+// SetTopicMode converts a topic between its two shapes. The batch is atomic and
+// awaits review: the root's new content is only true together with the children
+// the conversion removes or creates, so the whole restructuring is one entry in
+// the Changes screen that is accepted or given back as a unit. It stays
+// owner-authored, because the owner is who asked for it — awaiting review is a
+// property of the batch, not a claim about its author.
 //
 // Both directions keep the root's first line exactly as it was, so the topic
 // keeps its name and no [[Topic]] reference is touched. Converting a topic to
@@ -36,10 +39,11 @@ func (s *Service) SetTopicMode(ctx context.Context, id ID, mode Mode) (Applied, 
 		ops = expandToOutline(root)
 	}
 	meta := WriteMeta{
-		Author: AuthorOwner,
-		Source: SourceGUIManual,
-		Title:  fmt.Sprintf("Convert topic to %s", mode),
-		Atomic: true,
+		Author:       AuthorOwner,
+		Source:       SourceGUIManual,
+		Title:        fmt.Sprintf("Convert topic to %s", mode),
+		Atomic:       true,
+		AwaitsReview: true,
 	}
 	return s.ApplyOps(ctx, meta, ops)
 }

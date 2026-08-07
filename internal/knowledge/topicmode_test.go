@@ -60,6 +60,39 @@ func TestSetTopicModeToOutlineSplitsTheDocument(t *testing.T) {
 	}
 }
 
+func TestSetTopicModeAwaitsReviewWithoutLyingAboutTheAuthor(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {
+			{ID: "t", Content: "Go Contexts"},
+			{ID: "a", ParentID: "t", Position: 1, Content: "First."},
+		},
+	}}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.SetTopicMode(t.Context(), "t", ModeDoc); err != nil {
+		t.Fatalf("SetTopicMode: %v", err)
+	}
+	meta := repo.applyMeta
+	if meta.Author != AuthorOwner {
+		t.Errorf("author = %q, want %q: the owner made this change", meta.Author, AuthorOwner)
+	}
+	// Atomic alone is inert on a batch born reviewed: every consumer of it
+	// filters on reviewed = 0. The conversion has to reach the review queue for
+	// the flag — and the whole-batch revert it buys — to mean anything.
+	if meta.BornReviewed() {
+		t.Error("the conversion is born reviewed, so nothing can revert it as one unit")
+	}
+}
+
+func TestOwnerWritesAreStillBornReviewed(t *testing.T) {
+	if !ownerMeta().BornReviewed() {
+		t.Error("an ordinary owner write now waits in the review queue")
+	}
+	if (WriteMeta{Author: AuthorAI}).BornReviewed() {
+		t.Error("an AI write is born reviewed")
+	}
+}
+
 func TestSetTopicModeRefusesANonRoot(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"c": {{ID: "c", ParentID: "t", Content: "child"}},

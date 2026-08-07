@@ -39,8 +39,9 @@ type Revision struct {
 	Atomic bool
 }
 
-// WriteMeta is the provenance of one ApplyOps batch. Author decides the
-// review state: owner revisions are born reviewed, AI revisions are not.
+// WriteMeta is the provenance of one ApplyOps batch. Author is a fact about who
+// made the change and nothing else is allowed to bend it; whether the batch has
+// to be reviewed is BornReviewed's answer.
 type WriteMeta struct {
 	Author Author
 	Source Source
@@ -51,6 +52,20 @@ type WriteMeta struct {
 	// [[New name]] while rejecting the rename would leave it resolving to
 	// nothing.
 	Atomic bool
+	// AwaitsReview sends an owner-authored batch to the review queue anyway.
+	// A restructuring the owner asked for is still one the owner may want back
+	// — and every mechanism that gives a batch back whole (the Changes screen's
+	// Reject batch, the atomic-group guards) reads the review state, so a batch
+	// born reviewed has no whole-batch revert at all. AI batches always await
+	// review and ignore this.
+	AwaitsReview bool
+}
+
+// BornReviewed reports whether the batch's revisions need no review decision.
+// The owner's own writes do not — typing must never queue up work for the
+// person who typed it — unless the batch asks for review explicitly.
+func (m WriteMeta) BornReviewed() bool {
+	return m.Author == AuthorOwner && !m.AwaitsReview
 }
 
 // Applied reports what an ApplyOps batch did: the group that ties its

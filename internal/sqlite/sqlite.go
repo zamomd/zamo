@@ -236,9 +236,10 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		groupID: groupID,
 		meta:    meta,
 		now:     formatTime(r.now()),
-		// Owner writes are trusted and need no review; AI writes wait in the
-		// Changes queue until the human accepts them (Task 4).
-		reviewed: meta.Author == knowledge.AuthorOwner,
+		// Owner writes are trusted and need no review; AI writes, and the owner
+		// writes that ask for it, wait in the Changes queue until the human
+		// accepts them.
+		reviewed: meta.BornReviewed(),
 	}
 	// Not withTx: applyOp's errors already name the op and the block, and a
 	// second "apply ops group …" in front of them would say nothing.

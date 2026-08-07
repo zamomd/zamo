@@ -424,7 +424,10 @@ class BaseStore {
 	}
 
 	// setTopicMode converts the selected topic. The conversion is one atomic
-	// batch, so the reload afterwards is what shows either shape whole.
+	// batch awaiting review, so the full reload afterwards is what shows either
+	// shape whole *and* brings in the pending-change snapshot the ghosts, the
+	// review rail and the Changes screen's "Reject batch" all read — the one
+	// route back from a conversion.
 	async setTopicMode(mode: "outline" | "doc"): Promise<void> {
 		const id = this.selectedTopicID;
 		if (this.busy || id === null) {
@@ -438,8 +441,9 @@ class BaseStore {
 		this.error = "";
 		try {
 			await App.SetTopicMode(id, mode as Mode);
-			await this.reloadTopic(id);
-			this.status = mode === "doc" ? "converted to a document" : "converted to blocks";
+			await this.reload();
+			this.status =
+				mode === "doc" ? "converted to a document, awaiting review" : "converted to blocks, awaiting review";
 		} catch (err: unknown) {
 			this.error = messageFor(err);
 			this.status = "";

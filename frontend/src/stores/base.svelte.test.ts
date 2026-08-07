@@ -719,6 +719,16 @@ describe("choosing a topic's shape", () => {
 		expect(seen).toContain("go");
 	});
 
+	// The conversion awaits review as one batch, and every screen that offers
+	// to give it back reads the pending-change snapshot: the tree's ghosts for
+	// the children it tombstoned, the Changes screen for the batch itself.
+	// Re-reading the topic alone leaves all of that showing the state before.
+	it("re-reads the pending changes so the conversion can be given back", async () => {
+		await base.setTopicMode("doc");
+
+		expect(changes.refresh).toHaveBeenCalled();
+	});
+
 	it("does nothing while another write is in flight", async () => {
 		base.busy = true;
 		await base.setTopicMode("doc");
