@@ -174,6 +174,11 @@ type fakeLLM struct {
 	editErr        error
 	gotScope       []Block
 	gotInstruction string
+	editOpsCalls   int
+
+	document    string
+	documentErr error
+	gotDocument Block
 
 	pingErr error
 }
@@ -184,8 +189,19 @@ func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, err
 }
 
 func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction string) ([]Op, error) {
+	l.editOpsCalls++
 	l.gotScope, l.gotInstruction = scope, instruction
 	return l.editOps, l.editErr
+}
+
+func (l *fakeLLM) GenerateDocument(_ context.Context, topic, hint string) (string, error) {
+	l.gotTopic, l.gotHint = topic, hint
+	return l.document, l.documentErr
+}
+
+func (l *fakeLLM) GenerateDocumentEdit(_ context.Context, doc Block, instruction string) (string, error) {
+	l.gotDocument, l.gotInstruction = doc, instruction
+	return l.document, l.documentErr
 }
 
 func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
@@ -489,6 +505,46 @@ func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("an empty expansion was applied")
+	}
+}
+
+func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "# Doc\n\nOld body.", Mode: ModeDoc}},
+	}}
+	llm := &fakeLLM{document: "# Doc\n\nNew body."}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.EditWithAI(t.Context(), "t", "rewrite the body"); err != nil {
+		t.Fatalf("EditWithAI: %v", err)
+	}
+	if llm.editOpsCalls != 0 {
+		t.Errorf("GenerateEdit was called %d times on a document", llm.editOpsCalls)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %#v, want one edit", repo.applyOps)
+	}
+	op := repo.applyOps[0]
+	if op.Kind != OpEdit || op.BlockID != "t" || op.Content != "# Doc\n\nNew body." {
+		t.Errorf("op = %#v, want an edit of t with the new document", op)
+	}
+	if repo.applyMeta.Author != AuthorAI {
+		t.Errorf("author = %q, want %q", repo.applyMeta.Author, AuthorAI)
+	}
+}
+
+func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts", Mode: ModeDoc}},
+	}}
+	llm := &fakeLLM{document: "# Go Contexts\n\nBody."}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
+		t.Fatalf("ExpandTopicByID: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "# Go Contexts\n\nBody." {
+		t.Errorf("ops = %#v, want one edit carrying the generated document", repo.applyOps)
 	}
 }
 

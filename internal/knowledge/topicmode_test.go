@@ -215,3 +215,33 @@ func TestSetTopicModeToTheModeAlreadyHeldWritesNothing(t *testing.T) {
 		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
 	}
 }
+
+func TestAIRewriteChangingTheFirstLineRewritesBacklinks(t *testing.T) {
+	repo := &fakeRepo{
+		subtrees: map[ID][]Block{
+			"t": {{ID: "t", Content: "# Go Contexts\n\nBody.", Mode: ModeDoc}},
+		},
+		blocks: map[ID]Block{
+			"t": {ID: "t", Content: "# Go Contexts\n\nBody.", Mode: ModeDoc},
+		},
+		referencing: []Block{{ID: "s", ParentID: "other", Content: "See [[Go Contexts]]."}},
+	}
+	llm := &fakeLLM{document: "# Contexts in Go\n\nBody."}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.EditWithAI(t.Context(), "t", "rename it"); err != nil {
+		t.Fatalf("EditWithAI: %v", err)
+	}
+	if !repo.applyMeta.Atomic {
+		t.Error("a rename expansion did not make the batch atomic")
+	}
+	var rewrote bool
+	for _, op := range repo.applyOps {
+		if op.BlockID == "s" && op.Content == "See [[Contexts in Go]]." {
+			rewrote = true
+		}
+	}
+	if !rewrote {
+		t.Errorf("ops = %#v, want the backlink rewritten", repo.applyOps)
+	}
+}

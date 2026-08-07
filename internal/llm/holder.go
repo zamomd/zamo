@@ -51,5 +51,19 @@ func (h *Holder) GenerateEdit(
 	return h.current().GenerateEdit(ctx, scope, instruction)
 }
 
+// GenerateDocument implements knowledge.LLMClient.
+func (h *Holder) GenerateDocument(ctx context.Context, topic, hint string) (string, error) {
+	return h.current().GenerateDocument(ctx, topic, hint)
+}
+
+// GenerateDocumentEdit implements knowledge.LLMClient.
+func (h *Holder) GenerateDocumentEdit(
+	ctx context.Context,
+	doc knowledge.Block,
+	instruction string,
+) (string, error) {
+	return h.current().GenerateDocumentEdit(ctx, doc, instruction)
+}
+
 // Ping implements knowledge.LLMClient.
 func (h *Holder) Ping(ctx context.Context) error { return h.current().Ping(ctx) }

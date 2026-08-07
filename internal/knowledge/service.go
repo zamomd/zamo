@@ -118,8 +118,38 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied,
 	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIExpand, Title: topic}, ops)
 }
 
-// EditWithAI turns a user's text command into structure edits and applies
-// them directly, awaiting review.
+// ExpandTopicByID expands an existing topic in the shape it has: an outline
+// grows a block tree, a document is written whole. Both await review.
+func (s *Service) ExpandTopicByID(ctx context.Context, id ID, hint string) (Applied, error) {
+	if err := s.requireAI(); err != nil {
+		return Applied{}, err
+	}
+	sub, err := s.repo.GetSubtree(ctx, id)
+	if err != nil {
+		return Applied{}, err
+	}
+	root := sub[0]
+	if root.Mode != ModeDoc {
+		ops, err := s.llm.GenerateTree(ctx, TopicName(root.Content), hint)
+		if err != nil {
+			return Applied{}, err
+		}
+		return s.ApplyOps(ctx, WriteMeta{
+			Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
+		}, ops)
+	}
+	text, err := s.llm.GenerateDocument(ctx, TopicName(root.Content), hint)
+	if err != nil {
+		return Applied{}, err
+	}
+	return s.ApplyOps(ctx, WriteMeta{
+		Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
+	}, []Op{{Kind: OpEdit, BlockID: id, Content: text}})
+}
+
+// EditWithAI turns a user's text command into a change of the scope and applies
+// it directly, awaiting review. A document is rewritten whole; an outline gets
+// structure edits.
 func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
 	if err := s.requireAI(); err != nil {
 		return Applied{}, err
@@ -128,11 +158,19 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 	if err != nil {
 		return Applied{}, err
 	}
+	meta := WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}
+	if blocks[0].Mode == ModeDoc {
+		text, err := s.llm.GenerateDocumentEdit(ctx, blocks[0], instruction)
+		if err != nil {
+			return Applied{}, err
+		}
+		return s.ApplyOps(ctx, meta, []Op{{Kind: OpEdit, BlockID: scope, Content: text}})
+	}
 	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
 	if err != nil {
 		return Applied{}, err
 	}
-	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}, ops)
+	return s.ApplyOps(ctx, meta, ops)
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
