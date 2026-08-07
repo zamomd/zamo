@@ -661,6 +661,7 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 	}
 
 	out := make([]knowledge.UnreviewedBlock, 0, len(blockIDs))
+	buried := make(map[string]bool)
 	for _, id := range blockIDs {
 		head, ok, err := headRevision(ctx, r.db, id)
 		if err != nil {
@@ -678,7 +679,6 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		// different group's id (see UnreviewedBlock's doc: that row is not
 		// always head, e.g. a reviewed owner edit sitting on top of a still-
 		// unreviewed AI edit).
-		//
 		var groupID, title string
 		var atomic bool
 		if err := r.db.QueryRowContext(ctx, `
@@ -694,11 +694,18 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		// Comparing this row's group with the head's cannot see that, nor a
 		// burying revision that is itself unreviewed — which becomes this very
 		// row, making the two ids match again.
-		var writtenOver bool
-		if groupID != "" {
+		//
+		// Asked once per group, not once per block. The answer is a property of
+		// the group, so every block reporting that group shares it by
+		// construction — and the query scans a batch's whole history, on a path
+		// the Changes screen polls, where one batch commonly holds the entire
+		// queue.
+		writtenOver, known := buried[groupID]
+		if groupID != "" && !known {
 			if writtenOver, err = groupWrittenOver(ctx, r.db, groupID); err != nil {
 				return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, err)
 			}
+			buried[groupID] = writtenOver
 		}
 		out = append(out, knowledge.UnreviewedBlock{
 			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,

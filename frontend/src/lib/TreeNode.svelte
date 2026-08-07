@@ -278,7 +278,9 @@
 				<!-- A later change sits on top of this page's batch, so rolling
 				     the page back would have to take the batch apart or discard
 				     that change; the backend refuses either way. -->
-				<span class="batch-only" title="a later edit was saved on top of this change, so it can only be accepted now"
+				<span
+					class="batch-only"
+					title="a later edit was saved on top of this change, so it can only be accepted now; that edit stays either way"
 					>accept only</span
 				>
 			{:else}

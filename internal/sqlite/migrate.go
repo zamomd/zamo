@@ -66,6 +66,15 @@ CREATE TABLE block_revisions (
 
 CREATE INDEX idx_revisions_unreviewed ON block_revisions(block_id) WHERE reviewed = 0;
 
+-- Whether a batch can still be undone is asked of its group id (see
+-- groupWrittenOver), once per pending batch on a path the Changes screen polls.
+-- Without this the question is a full scan of the revision history, which is
+-- what it costs on a queue holding many small batches.
+--
+-- Deliberately absent from schemaFeatures: a missing index changes only speed,
+-- and that list refuses to open the database at all.
+CREATE INDEX idx_revisions_group ON block_revisions(group_id);
+
 -- atomic marks a batch whose blocks are only true together: a topic rename
 -- and the reference rewrites it implies. Review takes such a group whole.
 CREATE TABLE revision_groups (

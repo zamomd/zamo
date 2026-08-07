@@ -102,7 +102,10 @@ describe("refresh", () => {
 	it("collects the batches a later change was saved on top of", async () => {
 		unreviewedFixture.respond = () =>
 			Promise.resolve({
-				Blocks: [buried("root", "convert", true, "zig"), entry("child", "convert", true, "zig")],
+				// The flag is a fact about the batch, so every entry of a buried
+				// one carries it — the backend cannot emit a group flagged on
+				// one block and not on another.
+				Blocks: [buried("root", "convert", true, "zig"), buried("child", "convert", true, "zig")],
 			});
 
 		await changes.refresh();
