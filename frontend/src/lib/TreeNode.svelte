@@ -203,7 +203,14 @@
 			>
 				{@html renderMarkdown(node.block.Content, resolveRef)}
 			</div>
-			<span class="gutter">
+		{/if}
+
+		{#if !ghost}
+			<!-- Outside the branch above, so the lane keeps its width while the row
+			     is edited: handing the actions' width to the text column mid-click
+			     rewraps the block under the pointer and lands the caret on a
+			     different visual line than the one that was clicked. -->
+			<span class="gutter" class:reserved={editing}>
 				{#if ai.enabled}
 					<button
 						type="button"
@@ -211,7 +218,7 @@
 						title="ask the AI to restructure this block"
 						aria-label="target this block for the AI command"
 						aria-pressed={base.scopeID === node.block.ID}
-						disabled={base.busy}
+						disabled={base.busy || editing}
 						onclick={() => base.setScope(node.block)}
 					>
 						⌖
@@ -224,7 +231,7 @@
 					title="show blocks that link here"
 					aria-expanded={backlinksOpen}
 					aria-label="toggle linked references"
-					disabled={base.busy}
+					disabled={base.busy || editing}
 					onclick={() => base.toggleBacklinks(node.block.ID)}
 				>
 					∞
@@ -479,6 +486,9 @@
 		color: inherit;
 		min-width: 0;
 		line-height: var(--row-height);
+		/* A pasted URL or a run of keyboard noise must break at the same place
+		   here and in the editor — see .editor in InlineEditor.svelte. */
+		overflow-wrap: break-word;
 	}
 	.content.busy {
 		cursor: default;
@@ -551,6 +561,16 @@
 	.row.targeted .gutter button.target,
 	.gutter button.open {
 		opacity: 1;
+	}
+	/* An edited row keeps the lane and loses the controls. visibility, not
+	   display or opacity: it holds the width the text column is measured
+	   against, while taking the buttons out of the tab order — an opacity-only
+	   hide would leave two focusable controls in the middle of a keyboard
+	   edit. Last among the .gutter rules so it outranks the standing
+	   exceptions above, which a targeted or open row would otherwise light up
+	   under the caret. */
+	.gutter.reserved button {
+		visibility: hidden;
 	}
 	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
 	   reach it — style it through :global under .content. */
