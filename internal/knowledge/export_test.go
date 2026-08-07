@@ -145,3 +145,15 @@ func TestRenderMarkdownWritesADocumentVerbatim(t *testing.T) {
 		t.Errorf("content =\n%q\nwant\n%q", files[0].Content, doc)
 	}
 }
+
+func TestRenderMarkdownEndsADocumentWithANewline(t *testing.T) {
+	// A topic created as a document and never edited is one line with no
+	// terminator, and the outline branch always writes one. An exported file
+	// without a final newline is a text file most tools call malformed.
+	for _, doc := range []string{"Go Contexts", "Go Contexts\n\n\n"} {
+		files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
+		if got := files[0].Content; got != "Go Contexts\n" {
+			t.Errorf("RenderMarkdown of %q wrote %q, want %q", doc, got, "Go Contexts\n")
+		}
+	}
+}

@@ -43,18 +43,31 @@ func TestSplitDocumentNestsByHeadingLevel(t *testing.T) {
 }
 
 func TestSplitDocumentNestsRelativeToTheShallowestHeading(t *testing.T) {
-	// The same shape written one level up: sections at `#` rather than `##`
-	// must split identically, because nesting is relative to the body's own
-	// shallowest heading rather than to the absolute `#` count.
-	_, children := SplitDocument("Go Contexts\n\nIntro paragraph.\n\n# Cancellation\n\nctx.Done() closes.\n")
-	want := []DocChild{
-		{Text: "Intro paragraph.", Depth: 0},
-		{Text: "# Cancellation", Depth: 0},
-		{Text: "ctx.Done() closes.", Depth: 1},
+	// One shape, a section with a subsection, written at two heading levels.
+	// Both must nest identically, because a heading opens a level by its depth
+	// below the body's own shallowest heading and not by its absolute `#`
+	// count. Two levels are needed: at one, every candidate rule agrees.
+	const (
+		shallow = "Go Contexts\n\n# Cancellation\n\nctx.Done() closes.\n\n## Deadlines\n\nA deadline propagates.\n"
+		deep    = "Go Contexts\n\n### Cancellation\n\nctx.Done() closes.\n\n#### Deadlines\n\nA deadline propagates.\n"
+	)
+	want := []int{0, 1, 1, 2}
+	for _, doc := range []string{shallow, deep} {
+		_, children := SplitDocument(doc)
+		if got := depths(children); !slices.Equal(got, want) {
+			t.Errorf("SplitDocument(%q) nests at %v, want %v", doc, got, want)
+		}
 	}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
+}
+
+// depths is the nesting of each split block, which is what a comparison across
+// two heading levels can share — the text cannot, since it carries the level.
+func depths(children []DocChild) []int {
+	out := make([]int, len(children))
+	for i, c := range children {
+		out[i] = c.Depth
 	}
+	return out
 }
 
 func TestSplitDocumentKeepsAFenceWhole(t *testing.T) {

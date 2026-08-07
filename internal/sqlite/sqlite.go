@@ -485,6 +485,11 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 // applyEdit replaces a block's content, refreshing updated_at, and appends a
 // revision that carries the block's unchanged parent/position alongside the
 // new content — a revision is a full snapshot, not a diff.
+//
+// An edit names its target by id alone, so this is the first place that knows
+// whether the target is a topic root: a mode asked for on a child is refused
+// here rather than quietly coerced to outline, which would report success for a
+// write that did something else.
 func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	var parent sql.NullString
 	var pos int
@@ -497,6 +502,10 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	var parentArg any
 	if parent.Valid && parent.String != "" {
 		parentArg = parent.String
+	}
+	if op.Mode != "" && parentArg != nil {
+		return fmt.Errorf("apply edit %s: only a topic root has a mode, and %s is a child of %s: %w",
+			op.BlockID, op.BlockID, parent.String, knowledge.ErrInvalidOps)
 	}
 	mode := storedMode(parentArg, current, op.Mode)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))

@@ -42,10 +42,13 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 }
 
 // renderTopic renders one topic in the shape it has: a document is already the
-// markdown its author wrote, an outline becomes a nested bullet list.
+// markdown its author wrote, an outline becomes a nested bullet list. Either
+// way the file ends in exactly one newline, as RenderDocument writes it — a
+// document topic is stored as the text the editor holds, which need not end in
+// one at all.
 func renderTopic(sub []Block) string {
 	if sub[0].Mode == ModeDoc {
-		return sub[0].Content
+		return strings.TrimRight(sub[0].Content, "\n") + "\n"
 	}
 	return renderSubtree(sub)
 }

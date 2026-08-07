@@ -358,6 +358,29 @@ func TestApplyEditKeepsModeUnlessAsked(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	// An edit names its target by id, so nothing before storage knows the
+	// target is a child. Coercing the mode to outline and reporting success
+	// tells a model its write landed as asked.
+	err := repo.ApplyOps(t.Context(), "g2", aiMeta("bad"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed", Mode: knowledge.ModeDoc},
+	})
+	if !errors.Is(err, knowledge.ErrInvalidOps) {
+		t.Fatalf("ApplyOps = %v, want ErrInvalidOps", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "c1"); content != "child" {
+		t.Errorf("the refused edit landed anyway: content = %q", content)
+	}
+}
+
 func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
 	repo := testRepo(t)
 	ops := []knowledge.Op{
