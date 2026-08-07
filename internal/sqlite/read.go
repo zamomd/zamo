@@ -139,8 +139,10 @@ const searchLimit = 200
 // Search implements knowledge.Repository: FTS5 full-text over block content,
 // most relevant first (bm25). The user's words are matched as an implicit AND
 // of literal terms — see ftsQuery. A blank query returns no hits without
-// touching the database.
-func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.Block, error) {
+// touching the database. Each hit carries an FTS-generated snippet around the
+// match, since a block's first line alone can't locate a hit inside a
+// document.
+func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.SearchHit, error) {
 	match := ftsQuery(query)
 	if match == "" {
 		return nil, nil
@@ -148,7 +150,8 @@ func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.Block, err
 
 	const q = `
 SELECT b.id, b.parent_id, b.position, b.content, b.mode, b.metadata, b.created_at, b.updated_at,
-	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = b.id AND r.reviewed = 0)
+	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = b.id AND r.reviewed = 0),
+	snippet(blocks_fts, 0, '', '', '…', 24)
 FROM blocks_fts
 JOIN blocks b ON b.rowid = blocks_fts.rowid
 WHERE blocks_fts MATCH ?
@@ -161,11 +164,28 @@ LIMIT ?`
 	}
 	defer rows.Close()
 
-	blocks, err := scanBlocks(rows)
-	if err != nil {
+	var hits []knowledge.SearchHit
+	for rows.Next() {
+		var (
+			b                knowledge.Block
+			parent           sql.NullString
+			meta             string
+			created, updated string
+			snippet          string
+		)
+		if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &b.Mode, &meta,
+			&created, &updated, &b.Unreviewed, &snippet); err != nil {
+			return nil, translate(err)
+		}
+		if err := decodeBlockFields(&b, parent, meta, created, updated); err != nil {
+			return nil, translate(err)
+		}
+		hits = append(hits, knowledge.SearchHit{Block: b, Snippet: snippet})
+	}
+	if err := rows.Err(); err != nil {
 		return nil, translate(err)
 	}
-	return blocks, nil
+	return hits, nil
 }
 
 // ftsQuery turns a raw user string into a safe FTS5 MATCH expression. Each

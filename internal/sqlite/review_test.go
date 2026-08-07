@@ -142,7 +142,7 @@ func TestDeleteHeadTombstoneResurrects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(hits) != 1 || hits[0].ID != "b1" {
+	if len(hits) != 1 || hits[0].Block.ID != "b1" {
 		t.Errorf("Search(alive) after resurrection = %v, want [b1]", hits)
 	}
 }

@@ -49,10 +49,13 @@
 				<p class="note">{search.status === "" ? "searching…" : search.status}</p>
 			{:else}
 				<ul>
-					{#each search.results as hit (hit.ID)}
+					{#each search.results as hit (hit.Block.ID)}
 						<li>
-							<button type="button" class="row hit" disabled={base.busy} onclick={() => jumpToBlock(hit.ID)}>
-								{plainText(hit.Content)}
+							<button type="button" class="row hit" disabled={base.busy} onclick={() => jumpToBlock(hit.Block.ID)}>
+								<span class="hit-title">{plainText(hit.Block.Content)}</span>
+								{#if hit.Snippet !== ""}
+									<span class="hit-snippet">{hit.Snippet}</span>
+								{/if}
 							</button>
 						</li>
 					{/each}
@@ -197,9 +200,28 @@
 		color: var(--accent);
 		border-left-color: var(--accent);
 	}
-	.row.child,
-	.row.hit {
+	.row.child {
 		font-size: var(--size-small);
+	}
+	.row.hit {
+		display: flex;
+		flex-direction: column;
+		gap: 0.05rem;
+		white-space: normal;
+		padding-top: 0.15rem;
+		padding-bottom: 0.15rem;
+		font-size: var(--size-small);
+	}
+	.hit-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.hit-snippet {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--text-faint);
 	}
 	.mode-icon {
 		display: inline-block;

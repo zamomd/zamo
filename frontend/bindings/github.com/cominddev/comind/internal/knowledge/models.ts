@@ -162,6 +162,17 @@ export interface Revision {
 }
 
 /**
+ * SearchHit is one full-text match: the block that carries it and an excerpt
+ * around the matching words. A block can be a whole document, whose first
+ * line says only what topic was hit, so the excerpt is what locates the
+ * match.
+ */
+export interface SearchHit {
+    "Block": Block;
+    "Snippet": string;
+}
+
+/**
  * Source says where a write came from. The set is open: the scheduler,
  * chat import and other future inputs will add their own values.
  */

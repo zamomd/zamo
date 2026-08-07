@@ -163,7 +163,7 @@ func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
 	return f.unreviewed, f.unreviewedErr
 }
 
-func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
+func (f *fakeRepo) Search(context.Context, string) ([]SearchHit, error) { return nil, f.searchErr }
 
 type fakeLLM struct {
 	tree              []Op

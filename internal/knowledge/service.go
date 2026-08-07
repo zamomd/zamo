@@ -508,7 +508,7 @@ func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
 }
 
 // Search runs a full-text search over block content.
-func (s *Service) Search(ctx context.Context, query string) ([]Block, error) {
+func (s *Service) Search(ctx context.Context, query string) ([]SearchHit, error) {
 	return s.repo.Search(ctx, query)
 }
 

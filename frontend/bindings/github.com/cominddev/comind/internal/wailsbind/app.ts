@@ -197,7 +197,7 @@ export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
  * Search passes the call to knowledge.Service. The frontend supplies the raw
  * query string; the backend owns the FTS syntax and its neutralisation.
  */
-export function Search(query: string): $CancellablePromise<knowledge$0.Block[] | null> {
+export function Search(query: string): $CancellablePromise<knowledge$0.SearchHit[] | null> {
     return $Call.ByID(1512770581, query);
 }
 

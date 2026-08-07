@@ -15,6 +15,7 @@ export type {
     Metadata,
     OutlineChange,
     Revision,
+    SearchHit,
     TopicEdge,
     TopicGraph,
     TopicNode,

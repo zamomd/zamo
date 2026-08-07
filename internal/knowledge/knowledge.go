@@ -39,6 +39,15 @@ type Block struct {
 // IsTopic reports whether the block is a topic root.
 func (b Block) IsTopic() bool { return b.ParentID == "" }
 
+// SearchHit is one full-text match: the block that carries it and an excerpt
+// around the matching words. A block can be a whole document, whose first
+// line says only what topic was hit, so the excerpt is what locates the
+// match.
+type SearchHit struct {
+	Block   Block
+	Snippet string
+}
+
 // Backlink is one incoming reference, hydrated for display: the block that
 // carries the reference plus the topic it lives under, which is the context a
 // reader needs to place it without navigating. The source block's own parent
