@@ -69,19 +69,30 @@ func collapseToDocument(sub []Block) []Op {
 func expandToOutline(root Block) []Op {
 	line, children := SplitDocument(root.Content)
 	ops := []Op{{Kind: OpEdit, BlockID: root.ID, Content: line, Mode: ModeOutline}}
-	// parents[d] is the temp id of the most recent block at depth d, which is
-	// what a block at depth d+1 hangs from. Depth 0 hangs from the root itself.
-	parents := map[int]string{}
+	// open is the chain of ancestors the next block can hang from, deepest last.
+	// Popping every entry at or below the block's own depth leaves the nearest
+	// block the document is still inside, which is its parent; an empty chain
+	// means the root. Popping rather than indexing by depth is what makes both
+	// irregular shapes come out right: a document that skips a level going
+	// deeper — an h2 followed by an h4, or a list some editor indented four
+	// spaces — finds the ancestor it does have, and one that pulls back out
+	// cannot reach a block in the branch it has left.
+	type ancestor struct {
+		depth int
+		temp  string
+	}
+	var open []ancestor
 	for i, child := range children {
-		temp := "b" + strconv.Itoa(i)
-		parent := string(root.ID)
-		if child.Depth > 0 {
-			if p, ok := parents[child.Depth-1]; ok {
-				parent = p
-			}
+		for len(open) > 0 && open[len(open)-1].depth >= child.Depth {
+			open = open[:len(open)-1]
 		}
+		parent := string(root.ID)
+		if len(open) > 0 {
+			parent = open[len(open)-1].temp
+		}
+		temp := "b" + strconv.Itoa(i)
 		ops = append(ops, Op{Kind: OpAdd, TempID: temp, Parent: parent, Content: child.Text})
-		parents[child.Depth] = temp
+		open = append(open, ancestor{depth: child.Depth, temp: temp})
 	}
 	return ops
 }

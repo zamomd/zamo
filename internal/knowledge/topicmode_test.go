@@ -114,6 +114,94 @@ func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	}
 }
 
+// TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALevel
+// covers a document that jumps from an h2 straight to an h4, leaving depth 1
+// empty. The h4 belongs to the h2 above it, not to the topic root.
+func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALevel(t *testing.T) {
+	doc := "Go Contexts\n\n## A\n\n#### B\n\nB text.\n"
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
+	}}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
+		t.Fatalf("SetTopicMode: %v", err)
+	}
+	if len(repo.applyOps) != 4 {
+		t.Fatalf("ops = %#v, want an edit and three adds", repo.applyOps)
+	}
+	a, b, bText := repo.applyOps[1], repo.applyOps[2], repo.applyOps[3]
+
+	if a.Content != "## A" || a.Parent != "t" {
+		t.Errorf("A = %#v, want a child of the root", a)
+	}
+	if b.Content != "#### B" || b.Parent != string(a.BlockID) {
+		t.Errorf("B = %#v, want a child of A, the nearest heading above it", b)
+	}
+	if bText.Content != "B text." || bText.Parent != string(b.BlockID) {
+		t.Errorf("B text. = %#v, want a child of B", bText)
+	}
+}
+
+// TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel
+// covers a nested list item indented four spaces, as several editors write it.
+// The two levels of indent it reads as must still land it under the item above.
+func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel(t *testing.T) {
+	doc := "Go Contexts\n\n- top\n\n    - deep\n"
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
+	}}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
+		t.Fatalf("SetTopicMode: %v", err)
+	}
+	if len(repo.applyOps) != 3 {
+		t.Fatalf("ops = %#v, want an edit and two adds", repo.applyOps)
+	}
+	top, deep := repo.applyOps[1], repo.applyOps[2]
+
+	if top.Content != "top" || top.Parent != "t" {
+		t.Errorf("top = %#v, want a child of the root", top)
+	}
+	if deep.Content != "deep" || deep.Parent != string(top.BlockID) {
+		t.Errorf("deep = %#v, want a child of top", deep)
+	}
+}
+
+// TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch covers the two
+// shapes meeting: a heading pulls back out, then the next one skips a level
+// going deeper. The depth it lands on was last filled inside the branch the
+// document already left, which must not make that block its parent.
+func TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch(t *testing.T) {
+	doc := "Go Contexts\n\n## A\n\nA text.\n\n## B\n\n#### C\n"
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
+	}}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
+		t.Fatalf("SetTopicMode: %v", err)
+	}
+	if len(repo.applyOps) != 5 {
+		t.Fatalf("ops = %#v, want an edit and four adds", repo.applyOps)
+	}
+	a, aText, b, c := repo.applyOps[1], repo.applyOps[2], repo.applyOps[3], repo.applyOps[4]
+
+	if a.Content != "## A" || a.Parent != "t" {
+		t.Errorf("A = %#v, want a child of the root", a)
+	}
+	if aText.Content != "A text." || aText.Parent != string(a.BlockID) {
+		t.Errorf("A text. = %#v, want a child of A", aText)
+	}
+	if b.Content != "## B" || b.Parent != "t" {
+		t.Errorf("B = %#v, want a child of the root", b)
+	}
+	if c.Content != "#### C" || c.Parent != string(b.BlockID) {
+		t.Errorf("C = %#v, want a child of B, not of anything under A", c)
+	}
+}
+
 func TestSetTopicModeToTheModeAlreadyHeldWritesNothing(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: "# Doc", Mode: ModeDoc}},
