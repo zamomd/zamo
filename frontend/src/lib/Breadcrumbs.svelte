@@ -3,10 +3,17 @@
 	import { crumbTrail } from "./tree";
 
 	const trail = $derived(base.focusID === null ? null : crumbTrail(base.forest, base.focusID));
+
+	// Converting away from a document deletes nothing the user can lose — the
+	// text becomes blocks — so the switch needs no confirmation step, only a
+	// busy guard.
+	function toggleTopicMode(): void {
+		void base.setTopicMode(base.topicMode === "doc" ? "outline" : "doc");
+	}
 </script>
 
-{#if trail !== null && trail.length > 0}
-	<nav aria-label="path to the focused block">
+<nav aria-label="path to the focused block and the topic's shape">
+	{#if trail !== null && trail.length > 0}
 		{#each trail as crumb, i (crumb.id)}
 			{#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
 			<button
@@ -18,8 +25,11 @@
 			</button>
 		{/each}
 		<span class="sep" aria-hidden="true">›</span>
-	</nav>
-{/if}
+	{/if}
+	<button type="button" class="mode-switch" disabled={base.busy} onclick={toggleTopicMode}>
+		{base.topicMode === "doc" ? "Convert to blocks" : "Convert to document"}
+	</button>
+</nav>
 
 <style>
 	nav {
@@ -60,5 +70,19 @@
 	}
 	.sep {
 		opacity: 0.6;
+	}
+	/* A persistent page-level control, not a contextual crumb, so it opts back
+	   into button chrome (the plain `button` rule above strips it) and sits at
+	   the row's far end regardless of whether a trail is showing. */
+	.mode-switch {
+		margin-left: auto;
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		padding: 0.1rem 0.5rem;
+		color: var(--text-dim);
+	}
+	.mode-switch:hover:not(:disabled) {
+		background: var(--hover);
+		color: var(--text);
 	}
 </style>
