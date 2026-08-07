@@ -431,7 +431,7 @@ func TestConversionRoundTripThroughStorage(t *testing.T) {
 		return knowledge.ID(fmt.Sprintf("blk-%d", time.Now().UnixNano()))
 	}, nil)
 
-	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts")
+	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}

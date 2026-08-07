@@ -283,7 +283,7 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	id, err := svc.CreateTopic(t.Context(), "Local-first")
+	id, err := svc.CreateTopic(t.Context(), "Local-first", "")
 	if err != nil {
 		t.Fatalf("CreateTopic: %v", err)
 	}
@@ -307,6 +307,30 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	}
 }
 
+func TestCreateTopicTakesItsMode(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Mode != ModeDoc {
+		t.Errorf("ops = %#v, want one add in doc mode", repo.applyOps)
+	}
+}
+
+func TestCreateTopicDefaultsToOutline(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ""); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if got := repo.applyOps[0].Mode; got != ModeOutline {
+		t.Errorf("mode = %q, want %q", got, ModeOutline)
+	}
+}
+
 func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
@@ -314,7 +338,7 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	// A bracketed name belongs here too: the root would be created and the
 	// [[...]] that asked for it would still resolve to nothing.
 	for _, name := range []string{"", "   ", "###", "Notes [WIP]"} {
-		if _, err := svc.CreateTopic(t.Context(), name); !errors.Is(err, ErrInvalidOps) {
+		if _, err := svc.CreateTopic(t.Context(), name, ""); !errors.Is(err, ErrInvalidOps) {
 			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
 		}
 	}
@@ -327,7 +351,7 @@ func TestCreateTopicReportsATakenName(t *testing.T) {
 	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	if _, err := svc.CreateTopic(t.Context(), "Local-first"); !errors.Is(err, ErrDuplicateTopic) {
+	if _, err := svc.CreateTopic(t.Context(), "Local-first", ""); !errors.Is(err, ErrDuplicateTopic) {
 		t.Errorf("error = %v, want ErrDuplicateTopic", err)
 	}
 }

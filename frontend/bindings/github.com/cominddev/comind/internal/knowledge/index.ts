@@ -3,6 +3,7 @@
 
 export {
     Author,
+    Mode,
     Source
 } from "./models.js";
 

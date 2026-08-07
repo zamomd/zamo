@@ -53,6 +53,12 @@ export interface Block {
     "Position": number;
     "Content": string;
     "Meta": Metadata;
+
+    /**
+     * Mode is the shape of the topic this block roots. Meaningful only when
+     * IsTopic reports true; a child is always ModeOutline.
+     */
+    "Mode": Mode;
     "CreatedAt": string;
     "UpdatedAt": string;
 
@@ -75,6 +81,24 @@ export type ID = string;
  * provenance, model, etc. Stored in the database as JSON.
  */
 export type Metadata = { [_ in string]?: any } | null;
+
+/**
+ * Mode is the shape a topic takes: a tree of blocks, or a single block holding
+ * a whole markdown document. It is a property of a topic root and of nothing
+ * else; no other state is derived from it.
+ */
+export enum Mode {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    /**
+     * The two shapes a topic can have.
+     */
+    ModeOutline = "outline",
+    ModeDoc = "doc",
+};
 
 /**
  * OutlineChange identifies an outline operation for undo and caret placement.
@@ -107,6 +131,11 @@ export interface Revision {
      */
     "ParentID": ID;
     "Position": number;
+
+    /**
+     * the shape the block had at this change (see Block.Mode)
+     */
+    "Mode": Mode;
 
     /**
      * tombstone: the block is absent from the projection

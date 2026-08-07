@@ -33,6 +33,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrInvalidRollback, "invalid_rollback"},
 		{knowledge.ErrGroupWrittenOver, "group_written_over"},
 		{knowledge.ErrDuplicateTopic, "duplicate_topic"},
+		{knowledge.ErrDocumentHasChildren, "document_has_children"},
 		{knowledge.ErrUnreferenceableTopic, "unreferenceable_topic"},
 		{knowledge.ErrAtomicGroup, "atomic_group"},
 		{knowledge.ErrBusy, "busy"},
