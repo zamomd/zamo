@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -200,6 +201,105 @@ func TestWriteRejectsForgedOrigin(t *testing.T) {
 	}
 }
 
+func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
+	fake := &fakeBase{}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "Contexts in Go",
+			"ops": []map[string]any{
+				{"op": "add", "temp_id": "t1", "content": "# Contexts in Go", "mode": "doc"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
+	}
+	if len(fake.writeOps) != 1 {
+		t.Fatalf("ops not forwarded: %+v", fake.writeOps)
+	}
+	if got := fake.writeOps[0].Mode; got != knowledge.ModeDoc {
+		t.Errorf("Mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+}
+
+func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
+	fake := &fakeBase{writeErr: fmt.Errorf("block c1: %w", knowledge.ErrDocumentHasChildren)}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "fill the doc",
+			"ops": []map[string]any{
+				{"op": "add", "temp_id": "c1", "parent": "01ROOT", "content": "child"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("write_blocks accepted a child under a document")
+	}
+	text := contentText(t, res)
+	if !strings.Contains(text, "edit its root content instead of adding children") {
+		t.Errorf("error text = %q, want it to name the write that would work", text)
+	}
+}
+
+func TestGetSubtreeReportsTheMode(t *testing.T) {
+	fake := &fakeBase{subtree: []knowledge.Block{
+		{ID: "01ROOT", Content: "# Doc", Mode: knowledge.ModeDoc},
+	}}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_subtree",
+		Arguments: map[string]any{"root": "01ROOT"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("get_subtree reported a tool error: %+v", res.Content)
+	}
+	var out blocksOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	want := blocksOutput{Blocks: []blockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
+	if !reflect.DeepEqual(out, want) {
+		t.Errorf("output = %+v, want %+v", out, want)
+	}
+}
+
+func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
+	fake := &fakeBase{subtree: []knowledge.Block{
+		{ID: "01ROOT", Content: "Topic"},
+		{ID: "01KID", ParentID: "01ROOT", Content: "child"},
+	}}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_subtree",
+		Arguments: map[string]any{"root": "01ROOT"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	if strings.Count(string(raw), `"mode"`) != 1 {
+		t.Errorf("result = %s, want the mode reported for the root alone", raw)
+	}
+}
+
 func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
@@ -215,6 +315,19 @@ func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[st
 		t.Fatalf("decode %s output: %v", name, err)
 	}
 	return out
+}
+
+// contentText joins a tool result's text content, which is where a refused
+// call's explanation lands.
+func contentText(t *testing.T, res *mcpsdk.CallToolResult) string {
+	t.Helper()
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcpsdk.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
 }
 
 func TestSearchTool(t *testing.T) {

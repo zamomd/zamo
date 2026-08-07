@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -61,7 +62,11 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 		Description: "Apply block operations directly. Changes are live " +
 			"immediately but every touched block is flagged for the human's " +
 			"review and can be rolled back — write carefully and set " +
-			"rationale on every op.",
+			"rationale on every op.\n" +
+			"A topic is either an outline (a block tree) or a document (one " +
+			"root holding the whole markdown page, no children). An add or " +
+			"edit of a root may carry \"mode\": \"outline\" | \"doc\"; omit " +
+			"it to leave the shape alone.",
 	}, s.writeBlocks)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "search",
@@ -88,6 +93,7 @@ type blockView struct {
 	ID      string `json:"id"`
 	Parent  string `json:"parent,omitempty"`
 	Content string `json:"content"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 // blocksOutput is the return shape shared by the read tools.
@@ -98,7 +104,20 @@ type blocksOutput struct {
 func toBlocksOutput(blocks []knowledge.Block) blocksOutput {
 	views := make([]blockView, len(blocks))
 	for i, b := range blocks {
-		views[i] = blockView{ID: string(b.ID), Parent: string(b.ParentID), Content: b.Content}
+		v := blockView{ID: string(b.ID), Parent: string(b.ParentID), Content: b.Content}
+		// Mode is only meaningful on a topic root; storage stamps every
+		// child ModeOutline regardless, so gating on IsTopic (not just
+		// omitempty) is what actually keeps it off children on the wire.
+		// A root's mode defaults to outline, the same default CreateTopic
+		// resolves an unset mode to, so the field is never blank on a root.
+		if b.IsTopic() {
+			mode := b.Mode
+			if mode == "" {
+				mode = knowledge.ModeOutline
+			}
+			v.Mode = string(mode)
+		}
+		views[i] = v
 	}
 	return blocksOutput{Blocks: views}
 }
@@ -195,6 +214,7 @@ type opInput struct {
 	Parent    string `json:"parent,omitzero" jsonschema:"temp_id or existing id; empty means topic root"`
 	BlockID   string `json:"block_id,omitzero" jsonschema:"existing block to edit/move/delete"`
 	Content   string `json:"content,omitzero" jsonschema:"the block content"`
+	Mode      string `json:"mode,omitzero" jsonschema:"outline or doc; only on a topic root, empty leaves the shape alone"`
 	Rationale string `json:"rationale,omitzero" jsonschema:"why the AI makes this change"`
 }
 
@@ -206,6 +226,7 @@ func (in opInput) toOp() knowledge.Op {
 		Parent:    in.Parent,
 		BlockID:   knowledge.ID(in.BlockID),
 		Content:   in.Content,
+		Mode:      knowledge.Mode(in.Mode),
 		Rationale: in.Rationale,
 		Origin:    originMCP,
 	}
@@ -223,6 +244,16 @@ type writeInput struct {
 	Ops   []opInput `json:"ops" jsonschema:"the block operations to apply (add/edit/move/delete)"`
 }
 
+// explain turns a domain error into something an AI client can act on. The
+// document refusal names the write that would have worked, because the model
+// has no other way to learn the topic's shape mid-batch.
+func explain(err error) string {
+	if errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		return err.Error() + "; edit its root content instead of adding children"
+	}
+	return err.Error()
+}
+
 // writeBlocks applies the operations as an mcp-sourced, AI-authored batch. The
 // source and author are fixed here: an MCP client never chooses its own
 // provenance.
@@ -236,7 +267,9 @@ func (s *Server) writeBlocks(
 	applied, err := s.writer.ApplyOps(ctx,
 		knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: in.Title}, ops)
 	if err != nil {
-		return nil, writeOutput{}, err
+		var res mcpsdk.CallToolResult
+		res.SetError(errors.New(explain(err)))
+		return &res, writeOutput{}, nil
 	}
 	ids := make(map[string]string, len(applied.IDs))
 	for temp, id := range applied.IDs {
