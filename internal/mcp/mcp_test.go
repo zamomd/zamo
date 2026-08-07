@@ -253,6 +253,29 @@ func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
 	}
 }
 
+func TestWriteBlocksReportsNoStructuredContentOnFailure(t *testing.T) {
+	fake := &fakeBase{writeErr: errors.New("base unavailable")}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "t",
+			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("write_blocks must report IsError on a capability failure")
+	}
+	if res.StructuredContent != nil {
+		t.Errorf("StructuredContent = %#v, want nil on a failed write "+
+			"(a client that reads it before IsError must not see a fake empty success)", res.StructuredContent)
+	}
+}
+
 func TestGetSubtreeReportsTheMode(t *testing.T) {
 	fake := &fakeBase{subtree: []knowledge.Block{
 		{ID: "01ROOT", Content: "# Doc", Mode: knowledge.ModeDoc},
