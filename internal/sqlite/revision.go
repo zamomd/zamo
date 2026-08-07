@@ -188,7 +188,10 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 		}
 		if kids {
-			return fmt.Errorf("block %s: a document cannot keep its children; roll them back first: %w",
+			// Not "roll them back": the children reached here by surviving the
+			// rollback, so they are as likely to be reviewed blocks no rollback
+			// will ever remove. Deleting them is the action that always exists.
+			return fmt.Errorf("block %s: a document cannot keep its children; delete or move them first: %w",
 				blockID, knowledge.ErrInvalidRollback)
 		}
 	}

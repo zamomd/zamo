@@ -37,6 +37,40 @@ class ChangesStore {
 		return out;
 	});
 
+	// writtenOverGroups holds the batches a later change has been saved on top
+	// of: a block's head belongs to a newer group than the one still pending on
+	// it. Undoing such a batch would have to discard that later change, so the
+	// backend refuses it (ErrGroupWrittenOver) and the "Reject batch" control
+	// can only fail. Typing one character into a freshly converted document is
+	// the common way to reach this, since an owner edit is born reviewed and
+	// lands straight on top of the conversion.
+	writtenOverGroups = $derived.by(() => {
+		const out = new Set<string>();
+		for (const b of this.blocks) {
+			if (b.GroupID && b.Head.GroupID !== b.GroupID) {
+				out.add(b.GroupID);
+			}
+		}
+		return out;
+	});
+
+	// writtenOverPages holds the topics whose page carries such a batch, and
+	// only for an atomic one: a page-wide rollback does not undo the group, it
+	// rolls each block back on its own, which for a buried atomic batch either
+	// takes the batch apart — the thing atomic exists to prevent — or trips the
+	// document invariant and aborts. A plain batch keeps its page controls,
+	// where that per-block rollback is exactly the intended meaning.
+	writtenOverPages = $derived.by(() => {
+		const buried = this.writtenOverGroups;
+		const out = new Set<string>();
+		for (const b of this.blocks) {
+			if (b.Atomic && b.GroupID && buried.has(b.GroupID)) {
+				out.add(b.TopicID);
+			}
+		}
+		return out;
+	});
+
 	async refresh(): Promise<void> {
 		const c = await App.Unreviewed();
 		this.blocks = c?.Blocks ?? [];

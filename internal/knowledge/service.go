@@ -62,10 +62,11 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWr
 	return s
 }
 
-// ApplyOps validates and applies a write batch directly. Every touched
-// block gains a revision; AI revisions await review, owner revisions are
-// born reviewed. The single write path for MCP, the GUI AI flows, and the
-// owner's manual edits.
+// ApplyOps validates and applies a write batch directly. Every touched block
+// gains a revision, awaiting review or not as WriteMeta.BornReviewed decides:
+// AI revisions always wait, owner revisions do not unless the batch asked to
+// (WriteMeta.AwaitsReview). The single write path for MCP, the GUI AI flows,
+// and the owner's manual edits.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
 	if meta.Author == AuthorAI && s.requireAI() != nil {
 		return Applied{}, fmt.Errorf("%w: this batch is AI-authored", ErrAIDisabled)

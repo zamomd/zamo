@@ -49,10 +49,12 @@
 		{/each}
 		<span class="sep" aria-hidden="true">›</span>
 	{/if}
+	<!-- aria-expanded only in the direction that opens the confirmation row;
+	     the other converts on the click and expands nothing. -->
 	<button
 		type="button"
 		class="mode-switch"
-		aria-expanded={pendingConvert}
+		aria-expanded={base.topicMode === "doc" ? undefined : pendingConvert}
 		disabled={base.busy}
 		onclick={toggleTopicMode}
 	>
@@ -123,8 +125,11 @@
 		color: var(--text);
 	}
 	/* The same quiet hanging panel TreeNode and DocView use to confirm creating
-	   a topic from an unresolved reference. */
+	   a topic from an unresolved reference. flex: none like the nav it hangs
+	   under: both are direct children of TopicView's column, where the tree is
+	   the only item allowed to take the free space. */
 	.confirm {
+		flex: none;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;

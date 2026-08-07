@@ -29,6 +29,7 @@
 	const topicRoot = $derived(node.block.ParentID === "");
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
 	const straddling = $derived(changes.straddling.has(node.block.ID));
+	const writtenOver = $derived(changes.writtenOverPages.has(node.block.ID));
 	const byAI = $derived(node.block.Meta?.author === "ai");
 	const hasHidden = $derived(hasChildren && !expanded);
 
@@ -273,15 +274,24 @@
 			>
 				Accept all
 			</button>
-			<button
-				type="button"
-				class="reject-page"
-				title="reject every unreviewed change on this page"
-				disabled={base.busy}
-				onclick={() => base.rejectPage(node.block.ID)}
-			>
-				Reject all
-			</button>
+			{#if writtenOver}
+				<!-- A later change sits on top of this page's batch, so rolling
+				     the page back would have to take the batch apart or discard
+				     that change; the backend refuses either way. -->
+				<span class="batch-only" title="a later edit was saved on top of this change, so it can only be accepted now"
+					>accept only</span
+				>
+			{:else}
+				<button
+					type="button"
+					class="reject-page"
+					title="reject every unreviewed change on this page"
+					disabled={base.busy}
+					onclick={() => base.rejectPage(node.block.ID)}
+				>
+					Reject all
+				</button>
+			{/if}
 		{/if}
 	</div>
 	{#if backlinksOpen}

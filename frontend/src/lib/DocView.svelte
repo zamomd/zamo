@@ -20,6 +20,11 @@
 	const resolveRef = $derived(makeResolver(base.forest));
 	const html = $derived(renderMarkdown(block.Content, resolveRef));
 
+	// The tree says this with a hollow dot, whose meaning comes from the filled
+	// dots around it. A document is one block with nothing to contrast against,
+	// so it says it in words instead, in the same channel as the lane's other
+	// small dim labels.
+	const byAI = $derived(block.Meta?.author === "ai");
 	const backlinksOpen = $derived(base.openBacklinks.has(block.ID));
 	const historyOpen = $derived(base.historyID === block.ID);
 	const unreviewed = $derived(block.Unreviewed);
@@ -28,6 +33,9 @@
 	// as the document itself, so it can be dirty while the root is not.
 	const pageDirty = $derived(hasUnreviewed(node));
 	const straddling = $derived(changes.straddling.has(block.ID));
+	// A later edit — typically the first keystroke into this document — sits on
+	// top of the pending batch, so there is no giving it back any more.
+	const writtenOver = $derived(changes.writtenOverPages.has(block.ID));
 
 	let area: HTMLTextAreaElement | undefined = $state();
 	let contentEl: HTMLElement | undefined = $state();
@@ -136,6 +144,9 @@
      hang them off, so they sit once above the text, in TreeNode's order and
      with the same labels, and act on the root block exactly as they do there. -->
 <div class="controls">
+	{#if byAI}
+		<span class="by-ai" title="the AI wrote this document">AI</span>
+	{/if}
 	{#if ai.enabled}
 		<button
 			type="button"
@@ -225,15 +236,27 @@
 		>
 			Accept all
 		</button>
-		<button
-			type="button"
-			class="reject-page"
-			title="reject every unreviewed change on this page"
-			disabled={base.busy}
-			onclick={() => base.rejectPage(block.ID)}
-		>
-			Reject all
-		</button>
+		{#if writtenOver}
+			<!-- Rejecting would have to discard the later edit sitting on top of
+			     this batch, which the backend refuses, so the button is not
+			     offered. Converting back is the gesture that still works, and it
+			     keeps that edit. -->
+			<span
+				class="batch-only"
+				title="a later edit was saved on top of this change, so it can only be accepted now — use Convert to blocks to change the shape back"
+				>accept only</span
+			>
+		{:else}
+			<button
+				type="button"
+				class="reject-page"
+				title="reject every unreviewed change on this page"
+				disabled={base.busy}
+				onclick={() => base.rejectPage(block.ID)}
+			>
+				Reject all
+			</button>
+		{/if}
 	{/if}
 </div>
 
@@ -315,7 +338,8 @@
 	.reject-page {
 		font-size: var(--size-small);
 	}
-	.batch-only {
+	.batch-only,
+	.by-ai {
 		flex: none;
 		padding: 0 0.3rem;
 		font-size: var(--size-small);

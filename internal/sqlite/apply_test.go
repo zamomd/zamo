@@ -441,6 +441,29 @@ func TestApplyRefusesAChildUnderADocument(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	// The batch names only the root. The child it would strand is reached
+	// through the parent side of the check alone — the side a conversion that
+	// forgets its children takes, which is the whole point of the invariant.
+	err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeDoc},
+	})
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after the refused batch mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
 func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
 	repo := testRepo(t)
 	build := []knowledge.Op{
@@ -588,6 +611,53 @@ func TestConversionIsRevertedWholeByItsGroup(t *testing.T) {
 	}
 	if len(pending.Blocks) != 0 {
 		t.Errorf("%d blocks still awaiting review after the revert, want none", len(pending.Blocks))
+	}
+}
+
+// TestAnEditOverAConversionClosesItsWholeBatchRevert pins what the GUI reads to
+// decide whether to offer the reject controls. Typing into a freshly converted
+// document is the very next thing a user does, and an owner edit is born
+// reviewed, so it lands straight on top of the conversion's pending revision.
+// That edit asserts the topic is a document holding its text, so giving the
+// conversion back would have to discard it — and rolling the page back instead
+// would restore the children under a root the edit keeps a document. Both are
+// refused, which is correct; what the frontend must not do is keep offering
+// them.
+func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+	topicID, groupID := convertedTopic(t, svc)
+
+	if err := svc.EditBlockContent(t.Context(), topicID, "Go Contexts\n\nTyped."); err != nil {
+		t.Fatalf("type into the document: %v", err)
+	}
+
+	if err := svc.UndoGroup(t.Context(), groupID); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Errorf("UndoGroup = %v, want ErrGroupWrittenOver", err)
+	}
+	if err := svc.RejectPage(t.Context(), topicID); !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Errorf("RejectPage = %v, want ErrInvalidRollback", err)
+	}
+
+	// The signal the frontend derives "written over" from: the block's head
+	// belongs to a newer group than the one still pending on it.
+	pending, err := svc.Unreviewed(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen bool
+	for _, b := range pending.Blocks {
+		if b.Head.BlockID != topicID {
+			continue
+		}
+		seen = true
+		if b.Head.GroupID == b.GroupID {
+			t.Errorf("head group %s equals the pending group, so nothing tells the GUI the batch was written over",
+				b.Head.GroupID)
+		}
+	}
+	if !seen {
+		t.Error("the root left the review queue, so the conversion is no longer pending at all")
 	}
 }
 
