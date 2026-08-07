@@ -423,6 +423,35 @@ class BaseStore {
 		}
 	}
 
+	// expandTopic asks the AI to write a topic that already exists, in the shape
+	// it has: an outline grows a block tree, a document is written whole. This
+	// is the counterpart of askAI's untargeted half, which names a *new* topic
+	// after the command text — an existing empty topic has a name already, and
+	// it is the prompt. Steering it with an instruction is the targeted half:
+	// setScope on the topic, then the command box.
+	async expandTopic(id: string): Promise<void> {
+		if (this.busy) {
+			return;
+		}
+		this.busy = true;
+		if (!(await this.commitEdit())) {
+			this.busy = false;
+			return;
+		}
+		this.error = "";
+		try {
+			this.status = "asking the AI to write this…";
+			await App.ExpandTopicByID(id, "");
+			await this.reload();
+			this.status = "changes applied, awaiting review";
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+			this.status = "";
+		} finally {
+			this.busy = false;
+		}
+	}
+
 	// setTopicMode converts the selected topic. The conversion is one atomic
 	// batch awaiting review, so the full reload afterwards is what shows either
 	// shape whole *and* brings in the pending-change snapshot the ghosts, the

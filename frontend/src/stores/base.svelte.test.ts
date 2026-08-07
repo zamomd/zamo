@@ -17,6 +17,7 @@ const reloadFixture = vi.hoisted(() => ({
 	backlinksError: null as Error | null,
 	createdTopicID: "",
 	createTopicError: null as Error | null,
+	expandByIDError: null as Error | null,
 }));
 const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
@@ -34,7 +35,12 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			reloadFixture.onSubtree?.(id);
 			return reloadFixture.subtrees[id] ?? [];
 		},
-		ExpandTopic: async () => {},
+		ExpandTopic: vi.fn(async () => {}),
+		ExpandTopicByID: vi.fn(async () => {
+			if (reloadFixture.expandByIDError !== null) {
+				throw reloadFixture.expandByIDError;
+			}
+		}),
 		CreateTopic: vi.fn(async (_name: string, _mode: string) => {
 			if (reloadFixture.createTopicError !== null) {
 				throw reloadFixture.createTopicError;
@@ -128,6 +134,7 @@ beforeEach(() => {
 	reloadFixture.backlinksError = null;
 	reloadFixture.createdTopicID = "";
 	reloadFixture.createTopicError = null;
+	reloadFixture.expandByIDError = null;
 	reloadFixture.topicMapError = null;
 	reloadFixture.gate = null;
 	reloadFixture.writeGate = null;
@@ -691,6 +698,46 @@ describe("editing a document", () => {
 		expect(await base.commitEdit()).toBe(true);
 
 		expect(App.EditBlockContent).toHaveBeenCalledWith("doc", "# Doc\n\nNew.");
+	});
+});
+
+describe("asking the AI to write an existing topic", () => {
+	beforeEach(() => {
+		base.busy = false;
+		base.editingID = null;
+	});
+
+	it("expands the topic in place instead of creating a new one", async () => {
+		base.forest = [node("go", "")];
+		base.selectedTopicID = "go";
+		reloadFixture.topics = [block("go", "")];
+		reloadFixture.subtrees = { go: [block("go", ""), block("written", "go")] };
+
+		await base.expandTopic("go");
+
+		expect(App.ExpandTopicByID).toHaveBeenCalledWith("go", "");
+		expect(App.ExpandTopic).not.toHaveBeenCalled();
+		expect(findNode(base.forest, "written")?.block.ID).toBe("written");
+		expect(base.status).toBe("changes applied, awaiting review");
+	});
+
+	it("does nothing while another write is in flight", async () => {
+		base.busy = true;
+		await base.expandTopic("go");
+
+		expect(App.ExpandTopicByID).not.toHaveBeenCalled();
+	});
+
+	it("reports a refusal without leaving the interface busy", async () => {
+		// The refusal an AI-off base answers with; the store must surface it
+		// rather than the generic fallback, and must not stay busy.
+		reloadFixture.expandByIDError = Object.assign(new Error("ai disabled"), {
+			cause: { code: "ai_disabled", message: "AI features are switched off" },
+		});
+		await base.expandTopic("go");
+
+		expect(base.error).toContain("switched off");
+		expect(base.busy).toBe(false);
 	});
 });
 

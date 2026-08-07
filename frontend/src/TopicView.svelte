@@ -22,7 +22,7 @@
 	{:else}
 		<Breadcrumbs />
 		{#if base.topicMode === "doc"}
-			<div class="tree"><DocView block={tree.block} /></div>
+			<div class="tree"><DocView node={tree} /></div>
 		{:else}
 			<div class="tree">
 				<ul>

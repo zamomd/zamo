@@ -5,10 +5,33 @@
 	const trail = $derived(base.focusID === null ? null : crumbTrail(base.forest, base.focusID));
 
 	// Converting away from a document deletes nothing the user can lose — the
-	// text becomes blocks — so the switch needs no confirmation step, only a
-	// busy guard.
+	// text becomes blocks — so that direction goes straight through. The other
+	// tombstones every block in the topic, and the round trip is not exact, so
+	// one misclick on a large outline is not recoverable to the byte. confirm()
+	// is a no-op in the Wails webview, so the confirmation is a real row.
+	let pendingConvert = $state(false);
+
 	function toggleTopicMode(): void {
-		void base.setTopicMode(base.topicMode === "doc" ? "outline" : "doc");
+		if (base.topicMode === "doc") {
+			void base.setTopicMode("outline");
+			return;
+		}
+		pendingConvert = true;
+	}
+
+	// A pending confirmation belongs to the topic it was opened on; moving to
+	// another one drops it rather than letting "convert" land on that topic.
+	$effect(() => {
+		void base.selectedTopicID;
+		pendingConvert = false;
+	});
+
+	async function confirmConvert(): Promise<void> {
+		if (base.busy) {
+			return;
+		}
+		pendingConvert = false;
+		await base.setTopicMode("doc");
 	}
 </script>
 
@@ -26,10 +49,24 @@
 		{/each}
 		<span class="sep" aria-hidden="true">›</span>
 	{/if}
-	<button type="button" class="mode-switch" disabled={base.busy} onclick={toggleTopicMode}>
+	<button
+		type="button"
+		class="mode-switch"
+		aria-expanded={pendingConvert}
+		disabled={base.busy}
+		onclick={toggleTopicMode}
+	>
 		{base.topicMode === "doc" ? "Convert to blocks" : "Convert to document"}
 	</button>
 </nav>
+
+{#if pendingConvert}
+	<div class="confirm">
+		<span>Convert to a document? Every block in this topic becomes text, and converting back does not restore them exactly.</span>
+		<button type="button" disabled={base.busy} onclick={confirmConvert}>convert</button>
+		<button type="button" onclick={() => (pendingConvert = false)}>cancel</button>
+	</div>
+{/if}
 
 <style>
 	nav {
@@ -84,5 +121,28 @@
 	.mode-switch:hover:not(:disabled) {
 		background: var(--hover);
 		color: var(--text);
+	}
+	/* The same quiet hanging panel TreeNode and DocView use to confirm creating
+	   a topic from an unresolved reference. */
+	.confirm {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.25rem 0;
+		padding: 0.2rem 0.4rem;
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
+	}
+	.confirm button {
+		flex: none;
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		background: none;
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		color: inherit;
+	}
+	.confirm button:hover:not(:disabled) {
+		background: var(--hover);
 	}
 </style>
