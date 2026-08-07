@@ -177,8 +177,6 @@
 		{/if}
 
 		{#if ghost}
-			<!-- A pending deletion: struck through, no edit/target affordances —
-			     there is nothing left to edit until it is restored. -->
 			<span class="content ghost-content">{@html renderMarkdown(node.block.Content, resolveRef)}</span>
 		{:else if editing}
 			<InlineEditor id={node.block.ID} />
@@ -206,10 +204,7 @@
 		{/if}
 
 		{#if !ghost}
-			<!-- Outside the branch above, so the lane keeps its width while the row
-			     is edited: handing the actions' width to the text column mid-click
-			     rewraps the block under the pointer and lands the caret on a
-			     different visual line than the one that was clicked. -->
+			<!-- Keep the actions lane mounted so editing does not change the text width. -->
 			<span class="gutter" class:reserved={editing}>
 				{#if ai.enabled}
 					<button
@@ -239,11 +234,6 @@
 			</span>
 		{/if}
 
-		<!-- History is allowed on ghosts too: it is how a pending deletion is
-		     inspected or undone before review, unlike edit/target which stay
-		     hidden until the block is restored. It therefore needs a gutter of its
-		     own rather than sharing the one above, which lives inside that guard;
-		     two adjacent flex containers lay out as one lane. -->
 		<span class="gutter">
 			<button
 				type="button"
@@ -486,8 +476,7 @@
 		color: inherit;
 		min-width: 0;
 		line-height: var(--row-height);
-		/* A pasted URL or a run of keyboard noise must break at the same place
-		   here and in the editor — see .editor in InlineEditor.svelte. */
+		/* Keep wrapping consistent with InlineEditor's .editor. */
 		overflow-wrap: break-word;
 	}
 	.content.busy {
@@ -562,13 +551,7 @@
 	.gutter button.open {
 		opacity: 1;
 	}
-	/* An edited row keeps the lane and loses the controls. visibility, not
-	   display or opacity: it holds the width the text column is measured
-	   against, while taking the buttons out of the tab order — an opacity-only
-	   hide would leave two focusable controls in the middle of a keyboard
-	   edit. Last among the .gutter rules so it outranks the standing
-	   exceptions above, which a targeted or open row would otherwise light up
-	   under the caret. */
+	/* Preserve the lane width without leaving its controls focusable. */
 	.gutter.reserved button {
 		visibility: hidden;
 	}

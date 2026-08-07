@@ -60,9 +60,6 @@ describe("TreeNode", () => {
 		expect(content?.querySelector("strong")).not.toBeNull();
 	});
 
-	// The lanes reserve the width beside the text; jsdom lays nothing out, so
-	// their count is the assertable half of it. A text column that changes
-	// width rewraps the block under the pointer.
 	it("keeps the same lanes beside the text in both states", async () => {
 		const { container } = render(TreeNode, {
 			node: { block: block({ Content: "a claim long enough to wrap" }), children: [] },
@@ -88,8 +85,6 @@ describe("TreeNode", () => {
 		expect(container.querySelector(".content")).toBeNull();
 	});
 
-	// The offset is measured against the DOM as it stood at the click, and the
-	// commit of the previous block is a round trip to the backend in between.
 	it("carries the clicked offset into the next block across an async commit", async () => {
 		const root = block({ ID: "root", ParentID: "", Content: "Topic" });
 		const first = block({ ID: "b1", Content: "first block" });
@@ -120,7 +115,7 @@ describe("TreeNode", () => {
 		stubCaretFromPoint(text, 7);
 
 		await fireEvent.click(content);
-		expect(base.editingID).toBe("b1"); // the commit is still in flight
+		expect(base.editingID).toBe("b1");
 
 		release();
 		await waitFor(() => {
@@ -132,9 +127,7 @@ describe("TreeNode", () => {
 	});
 });
 
-// stubCaretFromPoint lands the DOM's hit test on a known text position. jsdom
-// implements no caretRangeFromPoint, and the fallback — the end of the block —
-// is the one answer that would hide a lost offset.
+// jsdom has no caretRangeFromPoint, so click handling needs a rendered offset stub.
 function stubCaretFromPoint(node: Node, offset: number): void {
 	const stub = (): Range => {
 		const range = document.createRange();

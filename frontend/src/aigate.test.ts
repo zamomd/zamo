@@ -69,7 +69,6 @@ describe("the AI gate", () => {
 
 		const tree = render(TreeNode, { node: row }).container;
 		expect(tree.querySelector(TARGET_BUTTON)).toBeNull();
-		// The lane's other control stays: only the AI half is gated.
 		expect(tree.querySelector('button[aria-label="toggle linked references"]')).not.toBeNull();
 	});
 

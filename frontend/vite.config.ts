@@ -11,13 +11,10 @@ export default defineConfig({
 		port: Number(process.env.WAILS_VITE_PORT) || 9245,
 		strictPort: true,
 	},
-	// svelteTesting edits the config only when VITEST is set: it resolves
-	// Svelte's browser build and cleans the DOM between tests.
+	// svelteTesting only changes Vitest runs and cleans their DOM.
 	plugins: [svelte(), svelteTesting(), wails("./bindings")],
 	test: {
-		// A component test opts into a DOM per file with
-		// `// @vitest-environment jsdom`. jsdom lays nothing out, so geometry
-		// and appearance are still verified by looking at the app.
+		// Component tests opt into jsdom per file; it does not provide layout.
 		environment: "node",
 		include: ["src/**/*.test.ts"],
 	},
