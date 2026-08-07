@@ -36,9 +36,18 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 			continue
 		}
 		name := uniqueName(topicFileBase(sub[0].Content), taken)
-		files = append(files, ExportFile{Name: name, Content: renderSubtree(sub)})
+		files = append(files, ExportFile{Name: name, Content: renderTopic(sub)})
 	}
 	return files
+}
+
+// renderTopic renders one topic in the shape it has: a document is already the
+// markdown its author wrote, an outline becomes a nested bullet list.
+func renderTopic(sub []Block) string {
+	if sub[0].Mode == ModeDoc {
+		return sub[0].Content
+	}
+	return renderSubtree(sub)
 }
 
 // renderSubtree renders a pre-ordered subtree as an indented bullet list, the

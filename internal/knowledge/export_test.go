@@ -131,3 +131,17 @@ func TestRenderMarkdownSingleTopicNoChildren(t *testing.T) {
 		t.Errorf("content = %q, want a single root bullet", files[0].Content)
 	}
 }
+
+func TestRenderMarkdownWritesADocumentVerbatim(t *testing.T) {
+	doc := "# Go Contexts\n\nPassed first. See [[Go Idioms]].\n\n## Cancellation\n\n- ctx.Done()\n"
+	files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
+	if len(files) != 1 {
+		t.Fatalf("files = %d, want 1", len(files))
+	}
+	if files[0].Name != "Go Contexts.md" {
+		t.Errorf("name = %q, want %q", files[0].Name, "Go Contexts.md")
+	}
+	if files[0].Content != doc {
+		t.Errorf("content =\n%q\nwant\n%q", files[0].Content, doc)
+	}
+}
