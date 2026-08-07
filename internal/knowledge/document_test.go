@@ -94,6 +94,17 @@ func TestSplitDocumentKeepsAMultiLineBlockWhole(t *testing.T) {
 	}
 }
 
+func TestSplitDocumentKeepsAFenceInsideABlockWithIt(t *testing.T) {
+	// A fence written inside a block is the block's own text, not a section of
+	// the document. It is indented to the item's column like every other later
+	// line, and the indent is what says so.
+	_, children := SplitDocument("Go Contexts\n\n- before\n  ```\n  code\n  ```\n  after\n")
+	want := []DocChild{{Text: "before\n```\ncode\n```\nafter", Depth: 0}}
+	if !slices.Equal(children, want) {
+		t.Errorf("children = %#v, want %#v", children, want)
+	}
+}
+
 func TestSplitDocumentKeepsABlankLineInsideABlock(t *testing.T) {
 	// A blank line inside a block renders as the item's text column of spaces,
 	// which is what distinguishes it from the blank line that separates two

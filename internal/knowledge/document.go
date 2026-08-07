@@ -35,10 +35,10 @@ type DocChild struct {
 // the item, so a multi-line block survives a conversion.
 //
 // One ambiguity is inherent to the bullet format rather than to this function:
-// a block whose own second line begins with "- " renders indistinguishably
-// from a nested child and comes back as one. The format is the export format,
-// which Obsidian and Logseq read, and resolving the ambiguity would mean
-// leaving it.
+// a block whose own later line begins with a list marker ("- ", "* " or "+ ")
+// renders indistinguishably from a nested child and comes back as one. The
+// format is the export format, which Obsidian and Logseq read, and resolving
+// the ambiguity would mean leaving it.
 func SplitDocument(content string) (root string, children []DocChild) {
 	lines := strings.Split(content, "\n")
 	root = strings.TrimSpace(lines[0])
@@ -61,6 +61,18 @@ func SplitDocument(content string) (root string, children []DocChild) {
 	}
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
+		// While an item is open, a line indented to its text column belongs to
+		// it whatever the line looks like — bullet indents every later line of
+		// a block by exactly that much, so the indent, not the content, is the
+		// signal. This is checked before any other classification because a
+		// block's own blank line, heading or code fence would otherwise be read
+		// as document structure and cut the block apart. Only a nested list
+		// item outranks it, and that is the one ambiguity the format cannot
+		// resolve.
+		if item >= 0 && leadingSpaces(line) >= column && !listItem(line) {
+			out[item].Text += "\n" + unindent(line, column)
+			continue
+		}
 		if fenced := fenceEnd(lines, i); fenced > i {
 			flush()
 			item = -1
@@ -68,22 +80,12 @@ func SplitDocument(content string) (root string, children []DocChild) {
 			i = fenced
 			continue
 		}
-		// Order matters. A nested list item is decided before the continuation
-		// rule, since both sit at the open item's text column and only the
-		// marker tells them apart. Everything else is decided after it: a blank
-		// line inside a block renders as that column of spaces, and a block's
-		// own "## " line renders indented, so testing either first would cut
-		// the block in two.
 		switch {
 		case listItem(line):
 			flush()
 			indent, text := listParts(line)
 			out = append(out, DocChild{Text: text, Depth: depth + indent})
 			item, column = len(out)-1, leadingSpaces(line)+2
-		case item >= 0 && leadingSpaces(line) >= column:
-			// The inverse of what bullet writes, so a multi-line block survives
-			// a conversion whole instead of becoming one block per line.
-			out[item].Text += "\n" + line[column:]
 		case strings.TrimSpace(line) == "":
 			flush()
 			item = -1
@@ -104,6 +106,14 @@ func SplitDocument(content string) (root string, children []DocChild) {
 
 // leadingSpaces counts the spaces a line is indented by.
 func leadingSpaces(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+
+// unindent removes n leading spaces, or every one the line has if it has fewer.
+func unindent(line string, n int) string {
+	if leadingSpaces(line) < n {
+		return strings.TrimLeft(line, " ")
+	}
+	return line[n:]
+}
 
 // baseHeadingLevel is the shallowest ATX heading level in a document body: the
 // level its top-level sections are written at. Nesting is relative to it, so a
