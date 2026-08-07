@@ -436,7 +436,7 @@ func TestConversionRoundTripThroughStorage(t *testing.T) {
 		t.Fatalf("create topic: %v", err)
 	}
 	if _, err := svc.ApplyOps(t.Context(), aiMeta("fill"), []knowledge.Op{
-		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First."},
+		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First.\nStill first."},
 		{Kind: knowledge.OpAdd, TempID: "b", Parent: "a", Content: "Nested."},
 	}); err != nil {
 		t.Fatalf("fill: %v", err)

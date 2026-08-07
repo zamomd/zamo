@@ -8,14 +8,14 @@ import (
 func subtree() []Block {
 	return []Block{
 		{ID: "t", Content: "Go Contexts"},
-		{ID: "a", ParentID: "t", Position: 1, Content: "Passed as the first argument."},
+		{ID: "a", ParentID: "t", Position: 1, Content: "Passed as the first argument.\nAlways first."},
 		{ID: "b", ParentID: "t", Position: 2, Content: "## Cancellation"},
 		{ID: "c", ParentID: "b", Position: 1, Content: "ctx.Done() closes."},
 	}
 }
 
 func TestRenderDocumentKeepsTheRootLineAndNestsTheRest(t *testing.T) {
-	want := "Go Contexts\n\n- Passed as the first argument.\n- ## Cancellation\n  - ctx.Done() closes.\n"
+	want := "Go Contexts\n\n- Passed as the first argument.\n  Always first.\n- ## Cancellation\n  - ctx.Done() closes.\n"
 	if got := RenderDocument(subtree()); got != want {
 		t.Errorf("RenderDocument =\n%q\nwant\n%q", got, want)
 	}
@@ -71,9 +71,23 @@ func TestSplitDocumentReversesRenderDocument(t *testing.T) {
 		t.Errorf("root = %q, want %q", root, "Go Contexts")
 	}
 	want := []DocChild{
-		{Text: "Passed as the first argument.", Depth: 0},
+		{Text: "Passed as the first argument.\nAlways first.", Depth: 0},
 		{Text: "## Cancellation", Depth: 0},
 		{Text: "ctx.Done() closes.", Depth: 1},
+	}
+	if !slices.Equal(children, want) {
+		t.Errorf("children = %#v, want %#v", children, want)
+	}
+}
+
+func TestSplitDocumentKeepsAMultiLineBlockWhole(t *testing.T) {
+	// `bullet` writes a block's later lines indented under the bullet text with
+	// no marker of their own. Splitting has to put them back, or a multi-line
+	// block becomes two blocks on every conversion.
+	_, children := SplitDocument("Go Contexts\n\n- line one\n  line two\n- next\n")
+	want := []DocChild{
+		{Text: "line one\nline two", Depth: 0},
+		{Text: "next", Depth: 0},
 	}
 	if !slices.Equal(children, want) {
 		t.Errorf("children = %#v, want %#v", children, want)
