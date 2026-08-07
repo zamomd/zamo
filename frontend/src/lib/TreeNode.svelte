@@ -177,8 +177,6 @@
 		{/if}
 
 		{#if ghost}
-			<!-- A pending deletion: struck through, no edit/target affordances —
-			     there is nothing left to edit until it is restored. -->
 			<span class="content ghost-content">{@html renderMarkdown(node.block.Content, resolveRef)}</span>
 		{:else if editing}
 			<InlineEditor id={node.block.ID} />
@@ -203,7 +201,11 @@
 			>
 				{@html renderMarkdown(node.block.Content, resolveRef)}
 			</div>
-			<span class="gutter">
+		{/if}
+
+		{#if !ghost}
+			<!-- Keep the actions lane mounted so editing does not change the text width. -->
+			<span class="gutter" class:reserved={editing}>
 				{#if ai.enabled}
 					<button
 						type="button"
@@ -211,7 +213,7 @@
 						title="ask the AI to restructure this block"
 						aria-label="target this block for the AI command"
 						aria-pressed={base.scopeID === node.block.ID}
-						disabled={base.busy}
+						disabled={base.busy || editing}
 						onclick={() => base.setScope(node.block)}
 					>
 						⌖
@@ -224,7 +226,7 @@
 					title="show blocks that link here"
 					aria-expanded={backlinksOpen}
 					aria-label="toggle linked references"
-					disabled={base.busy}
+					disabled={base.busy || editing}
 					onclick={() => base.toggleBacklinks(node.block.ID)}
 				>
 					∞
@@ -232,11 +234,6 @@
 			</span>
 		{/if}
 
-		<!-- History is allowed on ghosts too: it is how a pending deletion is
-		     inspected or undone before review, unlike edit/target which stay
-		     hidden until the block is restored. It therefore needs a gutter of its
-		     own rather than sharing the one above, which lives inside that guard;
-		     two adjacent flex containers lay out as one lane. -->
 		<span class="gutter">
 			<button
 				type="button"
@@ -479,6 +476,8 @@
 		color: inherit;
 		min-width: 0;
 		line-height: var(--row-height);
+		/* Keep wrapping consistent with InlineEditor's .editor. */
+		overflow-wrap: break-word;
 	}
 	.content.busy {
 		cursor: default;
@@ -551,6 +550,10 @@
 	.row.targeted .gutter button.target,
 	.gutter button.open {
 		opacity: 1;
+	}
+	/* Preserve the lane width without leaving its controls focusable. */
+	.gutter.reserved button {
+		visibility: hidden;
 	}
 	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
 	   reach it — style it through :global under .content. */

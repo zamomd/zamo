@@ -1,4 +1,5 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { svelteTesting } from "@testing-library/svelte/vite";
 import wails from "@wailsio/runtime/plugins/vite";
 import { defineConfig } from "vitest/config";
 
@@ -10,10 +11,10 @@ export default defineConfig({
 		port: Number(process.env.WAILS_VITE_PORT) || 9245,
 		strictPort: true,
 	},
-	plugins: [svelte(), wails("./bindings")],
+	// svelteTesting only changes Vitest runs and cleans their DOM.
+	plugins: [svelte(), svelteTesting(), wails("./bindings")],
 	test: {
-		// Stores and helpers are plain TypeScript; nothing here needs a DOM.
-		// Layout and appearance are verified by looking at the app, not here.
+		// Component tests opt into jsdom per file; it does not provide layout.
 		environment: "node",
 		include: ["src/**/*.test.ts"],
 	},

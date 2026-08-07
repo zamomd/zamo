@@ -9,12 +9,13 @@
 
 	// $state, not a plain let: passed to RefAutocomplete as the `target` prop,
 	// and a prop sourced from a non-reactive binding would not propagate.
-	let el: HTMLTextAreaElement | undefined = $state();
+	// Unmounting writes null here, and a queued select event still finds it.
+	let el: HTMLTextAreaElement | null = $state(null);
 
 	const trigger = $derived(triggerAt(base.editText, base.editCaret));
 
 	function fit(): void {
-		if (el === undefined) {
+		if (el === null) {
 			return;
 		}
 		el.style.height = "auto";
@@ -23,7 +24,7 @@
 
 	$effect(() => {
 		void base.editCaretNonce;
-		if (el === undefined) {
+		if (el === null) {
 			return;
 		}
 		const at = untrack(() => base.editCaret);
@@ -33,7 +34,7 @@
 	});
 
 	function reportCaret(): void {
-		if (el === undefined) {
+		if (el === null) {
 			return;
 		}
 		base.syncCaret(id, el.selectionStart);
@@ -55,7 +56,7 @@
 	}
 
 	function onkeydown(e: KeyboardEvent): void {
-		if (e.isComposing || el === undefined) {
+		if (e.isComposing || el === null) {
 			return;
 		}
 		const value = base.editText;
@@ -199,6 +200,8 @@
 		line-height: var(--row-height);
 		overflow: hidden;
 		resize: none;
+		/* Keep wrapping consistent with TreeNode's .content. */
+		overflow-wrap: break-word;
 	}
 	.editor:focus-visible {
 		outline: none;
