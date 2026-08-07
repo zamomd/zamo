@@ -127,7 +127,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager) error {
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
-			application.NewService(bind),
+			wailsbind.Service(bind),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the
