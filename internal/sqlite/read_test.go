@@ -255,8 +255,11 @@ func TestSearchEmptyQuery(t *testing.T) {
 
 func TestSearchReturnsASnippetAroundTheMatch(t *testing.T) {
 	repo := testRepo(t)
-	doc := "# Go Contexts\n\nA long opening paragraph about nothing in particular.\n\n" +
-		"Cancellation propagates through the tree.\n"
+	// The opening word must not survive into a snippet windowed around a
+	// match far past the 24-token budget: a document this long proves the
+	// snippet is a real excerpt, not the whole block echoed back.
+	filler := strings.Repeat("filler ", 30)
+	doc := "# Marmalade\n\n" + filler + "\n\nCancellation propagates through the tree.\n"
 	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: doc, Mode: knowledge.ModeDoc},
 	}); err != nil {
@@ -269,8 +272,15 @@ func TestSearchReturnsASnippetAroundTheMatch(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits = %d, want 1", len(hits))
 	}
-	if !strings.Contains(hits[0].Snippet, "propagates") {
-		t.Errorf("snippet = %q, want it to carry the match", hits[0].Snippet)
+	snippet := hits[0].Snippet
+	if !strings.Contains(snippet, "propagates") {
+		t.Errorf("snippet = %q, want it to carry the match", snippet)
+	}
+	if strings.Contains(snippet, "Marmalade") {
+		t.Errorf("snippet = %q, want the far-off opening word excluded — a whole-content snippet would carry it", snippet)
+	}
+	if !strings.Contains(snippet, "…") {
+		t.Errorf("snippet = %q, want the truncation marker: the document is far longer than the snippet window", snippet)
 	}
 	if hits[0].Block.ID != "t1" {
 		t.Errorf("block = %q, want t1", hits[0].Block.ID)
