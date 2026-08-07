@@ -263,7 +263,7 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 			return err
 		}
 	}
-	if err := refuseDocumentChildren(ctx, tx); err != nil {
+	if err := refuseDocumentChildren(ctx, tx, ops); err != nil {
 		return fmt.Errorf("apply ops group %s: %w", groupID, err)
 	}
 	return tx.Commit()
@@ -314,12 +314,33 @@ SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY sour
 // root in ModeDoc. Checked once after every op has run rather than per op: a
 // conversion sets the mode and removes the children in one batch, and the order
 // its ops happen to take must not decide whether it is legal.
-func refuseDocumentChildren(ctx context.Context, tx *sql.Tx) error {
+//
+// Scoped to the blocks the batch touched, on both sides of the parent link: an
+// op can only create the pair by placing a child (the child is touched) or by
+// making a parent a document (the parent is touched). A violation the batch did
+// not cause is left alone deliberately — asking the whole base would make one
+// inconsistency anywhere, from any older build, refuse every subsequent write
+// with an error naming a block the writer never addressed.
+func refuseDocumentChildren(ctx context.Context, tx *sql.Tx, ops []knowledge.Op) error {
+	touched := make([]any, 0, len(ops))
+	seen := make(map[knowledge.ID]bool, len(ops))
+	for _, op := range ops {
+		if op.BlockID == "" || seen[op.BlockID] {
+			continue
+		}
+		seen[op.BlockID] = true
+		touched = append(touched, string(op.BlockID))
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+	list := strings.Repeat(",?", len(touched))[1:]
+	args := append(slices.Clone(touched), touched...)
 	var offender sql.NullString
 	if err := tx.QueryRowContext(ctx, `
 		SELECT c.id FROM blocks c JOIN blocks p ON p.id = c.parent_id
-		WHERE p.mode = 'doc' LIMIT 1`).Scan(&offender); err != nil &&
-		!errors.Is(err, sql.ErrNoRows) {
+		WHERE p.mode = 'doc' AND (c.id IN (`+list+`) OR p.id IN (`+list+`)) LIMIT 1`,
+		args...).Scan(&offender); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return translate(err)
 	}
 	if !offender.Valid {

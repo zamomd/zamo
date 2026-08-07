@@ -425,6 +425,57 @@ func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
 	}
 }
 
+func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	// The same conversion with its two ops the other way round. Checking at the
+	// end of the batch rather than per op is what makes this legal, and only a
+	// batch in this order can tell the two rules apart.
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
+
+func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	// A base that reached the forbidden state some other way — an older build,
+	// a hand-edited file. The check exists to stop a batch creating it, not to
+	// make every unrelated write in the base fail until it is cleaned up.
+	if _, err := repo.db.ExecContext(t.Context(),
+		`UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1"); err != nil {
+		t.Fatalf("plant the inconsistency: %v", err)
+	}
+
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write touching neither block: %v", err)
+	}
+	err := repo.ApplyOps(t.Context(), "g3", aiMeta("touch the child"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed"},
+	})
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("write touching the child = %v, want ErrDocumentHasChildren", err)
+	}
+}
+
 func TestConversionRoundTripThroughStorage(t *testing.T) {
 	repo := testRepo(t)
 	svc := knowledge.NewService(nil, repo, func() knowledge.ID {

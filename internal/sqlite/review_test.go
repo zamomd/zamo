@@ -275,6 +275,116 @@ func TestRejectLeavesADocumentADocument(t *testing.T) {
 	}
 }
 
+// convertedToDocument builds an outline topic t1 with a child c1, both
+// owner-written and reviewed, then applies the conversion an MCP client sends:
+// one AI batch that makes the root a document and deletes the child. The batch
+// is legal — no child is left under a document at its end — and unreviewed, so
+// both halves of it are still open to a per-block review decision.
+func convertedToDocument(t *testing.T, repo *Repo) {
+	t.Helper()
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
+
+func TestRejectRefusesToResurrectAChildUnderADocument(t *testing.T) {
+	repo := testRepo(t)
+	convertedToDocument(t, repo)
+
+	err := repo.RejectBlock(t.Context(), "c1")
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("RejectBlock = %v, want ErrInvalidRollback", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); ok {
+		t.Error("the refused reject brought the child back anyway")
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write after the refusal: %v", err)
+	}
+}
+
+func TestRejectPageUndoesADocumentConversionWhole(t *testing.T) {
+	repo := testRepo(t)
+	convertedToDocument(t, repo)
+
+	// The page holds both halves — the root's edit and the child's ghost — so
+	// the projection order the child needs (its parent back to an outline
+	// first) exists and projectFixpoint has to find it.
+	if err := repo.RejectPage(t.Context(), "t1"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after reject page mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); !ok {
+		t.Error("the child was not restored")
+	}
+}
+
+// expandedFromDocument builds a document topic t1, then applies one legal batch
+// taking it back to an outline and giving it a child — the reverse conversion,
+// as an unreviewed AI batch.
+func expandedFromDocument(t *testing.T, repo *Repo) {
+	t.Helper()
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	expand := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeOutline},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("expand"), expand); err != nil {
+		t.Fatalf("apply expand: %v", err)
+	}
+}
+
+func TestRejectRefusesToRestoreADocumentOverLiveChildren(t *testing.T) {
+	repo := testRepo(t)
+	expandedFromDocument(t, repo)
+
+	err := repo.RejectBlock(t.Context(), "t1")
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("RejectBlock = %v, want ErrInvalidRollback", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after the refused reject mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write after the refusal: %v", err)
+	}
+}
+
+func TestRejectPageUndoesAnOutlineConversionWhole(t *testing.T) {
+	repo := testRepo(t)
+	expandedFromDocument(t, repo)
+
+	if err := repo.RejectPage(t.Context(), "t1"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Errorf("after reject page mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); ok {
+		t.Error("the child added by the rejected batch is still live")
+	}
+}
+
 func TestRejectBlockDropsUnreviewedChain(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()

@@ -114,6 +114,15 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 // requires a live parent, and a block with live children cannot be removed.
 // Timestamps come from revision history so rollback reproduces historical state.
 //
+// It also holds the document invariant the apply transaction enforces for
+// writes (see refuseDocumentChildren), from both ends: a live head cannot land
+// under a parent that is a document, and a head restoring a document cannot
+// land over live children. Both answer ErrInvalidRollback, so a page-wide or
+// group-wide rollback that also rolls back the other end retries and converges
+// (projectFixpoint), while one that does not is refused whole — which is what
+// keeps a review decision on half a conversion from leaving the base in a state
+// no write can repair.
+//
 // It restores every piece of state derived from content, not just the row:
 // blocks_fts through the normal triggers, blocks.title_key computed here, and
 // the block's refs rows rebuilt from the projected content — emptied when the
@@ -144,14 +153,18 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		return nil
 	}
 	if head.ParentID != "" {
-		var exists bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`,
-			string(head.ParentID)).Scan(&exists); err != nil {
+		var parentMode knowledge.Mode
+		err := tx.QueryRowContext(ctx,
+			`SELECT mode FROM blocks WHERE id = ?`, string(head.ParentID)).Scan(&parentMode)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("block %s: restore parent %s first: %w",
+				blockID, head.ParentID, knowledge.ErrInvalidRollback)
+		}
+		if err != nil {
 			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 		}
-		if !exists {
-			return fmt.Errorf("block %s: restore parent %s first: %w",
+		if parentMode == knowledge.ModeDoc {
+			return fmt.Errorf("block %s: parent %s is a document: %w",
 				blockID, head.ParentID, knowledge.ErrInvalidRollback)
 		}
 	}
@@ -167,6 +180,18 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 	}
 	key := titleKey(parent, head.Content)
 	mode := storedMode(parent, head.Mode, "")
+	if mode == knowledge.ModeDoc {
+		var kids bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM blocks WHERE parent_id = ?)`,
+			blockID).Scan(&kids); err != nil {
+			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
+		}
+		if kids {
+			return fmt.Errorf("block %s: a document cannot keep its children; roll them back first: %w",
+				blockID, knowledge.ErrInvalidRollback)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)
