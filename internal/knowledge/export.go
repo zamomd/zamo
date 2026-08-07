@@ -41,26 +41,42 @@ func RenderMarkdown(subtrees [][]Block) []ExportFile {
 	return files
 }
 
-// renderSubtree renders a pre-ordered subtree as an indented bullet list. Depth
-// is the length of the parent chain up to the root, so indentation reflects the
-// tree even though the input is flat. Multi-line block content keeps its extra
-// lines aligned under the bullet text, so the list stays valid markdown.
+// renderSubtree renders a pre-ordered subtree as an indented bullet list, the
+// root included.
 func renderSubtree(sub []Block) string {
-	depth := make(map[ID]int, len(sub))
-	var b strings.Builder
-	for i, block := range sub {
-		d := 0
-		if i > 0 { // the root stays at depth 0; others inherit parent depth + 1
-			d = depth[block.ParentID] + 1
-		}
-		depth[block.ID] = d
+	return bullet(sub[0].Content, 0) + renderDescendants(sub, 1)
+}
 
-		indent := strings.Repeat("  ", d)
-		lines := strings.Split(block.Content, "\n")
-		b.WriteString(indent + "- " + lines[0] + "\n")
-		for _, line := range lines[1:] {
-			b.WriteString(indent + "  " + line + "\n")
-		}
+// renderChildren renders everything below sub[0] as a bullet list whose top
+// level sits at the left margin — the body of a document, which carries the
+// root's own text as prose rather than as a bullet.
+func renderChildren(sub []Block) string {
+	return renderDescendants(sub, 0)
+}
+
+// renderDescendants renders sub[1:] as a bullet list whose direct children of
+// sub[0] sit at base. Depth is the length of the parent chain up to the root,
+// so indentation reflects the tree even though the input is flat.
+func renderDescendants(sub []Block, base int) string {
+	depth := map[ID]int{sub[0].ID: base - 1}
+	var b strings.Builder
+	for _, block := range sub[1:] {
+		d := depth[block.ParentID] + 1
+		depth[block.ID] = d
+		b.WriteString(bullet(block.Content, d))
+	}
+	return b.String()
+}
+
+// bullet writes one block as a list item at depth d, keeping the block's extra
+// lines aligned under the bullet text so the list stays valid markdown.
+func bullet(content string, d int) string {
+	indent := strings.Repeat("  ", d)
+	lines := strings.Split(content, "\n")
+	var b strings.Builder
+	b.WriteString(indent + "- " + lines[0] + "\n")
+	for _, line := range lines[1:] {
+		b.WriteString(indent + "  " + line + "\n")
 	}
 	return b.String()
 }

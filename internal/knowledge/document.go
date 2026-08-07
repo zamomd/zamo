@@ -1,0 +1,151 @@
+package knowledge
+
+import "strings"
+
+// RenderDocument renders a topic subtree as one markdown document: the root's
+// own text verbatim, then its descendants as a nested bullet list. The first
+// line is untouched, so the document names the topic exactly as the outline did
+// and every [[Topic]] reference to it keeps resolving.
+func RenderDocument(sub []Block) string {
+	if len(sub) == 0 {
+		return ""
+	}
+	root := strings.TrimRight(sub[0].Content, "\n") + "\n"
+	if len(sub) == 1 {
+		return root
+	}
+	return root + "\n" + renderChildren(sub)
+}
+
+// DocChild is one block a document splits into: its markdown text and how deep
+// it sits below the topic root, 0 being a direct child.
+type DocChild struct {
+	Text  string
+	Depth int
+}
+
+// SplitDocument splits a document into the topic root's own first line, kept
+// verbatim so the split renames nothing, and the blocks its body becomes.
+//
+// Headings and list items carry the nesting: a heading opens a level by its `#`
+// count, a list item by its indent. Everything else is a leaf at the level it
+// is written under, and blank lines separate leaves. A fenced code block is
+// never split — it travels whole, blank lines and all.
+func SplitDocument(content string) (root string, children []DocChild) {
+	lines := strings.Split(content, "\n")
+	root = strings.TrimSpace(lines[0])
+	base := baseHeadingLevel(lines[1:])
+
+	var out []DocChild
+	var buf []string
+	depth := 0
+	flush := func() {
+		text := strings.TrimRight(strings.Join(buf, "\n"), "\n")
+		buf = nil
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		out = append(out, DocChild{Text: text, Depth: depth})
+	}
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if fenced := fenceEnd(lines, i); fenced > i {
+			flush()
+			out = append(out, DocChild{Text: strings.Join(lines[i:fenced+1], "\n"), Depth: depth})
+			i = fenced
+			continue
+		}
+		switch {
+		case strings.TrimSpace(line) == "":
+			flush()
+		case headingLevel(line) > 0:
+			flush()
+			depth = max(headingLevel(line)-base, 0)
+			out = append(out, DocChild{Text: strings.TrimSpace(line), Depth: depth})
+			depth++
+		case listItem(line):
+			flush()
+			indent, text := listParts(line)
+			out = append(out, DocChild{Text: text, Depth: depth + indent})
+		default:
+			buf = append(buf, line)
+		}
+	}
+	flush()
+	return root, out
+}
+
+// baseHeadingLevel is the shallowest ATX heading level in a document body: the
+// level its top-level sections are written at. Nesting is relative to it, so a
+// document whose sections are `##` under a `# Title` splits the same way as one
+// whose sections are `#`. A body with no heading answers 1, which leaves the
+// first heading to appear opening depth 0.
+func baseHeadingLevel(body []string) int {
+	base := 0
+	for i := 0; i < len(body); i++ {
+		if end := fenceEnd(body, i); end > i {
+			i = end // a `#` inside a fence is code, not a heading
+			continue
+		}
+		if n := headingLevel(body[i]); n > 0 && (base == 0 || n < base) {
+			base = n
+		}
+	}
+	if base == 0 {
+		return 1
+	}
+	return base
+}
+
+// headingLevel reports the `#` count of an ATX heading, or 0 for a line that is
+// not one.
+func headingLevel(line string) int {
+	trimmed := strings.TrimLeft(line, " ")
+	n := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+	if n == 0 || n > 6 || !strings.HasPrefix(trimmed[n:], " ") {
+		return 0
+	}
+	return n
+}
+
+// listItem reports whether the line opens a bullet list item.
+func listItem(line string) bool {
+	trimmed := strings.TrimLeft(line, " ")
+	return strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") ||
+		strings.HasPrefix(trimmed, "+ ")
+}
+
+// listParts splits a bullet line into its nesting level — two spaces per level,
+// as RenderDocument writes it — and the text after the marker.
+func listParts(line string) (indent int, text string) {
+	trimmed := strings.TrimLeft(line, " ")
+	return (len(line) - len(trimmed)) / 2, strings.TrimSpace(trimmed[2:])
+}
+
+// fenceEnd reports the index of the line closing the code fence opened at
+// start, or start itself when the line opens no fence. An unterminated fence
+// runs to the end of the document, which is how a markdown reader takes it too.
+func fenceEnd(lines []string, start int) int {
+	marker := fenceMarker(lines[start])
+	if marker == "" {
+		return start
+	}
+	for i := start + 1; i < len(lines); i++ {
+		if fenceMarker(lines[i]) == marker {
+			return i
+		}
+	}
+	return len(lines) - 1
+}
+
+// fenceMarker returns the run of backticks or tildes a line opens or closes a
+// fence with, or an empty string for an ordinary line.
+func fenceMarker(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	for _, r := range []string{"```", "~~~"} {
+		if strings.HasPrefix(trimmed, r) {
+			return r
+		}
+	}
+	return ""
+}
