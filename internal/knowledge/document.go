@@ -68,16 +68,13 @@ func SplitDocument(content string) (root string, children []DocChild) {
 			i = fenced
 			continue
 		}
+		// Order matters. A nested list item is decided before the continuation
+		// rule, since both sit at the open item's text column and only the
+		// marker tells them apart. Everything else is decided after it: a blank
+		// line inside a block renders as that column of spaces, and a block's
+		// own "## " line renders indented, so testing either first would cut
+		// the block in two.
 		switch {
-		case strings.TrimSpace(line) == "":
-			flush()
-			item = -1
-		case headingLevel(line) > 0:
-			flush()
-			item = -1
-			depth = max(headingLevel(line)-base, 0)
-			out = append(out, DocChild{Text: strings.TrimSpace(line), Depth: depth})
-			depth++
 		case listItem(line):
 			flush()
 			indent, text := listParts(line)
@@ -87,6 +84,15 @@ func SplitDocument(content string) (root string, children []DocChild) {
 			// The inverse of what bullet writes, so a multi-line block survives
 			// a conversion whole instead of becoming one block per line.
 			out[item].Text += "\n" + line[column:]
+		case strings.TrimSpace(line) == "":
+			flush()
+			item = -1
+		case headingLevel(line) > 0:
+			flush()
+			item = -1
+			depth = max(headingLevel(line)-base, 0)
+			out = append(out, DocChild{Text: strings.TrimSpace(line), Depth: depth})
+			depth++
 		default:
 			item = -1
 			buf = append(buf, line)

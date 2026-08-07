@@ -93,3 +93,29 @@ func TestSplitDocumentKeepsAMultiLineBlockWhole(t *testing.T) {
 		t.Errorf("children = %#v, want %#v", children, want)
 	}
 }
+
+func TestSplitDocumentKeepsABlankLineInsideABlock(t *testing.T) {
+	// A blank line inside a block renders as the item's text column of spaces,
+	// which is what distinguishes it from the blank line that separates two
+	// blocks. Losing that reading splits the block and strands the indent.
+	_, children := SplitDocument("Go Contexts\n\n- para one\n  \n  para two\n")
+	want := []DocChild{{Text: "para one\n\npara two", Depth: 0}}
+	if !slices.Equal(children, want) {
+		t.Errorf("children = %#v, want %#v", children, want)
+	}
+}
+
+func TestSplitDocumentReversesRenderDocumentOfABlockStartingWithAHeadingLine(t *testing.T) {
+	// A block's own "## " line renders indented under the bullet, at the same
+	// column headingLevel looks at. Testing for a heading before the
+	// continuation rule would misread it as opening a new section.
+	sub := []Block{
+		{ID: "t", Content: "Go Contexts"},
+		{ID: "a", ParentID: "t", Position: 1, Content: "Some text.\n## Not a real heading"},
+	}
+	_, children := SplitDocument(RenderDocument(sub))
+	want := []DocChild{{Text: "Some text.\n## Not a real heading", Depth: 0}}
+	if !slices.Equal(children, want) {
+		t.Errorf("children = %#v, want %#v", children, want)
+	}
+}
