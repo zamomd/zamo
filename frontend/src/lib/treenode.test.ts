@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { base } from "../stores/base.svelte";
 import TreeNode from "./TreeNode.svelte";
@@ -42,6 +42,14 @@ function block(overrides: Partial<Block> = {}): Block {
 	};
 }
 
+beforeEach(() => {
+	base.clearEdit();
+	base.forest = [];
+	backend.subtree = [];
+	backend.writeGate = null;
+	backend.written = [];
+});
+
 describe("TreeNode", () => {
 	it("renders the block's markdown", () => {
 		const { container } = render(TreeNode, {
@@ -56,7 +64,6 @@ describe("TreeNode", () => {
 	// their count is the assertable half of it. A text column that changes
 	// width rewraps the block under the pointer.
 	it("keeps the same lanes beside the text in both states", async () => {
-		base.clearEdit();
 		const { container } = render(TreeNode, {
 			node: { block: block({ Content: "a claim long enough to wrap" }), children: [] },
 		});
@@ -69,7 +76,6 @@ describe("TreeNode", () => {
 	});
 
 	it("swaps the rendered row for a textarea on click", async () => {
-		base.clearEdit();
 		const { container } = render(TreeNode, {
 			node: { block: block({ Content: "a claim" }), children: [] },
 		});

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, waitFor } from "@testing-library/svelte";
+import { render } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 import TreeNode from "./lib/TreeNode.svelte";
@@ -54,6 +54,7 @@ const row = {
 };
 
 beforeEach(() => {
+	backend.aiEnabled = true;
 	base.clearEdit();
 	base.forest = [];
 });
@@ -83,12 +84,8 @@ describe("the AI gate", () => {
 		backend.aiEnabled = false;
 		ai.set(false);
 
-		const { container, getByLabelText } = render(SettingsView);
-		await waitFor(() => {
-			expect(ai.enabled).toBe(false);
-		});
-
-		const box = getByLabelText("Enable AI features", { exact: false }) as HTMLInputElement;
+		const { container, findByLabelText } = render(SettingsView);
+		const box = (await findByLabelText("Enable AI features", { exact: false })) as HTMLInputElement;
 		expect(box.checked).toBe(false);
 		expect(box.disabled).toBe(false);
 		expect(container.textContent).toContain("Every AI control is hidden");
