@@ -403,19 +403,37 @@ WHERE r.reviewed = 0 AND g.atomic = 1
   AND r.block_id IN (`+strings.Repeat(",?", len(ids))[1:]+`)`, args...)
 }
 
-// undoableBlockIDs returns the affected blocks when a group can be removed
-// without crossing newer revisions.
-func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
+// groupWrittenOver reports whether a batch has been written over: any of its
+// revisions has a later revision of the same block belonging to another batch,
+// so removing the batch would silently change what that later revision was
+// made against. It is a fact about the whole group, not about one block —
+// a batch is buried by a later change to *any* block it touched, which is why
+// no comparison of a single entry's own group ids can stand in for it.
+//
+// One definition on purpose, read through rowQueryer so it serves both callers:
+// UndoGroup refusing a batch (ErrGroupWrittenOver) and the Changes screen
+// deciding whether to offer that refusal have to agree exactly. A second copy
+// of a rule this subtle drifts, and the screen then renders a button that can
+// only fail.
+func groupWrittenOver(ctx context.Context, q rowQueryer, groupID string) (bool, error) {
 	var buried bool
-	if err := tx.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM block_revisions r
 			WHERE r.group_id = ? AND EXISTS(
 				SELECT 1 FROM block_revisions later
 				WHERE later.block_id = r.block_id AND later.seq > r.seq
 				  AND (later.group_id IS NULL OR later.group_id <> ?)))`,
-		groupID, groupID).Scan(&buried); err != nil {
-		return nil, translate(err)
+		groupID, groupID).Scan(&buried)
+	return buried, translate(err)
+}
+
+// undoableBlockIDs returns the affected blocks when a group can be removed
+// without crossing newer revisions.
+func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
+	buried, err := groupWrittenOver(ctx, tx, groupID)
+	if err != nil {
+		return nil, err
 	}
 	if buried {
 		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrGroupWrittenOver)
@@ -660,6 +678,7 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 		// different group's id (see UnreviewedBlock's doc: that row is not
 		// always head, e.g. a reviewed owner edit sitting on top of a still-
 		// unreviewed AI edit).
+		//
 		var groupID, title string
 		var atomic bool
 		if err := r.db.QueryRowContext(ctx, `
@@ -669,8 +688,21 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title, &atomic); err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, translate(err))
 		}
+		// Asked of the group, not of this block's own row: the batch may have
+		// been buried by a later change to a different block of it, and a
+		// screen offering to reject the batch is offering to undo all of it.
+		// Comparing this row's group with the head's cannot see that, nor a
+		// burying revision that is itself unreviewed — which becomes this very
+		// row, making the two ids match again.
+		var writtenOver bool
+		if groupID != "" {
+			if writtenOver, err = groupWrittenOver(ctx, r.db, groupID); err != nil {
+				return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, err)
+			}
+		}
 		out = append(out, knowledge.UnreviewedBlock{
-			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title, Atomic: atomic,
+			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
+			Atomic: atomic, WrittenOver: writtenOver,
 		})
 	}
 	slices.SortStableFunc(out, func(a, b knowledge.UnreviewedBlock) int {

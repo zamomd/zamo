@@ -16,18 +16,22 @@ function entry(blockID: string, groupID: string, atomic: boolean, topicID = "top
 		GroupID: groupID,
 		GroupTitle: "batch",
 		Atomic: atomic,
+		WrittenOver: false,
 	};
 }
 
-// buried is the same entry after a later change was saved on top of it: the
-// head is that newer revision's, while the pending batch is still the old one.
+// buried is an entry whose batch storage reports as no longer undoable. Its own
+// group ids still match — the burying change can be unreviewed, or can sit on a
+// different block of the same batch, and in both cases the payload looks
+// untouched. That is the whole reason the flag is computed in the backend.
 function buried(blockID: string, groupID: string, atomic: boolean, topicID = "topic"): unknown {
 	return {
-		Head: { BlockID: blockID, GroupID: "later" },
+		Head: { BlockID: blockID, GroupID: groupID },
 		TopicID: topicID,
 		GroupID: groupID,
 		GroupTitle: "batch",
 		Atomic: atomic,
+		WrittenOver: true,
 	};
 }
 
@@ -88,10 +92,13 @@ describe("refresh", () => {
 		expect([...changes.straddling]).toEqual([]);
 	});
 
-	// One keystroke into a freshly converted document lands a reviewed owner
-	// edit on top of the conversion's pending revision. Undoing the batch would
-	// have to discard that edit, which the backend refuses, so the views must
-	// stop offering the reject controls rather than offering ones that fail.
+	// One keystroke into a freshly converted document lands an edit on top of
+	// the conversion's pending revision. Undoing the batch would have to
+	// discard that edit, which the backend refuses, so the views must stop
+	// offering the reject controls rather than offering ones that fail. The
+	// fixtures carry matching group ids throughout: the gate has to hold on
+	// storage's answer alone, since that is all a real payload shows when the
+	// burying change is unreviewed or landed on another block of the batch.
 	it("collects the batches a later change was saved on top of", async () => {
 		unreviewedFixture.respond = () =>
 			Promise.resolve({

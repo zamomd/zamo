@@ -385,6 +385,91 @@ func TestRejectPageUndoesAnOutlineConversionWhole(t *testing.T) {
 	}
 }
 
+// entryFor returns the queue entry for a block, which is how the Changes
+// screen sees it.
+func entryFor(t *testing.T, repo *Repo, blockID knowledge.ID) knowledge.UnreviewedBlock {
+	t.Helper()
+	changes, err := repo.ListUnreviewed(t.Context())
+	if err != nil {
+		t.Fatalf("list unreviewed: %v", err)
+	}
+	for _, b := range changes.Blocks {
+		if b.Head.BlockID == blockID {
+			return b
+		}
+	}
+	t.Fatalf("block %s is not awaiting review", blockID)
+	return knowledge.UnreviewedBlock{}
+}
+
+// buriedBatch applies a two-block AI batch g2 and then a second AI batch g3
+// over one of its blocks. g2 is written over — UndoGroup refuses it — but
+// nothing in b2's own entry says so: its pending revision is g2's, its head is
+// that same revision, and the burying happened on b1, which the queue reports
+// under g3 because an unreviewed revision becomes the group it reports.
+func buriedBatch(t *testing.T, repo *Repo) {
+	t.Helper()
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "one"},
+		{Kind: knowledge.OpAdd, BlockID: "b2", Content: "two"},
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("batch"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g2"},
+		{Kind: knowledge.OpEdit, BlockID: "b2", Content: "two by g2"},
+	}); err != nil {
+		t.Fatalf("apply g2: %v", err)
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", aiMeta("later"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g3"},
+	}); err != nil {
+		t.Fatalf("apply g3: %v", err)
+	}
+}
+
+func TestUnreviewedReportsABatchBuriedByAnUnreviewedOne(t *testing.T) {
+	repo := testRepo(t)
+	buriedBatch(t, repo)
+
+	entry := entryFor(t, repo, "b2")
+	if entry.GroupID != "g2" {
+		t.Fatalf("b2 waits in group %s, want g2", entry.GroupID)
+	}
+	// The comparison a client could make on the payload alone says nothing
+	// here — which is why the answer has to be computed where the revisions
+	// are. Asserted, not assumed: without it the case under test is a
+	// different one.
+	if entry.Head.GroupID != entry.GroupID {
+		t.Fatalf("head group %s differs from the pending group %s, so this is not the case under test",
+			entry.Head.GroupID, entry.GroupID)
+	}
+	if !entry.WrittenOver {
+		t.Error("g2 reports as still undoable, so the screen keeps offering to reject it")
+	}
+	if err := repo.UndoGroup(t.Context(), "g2"); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Errorf("UndoGroup(g2) = %v, want ErrGroupWrittenOver", err)
+	}
+}
+
+func TestUnreviewedLeavesAnUnburiedBatchAlone(t *testing.T) {
+	repo := testRepo(t)
+	buriedBatch(t, repo)
+
+	// The batch on top of g2 has nothing over it in turn, so its own controls
+	// must stay: over-reporting hides a decision the user can still make.
+	entry := entryFor(t, repo, "b1")
+	if entry.GroupID != "g3" {
+		t.Fatalf("b1 waits in group %s, want g3", entry.GroupID)
+	}
+	if entry.WrittenOver {
+		t.Error("g3 reports as written over, hiding a reject that would have worked")
+	}
+	if err := repo.UndoGroup(t.Context(), "g3"); err != nil {
+		t.Errorf("UndoGroup(g3) = %v, want it to succeed", err)
+	}
+}
+
 func TestRejectBlockDropsUnreviewedChain(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()

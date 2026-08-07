@@ -92,6 +92,16 @@ type UnreviewedBlock struct {
 	GroupID    ID
 	GroupTitle string
 	Atomic     bool
+
+	// WrittenOver reports that the batch named by GroupID can no longer be
+	// given back: a later change of another batch sits on top of one of the
+	// blocks it touched — not necessarily this one, which is why no comparison
+	// of this entry's own fields can stand in for it. Undoing the batch would
+	// silently change what that later change was made against, so it is
+	// refused with ErrGroupWrittenOver: accepting is the only decision left,
+	// and a screen offering to reject is offering something that can only
+	// fail. Derived by storage on read; never written by callers.
+	WrittenOver bool
 }
 
 // UnreviewedChanges is everything awaiting review.

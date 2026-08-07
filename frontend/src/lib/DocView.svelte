@@ -243,7 +243,7 @@
 			     keeps that edit. -->
 			<span
 				class="batch-only"
-				title="a later edit was saved on top of this change, so it can only be accepted now — use Convert to blocks to change the shape back"
+				title="a later edit was saved on top of this change, so it can only be accepted now; converting the topic back changes its shape again and keeps that edit"
 				>accept only</span
 			>
 		{:else}
