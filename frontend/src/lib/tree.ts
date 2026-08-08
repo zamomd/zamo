@@ -1,4 +1,4 @@
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { Block, Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { plainText } from "./plaintext";
 
 // TreeNodeData is one node of the rendered forest: a block and its children in
@@ -122,6 +122,7 @@ export function topicOf(nodes: TreeNodeData[], id: string): string | null {
 export type TopicRow = {
 	id: string;
 	title: string;
+	mode: Mode;
 	selected: boolean;
 	children: { id: string; title: string }[];
 };
@@ -130,6 +131,7 @@ export function topicRows(nodes: TreeNodeData[], selected: string | null): Topic
 	return nodes.map((node) => ({
 		id: node.block.ID,
 		title: plainText(node.block.Content),
+		mode: node.block.Mode,
 		selected: node.block.ID === selected,
 		children:
 			node.block.ID === selected

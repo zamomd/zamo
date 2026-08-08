@@ -22,7 +22,7 @@
 						disabled={base.busy}
 						onclick={() => jumpToBlock(link.Block.ID)}
 					>
-						<code>{link.Block.Content}</code>
+						<code>{link.Excerpt}</code>
 						<span class="topic">{link.TopicTitle}</span>
 					</button>
 				</li>

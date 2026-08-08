@@ -25,6 +25,16 @@ func (Disabled) GenerateEdit(ctx context.Context, scope []knowledge.Block, instr
 	return nil, fmt.Errorf("%w: no LLM provider configured", knowledge.ErrLLMUnavailable)
 }
 
+// GenerateDocument implements knowledge.LLMClient.
+func (Disabled) GenerateDocument(ctx context.Context, topic, hint string) (string, error) {
+	return "", fmt.Errorf("%w: no LLM provider configured", knowledge.ErrLLMUnavailable)
+}
+
+// GenerateDocumentEdit implements knowledge.LLMClient.
+func (Disabled) GenerateDocumentEdit(ctx context.Context, doc knowledge.Block, instruction string) (string, error) {
+	return "", fmt.Errorf("%w: no LLM provider configured", knowledge.ErrLLMUnavailable)
+}
+
 // Ping implements knowledge.LLMClient.
 func (Disabled) Ping(ctx context.Context) error {
 	return fmt.Errorf("%w: no LLM provider configured", knowledge.ErrLLMUnavailable)

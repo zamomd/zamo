@@ -260,7 +260,7 @@ func TestCreateTopicResolvesTheReferenceThatAskedForIt(t *testing.T) {
 	renameBase(t, repo)
 	svc := renameService(repo)
 
-	id, err := svc.CreateTopic(t.Context(), "Nothing to see here")
+	id, err := svc.CreateTopic(t.Context(), "Nothing to see here", "")
 	if err != nil {
 		t.Fatalf("CreateTopic: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestCreateTopicResolvesTheReferenceThatAskedForIt(t *testing.T) {
 		t.Errorf("backlinks = %v, want the reference resolving to the created topic", links)
 	}
 
-	if _, err := svc.CreateTopic(t.Context(), "nothing to SEE here"); !errors.Is(err, knowledge.ErrDuplicateTopic) {
+	if _, err := svc.CreateTopic(t.Context(), "nothing to SEE here", ""); !errors.Is(err, knowledge.ErrDuplicateTopic) {
 		t.Errorf("second CreateTopic = %v, want ErrDuplicateTopic", err)
 	}
 }

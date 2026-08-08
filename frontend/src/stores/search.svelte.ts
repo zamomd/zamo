@@ -1,4 +1,4 @@
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { SearchHit } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 import { messageFor } from "../lib/callerror";
 
@@ -13,7 +13,7 @@ const debounceMs = 200;
 // mode switch.
 class SearchStore {
 	query = $state("");
-	results = $state<Block[]>([]);
+	results = $state<SearchHit[]>([]);
 	status = $state("");
 	error = $state("");
 

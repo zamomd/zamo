@@ -11,6 +11,17 @@ func ownerMeta(title string) knowledge.WriteMeta {
 	return knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: title}
 }
 
+// modeOf reads a block's stored mode.
+func modeOf(t *testing.T, repo *Repo, id string) knowledge.Mode {
+	t.Helper()
+	var mode knowledge.Mode
+	if err := repo.db.QueryRowContext(t.Context(),
+		`SELECT mode FROM blocks WHERE id = ?`, id).Scan(&mode); err != nil {
+		t.Fatalf("read mode of %s: %v", id, err)
+	}
+	return mode
+}
+
 func TestDeleteHeadRevisionRevertsProjection(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -131,7 +142,7 @@ func TestDeleteHeadTombstoneResurrects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(hits) != 1 || hits[0].ID != "b1" {
+	if len(hits) != 1 || hits[0].Block.ID != "b1" {
 		t.Errorf("Search(alive) after resurrection = %v, want [b1]", hits)
 	}
 }
@@ -186,6 +197,270 @@ func TestDeleteRevisionParentGuard(t *testing.T) {
 	}
 	if _, _, _, ok := blockRow(t, repo, "x"); ok {
 		t.Errorf("x resurrected in blocks despite its parent p being gone")
+	}
+}
+
+func TestRejectRestoresTheModeTheBlockHad(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Fatalf("before reject mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if err := repo.RejectBlock(t.Context(), "t1"); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after reject mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestUndoGroupRestoresTheModeTheBlockHad(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g2", owner, convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Fatalf("before undo mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if err := repo.UndoGroup(t.Context(), "g2"); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after undo mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestRejectLeavesADocumentADocument(t *testing.T) {
+	repo := testRepo(t)
+	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
+	add := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", owner, add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	// A content-only AI edit: it names no mode, so the surviving revision is
+	// the only place the mode can come back from. A projectHead that writes the
+	// column's default instead of the snapshot's value silently turns the
+	// document into an outline here, and nothing else in the system complains.
+	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic\n\nBody."}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit); err != nil {
+		t.Fatalf("apply edit: %v", err)
+	}
+	if err := repo.RejectBlock(t.Context(), "t1"); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Errorf("after reject mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+}
+
+// convertedToDocument builds an outline topic t1 with a child c1, both
+// owner-written and reviewed, then applies the conversion an MCP client sends:
+// one AI batch that makes the root a document and deletes the child. The batch
+// is legal — no child is left under a document at its end — and unreviewed, so
+// both halves of it are still open to a per-block review decision.
+func convertedToDocument(t *testing.T, repo *Repo) {
+	t.Helper()
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
+
+func TestRejectRefusesToResurrectAChildUnderADocument(t *testing.T) {
+	repo := testRepo(t)
+	convertedToDocument(t, repo)
+
+	err := repo.RejectBlock(t.Context(), "c1")
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("RejectBlock = %v, want ErrInvalidRollback", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); ok {
+		t.Error("the refused reject brought the child back anyway")
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write after the refusal: %v", err)
+	}
+}
+
+func TestRejectPageUndoesADocumentConversionWhole(t *testing.T) {
+	repo := testRepo(t)
+	convertedToDocument(t, repo)
+
+	// The page holds both halves — the root's edit and the child's ghost — so
+	// the projection order the child needs (its parent back to an outline
+	// first) exists and projectFixpoint has to find it.
+	if err := repo.RejectPage(t.Context(), "t1"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after reject page mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); !ok {
+		t.Error("the child was not restored")
+	}
+}
+
+// expandedFromDocument builds a document topic t1, then applies one legal batch
+// taking it back to an outline and giving it a child — the reverse conversion,
+// as an unreviewed AI batch.
+func expandedFromDocument(t *testing.T, repo *Repo) {
+	t.Helper()
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	expand := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeOutline},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("expand"), expand); err != nil {
+		t.Fatalf("apply expand: %v", err)
+	}
+}
+
+func TestRejectRefusesToRestoreADocumentOverLiveChildren(t *testing.T) {
+	repo := testRepo(t)
+	expandedFromDocument(t, repo)
+
+	err := repo.RejectBlock(t.Context(), "t1")
+	if !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Fatalf("RejectBlock = %v, want ErrInvalidRollback", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after the refused reject mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write after the refusal: %v", err)
+	}
+}
+
+func TestRejectPageUndoesAnOutlineConversionWhole(t *testing.T) {
+	repo := testRepo(t)
+	expandedFromDocument(t, repo)
+
+	if err := repo.RejectPage(t.Context(), "t1"); err != nil {
+		t.Fatalf("RejectPage: %v", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
+		t.Errorf("after reject page mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if _, _, _, ok := blockRow(t, repo, "c1"); ok {
+		t.Error("the child added by the rejected batch is still live")
+	}
+}
+
+// entryFor returns the queue entry for a block, which is how the Changes
+// screen sees it.
+func entryFor(t *testing.T, repo *Repo, blockID knowledge.ID) knowledge.UnreviewedBlock {
+	t.Helper()
+	changes, err := repo.ListUnreviewed(t.Context())
+	if err != nil {
+		t.Fatalf("list unreviewed: %v", err)
+	}
+	for _, b := range changes.Blocks {
+		if b.Head.BlockID == blockID {
+			return b
+		}
+	}
+	t.Fatalf("block %s is not awaiting review", blockID)
+	return knowledge.UnreviewedBlock{}
+}
+
+// buriedBatch applies a two-block AI batch g2 and then a second AI batch g3
+// over one of its blocks. g2 is written over — UndoGroup refuses it — but
+// nothing in b2's own entry says so: its pending revision is g2's, its head is
+// that same revision, and the burying happened on b1, which the queue reports
+// under g3 because an unreviewed revision becomes the group it reports.
+func buriedBatch(t *testing.T, repo *Repo) {
+	t.Helper()
+	if err := repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "one"},
+		{Kind: knowledge.OpAdd, BlockID: "b2", Content: "two"},
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("batch"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g2"},
+		{Kind: knowledge.OpEdit, BlockID: "b2", Content: "two by g2"},
+	}); err != nil {
+		t.Fatalf("apply g2: %v", err)
+	}
+	if err := repo.ApplyOps(t.Context(), "g3", aiMeta("later"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g3"},
+	}); err != nil {
+		t.Fatalf("apply g3: %v", err)
+	}
+}
+
+func TestUnreviewedReportsABatchBuriedByAnUnreviewedOne(t *testing.T) {
+	repo := testRepo(t)
+	buriedBatch(t, repo)
+
+	entry := entryFor(t, repo, "b2")
+	if entry.GroupID != "g2" {
+		t.Fatalf("b2 waits in group %s, want g2", entry.GroupID)
+	}
+	// The comparison a client could make on the payload alone says nothing
+	// here — which is why the answer has to be computed where the revisions
+	// are. Asserted, not assumed: without it the case under test is a
+	// different one.
+	if entry.Head.GroupID != entry.GroupID {
+		t.Fatalf("head group %s differs from the pending group %s, so this is not the case under test",
+			entry.Head.GroupID, entry.GroupID)
+	}
+	if !entry.WrittenOver {
+		t.Error("g2 reports as still undoable, so the screen keeps offering to reject it")
+	}
+	if err := repo.UndoGroup(t.Context(), "g2"); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Errorf("UndoGroup(g2) = %v, want ErrGroupWrittenOver", err)
+	}
+}
+
+func TestUnreviewedLeavesAnUnburiedBatchAlone(t *testing.T) {
+	repo := testRepo(t)
+	buriedBatch(t, repo)
+
+	// The batch on top of g2 has nothing over it in turn, so its own controls
+	// must stay: over-reporting hides a decision the user can still make.
+	entry := entryFor(t, repo, "b1")
+	if entry.GroupID != "g3" {
+		t.Fatalf("b1 waits in group %s, want g3", entry.GroupID)
+	}
+	if entry.WrittenOver {
+		t.Error("g3 reports as written over, hiding a reject that would have worked")
+	}
+	if err := repo.UndoGroup(t.Context(), "g3"); err != nil {
+		t.Errorf("UndoGroup(g3) = %v, want it to succeed", err)
 	}
 }
 

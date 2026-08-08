@@ -106,19 +106,31 @@ func (p *Provider) generate(
 	prompt string,
 	parse func([]byte) ([]knowledge.Op, error),
 ) ([]knowledge.Op, error) {
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseRequesting})
-	key, err := p.apiKey()
+	text, err := p.complete(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseParsing})
+	return parse([]byte(text))
+}
+
+// complete is one completion round trip, returning the model's text. The
+// document methods use it directly: their answer is the content, with nothing
+// to parse.
+func (p *Provider) complete(ctx context.Context, prompt string) (string, error) {
+	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseRequesting})
+	key, err := p.apiKey()
+	if err != nil {
+		return "", err
+	}
 	payload, err := p.dialect.EncodeRequest(prompt)
 	if err != nil {
-		return nil, fmt.Errorf("%w: encode request: %w", knowledge.ErrLLMUnavailable, err)
+		return "", fmt.Errorf("%w: encode request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.dialect.CompletionURL(), bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
+		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	p.dialect.SetHeaders(req.Header, key)
@@ -126,14 +138,33 @@ func (p *Provider) generate(
 	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting})
 	body, err := p.do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	text, err := p.dialect.DecodeReply(body)
+	return p.dialect.DecodeReply(body)
+}
+
+// GenerateDocument implements knowledge.LLMClient: it renders the document
+// expansion prompt and returns the model's markdown as written.
+func (p *Provider) GenerateDocument(ctx context.Context, topic, hint string) (string, error) {
+	prompt, err := ExpandDocumentPrompt(topic, hint)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
 	}
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseParsing})
-	return parse([]byte(text))
+	return p.complete(ctx, prompt)
+}
+
+// GenerateDocumentEdit implements knowledge.LLMClient: it renders the document
+// edit prompt and returns the rewritten document.
+func (p *Provider) GenerateDocumentEdit(
+	ctx context.Context,
+	doc knowledge.Block,
+	instruction string,
+) (string, error) {
+	prompt, err := EditDocumentPrompt(doc, instruction)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
+	}
+	return p.complete(ctx, prompt)
 }
 
 // Ping implements knowledge.LLMClient: it checks that the endpoint is reachable

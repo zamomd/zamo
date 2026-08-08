@@ -3,6 +3,7 @@
 
 export {
     Author,
+    Mode,
     Source
 } from "./models.js";
 
@@ -14,6 +15,7 @@ export type {
     Metadata,
     OutlineChange,
     Revision,
+    SearchHit,
     TopicEdge,
     TopicGraph,
     TopicNode,

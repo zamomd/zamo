@@ -45,3 +45,33 @@ func EditPrompt(scope []knowledge.Block, instruction string) (string, error) {
 	}
 	return out.String(), nil
 }
+
+// ExpandDocumentPrompt renders the document-expansion prompt (prompts/
+// expand_document.md), the document-shaped twin of ExpandPrompt.
+func ExpandDocumentPrompt(topic, hint string) (string, error) {
+	tmpl, err := template.ParseFS(Prompts, "prompts/expand_document.md")
+	if err != nil {
+		return "", fmt.Errorf("parse expand document prompt: %w", err)
+	}
+	var out strings.Builder
+	data := struct{ Topic, Hint string }{Topic: topic, Hint: hint}
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", fmt.Errorf("render expand document prompt: %w", err)
+	}
+	return out.String(), nil
+}
+
+// EditDocumentPrompt renders the document-edit prompt (prompts/
+// edit_document.md) over a document and a text command.
+func EditDocumentPrompt(doc knowledge.Block, instruction string) (string, error) {
+	tmpl, err := template.ParseFS(Prompts, "prompts/edit_document.md")
+	if err != nil {
+		return "", fmt.Errorf("parse edit document prompt: %w", err)
+	}
+	var out strings.Builder
+	data := struct{ Document, Instruction string }{Document: doc.Content, Instruction: instruction}
+	if err := tmpl.Execute(&out, data); err != nil {
+		return "", fmt.Errorf("render edit document prompt: %w", err)
+	}
+	return out.String(), nil
+}

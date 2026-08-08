@@ -3,10 +3,40 @@
 	import { crumbTrail } from "./tree";
 
 	const trail = $derived(base.focusID === null ? null : crumbTrail(base.forest, base.focusID));
+
+	// Converting away from a document deletes nothing the user can lose — the
+	// text becomes blocks — so that direction goes straight through. The other
+	// tombstones every block in the topic, and the round trip is not exact, so
+	// one misclick on a large outline is not recoverable to the byte. confirm()
+	// is a no-op in the Wails webview, so the confirmation is a real row.
+	let pendingConvert = $state(false);
+
+	function toggleTopicMode(): void {
+		if (base.topicMode === "doc") {
+			void base.setTopicMode("outline");
+			return;
+		}
+		pendingConvert = true;
+	}
+
+	// A pending confirmation belongs to the topic it was opened on; moving to
+	// another one drops it rather than letting "convert" land on that topic.
+	$effect(() => {
+		void base.selectedTopicID;
+		pendingConvert = false;
+	});
+
+	async function confirmConvert(): Promise<void> {
+		if (base.busy) {
+			return;
+		}
+		pendingConvert = false;
+		await base.setTopicMode("doc");
+	}
 </script>
 
-{#if trail !== null && trail.length > 0}
-	<nav aria-label="path to the focused block">
+<nav aria-label="path to the focused block and the topic's shape">
+	{#if trail !== null && trail.length > 0}
 		{#each trail as crumb, i (crumb.id)}
 			{#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
 			<button
@@ -18,7 +48,26 @@
 			</button>
 		{/each}
 		<span class="sep" aria-hidden="true">›</span>
-	</nav>
+	{/if}
+	<!-- aria-expanded only in the direction that opens the confirmation row;
+	     the other converts on the click and expands nothing. -->
+	<button
+		type="button"
+		class="mode-switch"
+		aria-expanded={base.topicMode === "doc" ? undefined : pendingConvert}
+		disabled={base.busy}
+		onclick={toggleTopicMode}
+	>
+		{base.topicMode === "doc" ? "Convert to blocks" : "Convert to document"}
+	</button>
+</nav>
+
+{#if pendingConvert}
+	<div class="confirm">
+		<span>Convert to a document? Every block in this topic becomes text, and converting back does not restore them exactly.</span>
+		<button type="button" disabled={base.busy} onclick={confirmConvert}>convert</button>
+		<button type="button" onclick={() => (pendingConvert = false)}>cancel</button>
+	</div>
 {/if}
 
 <style>
@@ -60,5 +109,45 @@
 	}
 	.sep {
 		opacity: 0.6;
+	}
+	/* A persistent page-level control, not a contextual crumb, so it opts back
+	   into button chrome (the plain `button` rule above strips it) and sits at
+	   the row's far end regardless of whether a trail is showing. */
+	.mode-switch {
+		margin-left: auto;
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		padding: 0.1rem 0.5rem;
+		color: var(--text-dim);
+	}
+	.mode-switch:hover:not(:disabled) {
+		background: var(--hover);
+		color: var(--text);
+	}
+	/* The same quiet hanging panel TreeNode and DocView use to confirm creating
+	   a topic from an unresolved reference. flex: none like the nav it hangs
+	   under: both are direct children of TopicView's column, where the tree is
+	   the only item allowed to take the free space. */
+	.confirm {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.25rem 0;
+		padding: 0.2rem 0.4rem;
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
+	}
+	.confirm button {
+		flex: none;
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		background: none;
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		color: inherit;
+	}
+	.confirm button:hover:not(:disabled) {
+		background: var(--hover);
 	}
 </style>

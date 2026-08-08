@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,14 @@ func ids(blocks []knowledge.Block) []knowledge.ID {
 	out := make([]knowledge.ID, len(blocks))
 	for i, b := range blocks {
 		out[i] = b.ID
+	}
+	return out
+}
+
+func hitIDs(hits []knowledge.SearchHit) []knowledge.ID {
+	out := make([]knowledge.ID, len(hits))
+	for i, h := range hits {
+		out[i] = h.Block.ID
 	}
 	return out
 }
@@ -177,8 +186,8 @@ func TestSearchFindsContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "b1" {
-		t.Fatalf("Search(pgx) = %v, want [b1]", ids(got))
+	if len(got) != 1 || got[0].Block.ID != "b1" {
+		t.Fatalf("Search(pgx) = %v, want [b1]", hitIDs(got))
 	}
 }
 
@@ -192,8 +201,8 @@ func TestSearchMultiWordIsAND(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "both" {
-		t.Fatalf("Search(concurrency go) = %v, want [both] (implicit AND)", ids(got))
+	if len(got) != 1 || got[0].Block.ID != "both" {
+		t.Fatalf("Search(concurrency go) = %v, want [both] (implicit AND)", hitIDs(got))
 	}
 }
 
@@ -221,8 +230,8 @@ func TestSearchNeutralizesSyntax(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Search(%q) errored: %v", tc.query, err)
 			}
-			if !equalIDs(ids(got), tc.want) {
-				t.Fatalf("Search(%q) = %v, want %v", tc.query, ids(got), tc.want)
+			if !equalIDs(hitIDs(got), tc.want) {
+				t.Fatalf("Search(%q) = %v, want %v", tc.query, hitIDs(got), tc.want)
 			}
 		})
 	}
@@ -239,8 +248,42 @@ func TestSearchEmptyQuery(t *testing.T) {
 			t.Fatalf("Search(%q): %v", q, err)
 		}
 		if len(got) != 0 {
-			t.Fatalf("Search(%q) = %v, want empty", q, ids(got))
+			t.Fatalf("Search(%q) = %v, want empty", q, hitIDs(got))
 		}
+	}
+}
+
+func TestSearchReturnsASnippetAroundTheMatch(t *testing.T) {
+	repo := testRepo(t)
+	// The opening word must not survive into a snippet windowed around a
+	// match far past the 24-token budget: a document this long proves the
+	// snippet is a real excerpt, not the whole block echoed back.
+	filler := strings.Repeat("filler ", 30)
+	doc := "# Marmalade\n\n" + filler + "\n\nCancellation propagates through the tree.\n"
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: doc, Mode: knowledge.ModeDoc},
+	}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	hits, err := repo.Search(t.Context(), "propagates")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	snippet := hits[0].Snippet
+	if !strings.Contains(snippet, "propagates") {
+		t.Errorf("snippet = %q, want it to carry the match", snippet)
+	}
+	if strings.Contains(snippet, "Marmalade") {
+		t.Errorf("snippet = %q, want the far-off opening word excluded — a whole-content snippet would carry it", snippet)
+	}
+	if !strings.Contains(snippet, "…") {
+		t.Errorf("snippet = %q, want the truncation marker: the document is far longer than the snippet window", snippet)
+	}
+	if hits[0].Block.ID != "t1" {
+		t.Errorf("block = %q, want t1", hits[0].Block.ID)
 	}
 }
 

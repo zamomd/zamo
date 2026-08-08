@@ -1,7 +1,7 @@
 package knowledge
 
 import (
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -69,7 +69,7 @@ func TestRenderMarkdownDedupesCollidingNames(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Go Contexts.md", "Go contexts!.md", "GO CONTEXTS-2.md"}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
 }
@@ -100,7 +100,7 @@ func TestRenderMarkdownFallsBackOnAnUnusableName(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Untitled.md", "Untitled-2.md", "Untitled-3.md"}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
 }
@@ -129,5 +129,31 @@ func TestRenderMarkdownSingleTopicNoChildren(t *testing.T) {
 	files := RenderMarkdown([][]Block{{blk("t1", "", 0, "# Lonely")}})
 	if len(files) != 1 || strings.TrimSpace(files[0].Content) != "- # Lonely" {
 		t.Errorf("content = %q, want a single root bullet", files[0].Content)
+	}
+}
+
+func TestRenderMarkdownWritesADocumentVerbatim(t *testing.T) {
+	doc := "# Go Contexts\n\nPassed first. See [[Go Idioms]].\n\n## Cancellation\n\n- ctx.Done()\n"
+	files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
+	if len(files) != 1 {
+		t.Fatalf("files = %d, want 1", len(files))
+	}
+	if files[0].Name != "Go Contexts.md" {
+		t.Errorf("name = %q, want %q", files[0].Name, "Go Contexts.md")
+	}
+	if files[0].Content != doc {
+		t.Errorf("content =\n%q\nwant\n%q", files[0].Content, doc)
+	}
+}
+
+func TestRenderMarkdownEndsADocumentWithANewline(t *testing.T) {
+	// A topic created as a document and never edited is one line with no
+	// terminator, and the outline branch always writes one. An exported file
+	// without a final newline is a text file most tools call malformed.
+	for _, doc := range []string{"Go Contexts", "Go Contexts\n\n\n"} {
+		files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
+		if got := files[0].Content; got != "Go Contexts\n" {
+			t.Errorf("RenderMarkdown of %q wrote %q, want %q", doc, got, "Go Contexts\n")
+		}
 	}
 }

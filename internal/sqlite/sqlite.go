@@ -236,9 +236,10 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		groupID: groupID,
 		meta:    meta,
 		now:     formatTime(r.now()),
-		// Owner writes are trusted and need no review; AI writes wait in the
-		// Changes queue until the human accepts them (Task 4).
-		reviewed: meta.Author == knowledge.AuthorOwner,
+		// Owner writes are trusted and need no review; AI writes, and the owner
+		// writes that ask for it, wait in the Changes queue until the human
+		// accepts them.
+		reviewed: meta.BornReviewed(),
 	}
 	// Not withTx: applyOp's errors already name the op and the block, and a
 	// second "apply ops group …" in front of them would say nothing.
@@ -262,6 +263,9 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 		if err := r.applyOp(ctx, tx, op, b); err != nil {
 			return err
 		}
+	}
+	if err := refuseDocumentChildren(ctx, tx, ops); err != nil {
+		return fmt.Errorf("apply ops group %s: %w", groupID, err)
 	}
 	return tx.Commit()
 }
@@ -305,6 +309,44 @@ SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY sour
 		}
 	}
 	return nil
+}
+
+// refuseDocumentChildren fails the batch when it leaves any block under a topic
+// root in ModeDoc. Checked once after every op has run rather than per op: a
+// conversion sets the mode and removes the children in one batch, and the order
+// its ops happen to take must not decide whether it is legal.
+//
+// Scoped to the blocks the batch touched, on both sides of the parent link: an
+// op can only create the pair by placing a child (the child is touched) or by
+// making a parent a document (the parent is touched). A violation the batch did
+// not cause is left alone: an existing inconsistency elsewhere must not refuse
+// a write that never addressed it.
+func refuseDocumentChildren(ctx context.Context, tx *sql.Tx, ops []knowledge.Op) error {
+	touched := make([]any, 0, len(ops))
+	seen := make(map[knowledge.ID]bool, len(ops))
+	for _, op := range ops {
+		if op.BlockID == "" || seen[op.BlockID] {
+			continue
+		}
+		seen[op.BlockID] = true
+		touched = append(touched, string(op.BlockID))
+	}
+	if len(touched) == 0 {
+		return nil
+	}
+	list := strings.Repeat(",?", len(touched))[1:]
+	args := append(slices.Clone(touched), touched...)
+	var offender sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT c.id FROM blocks c JOIN blocks p ON p.id = c.parent_id
+		WHERE p.mode = 'doc' AND (c.id IN (`+list+`) OR p.id IN (`+list+`)) LIMIT 1`,
+		args...).Scan(&offender); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return translate(err)
+	}
+	if !offender.Valid {
+		return nil
+	}
+	return fmt.Errorf("block %s: %w", offender.String, knowledge.ErrDocumentHasChildren)
 }
 
 // applyOp applies one resolved operation inside the apply transaction.
@@ -369,6 +411,23 @@ func requireAnchor(ctx context.Context, tx *sql.Tx, kind knowledge.OpKind, op kn
 	return nil
 }
 
+// storedMode resolves the mode a write leaves on a block. Only a root has one,
+// so a block with a parent is always ModeOutline — including a root moved under
+// one, which stops being a topic. An op that names no mode leaves current
+// standing.
+func storedMode(parent any, current, asked knowledge.Mode) knowledge.Mode {
+	if parent != nil {
+		return knowledge.ModeOutline
+	}
+	if asked != "" {
+		return asked
+	}
+	if current == "" {
+		return knowledge.ModeOutline
+	}
+	return current
+}
+
 // applyAdd inserts a new block, appended under its parent or inserted next to
 // an anchor sibling when op.After or op.Before is set, tagged with the
 // batch's authorship and source as provenance, and writes its creation
@@ -398,10 +457,11 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}
 	key := titleKey(parent, op.Content)
+	mode := storedMode(parent, "", op.Mode)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(op.BlockID), parent, pos, op.Content, key,
+		`INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(op.BlockID), parent, pos, op.Content, key, string(mode),
 		string(payload), b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
@@ -410,6 +470,7 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 		Content:  op.Content,
 		ParentID: knowledge.ID(op.Parent),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
@@ -423,13 +484,27 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 // applyEdit replaces a block's content, refreshing updated_at, and appends a
 // revision that carries the block's unchanged parent/position alongside the
 // new content — a revision is a full snapshot, not a diff.
+//
+// An edit names its target by id alone, so storage validates that a requested
+// mode belongs to a topic root.
 func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	var parent sql.NullString
 	var pos int
+	var current knowledge.Mode
 	if err := tx.QueryRowContext(ctx,
-		`SELECT parent_id, position FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&parent, &pos); err != nil {
+		`SELECT parent_id, position, mode FROM blocks WHERE id = ?`,
+		string(op.BlockID)).Scan(&parent, &pos, &current); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
+	var parentArg any
+	if parent.Valid && parent.String != "" {
+		parentArg = parent.String
+	}
+	if op.Mode != "" && parentArg != nil {
+		return fmt.Errorf("apply edit %s: only a topic root has a mode, and %s is a child of %s: %w",
+			op.BlockID, op.BlockID, parent.String, knowledge.ErrInvalidOps)
+	}
+	mode := storedMode(parentArg, current, op.Mode)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
@@ -439,18 +514,15 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		Content:  op.Content,
 		ParentID: knowledge.ID(parent.String),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
-	var parentArg any
-	if parent.Valid && parent.String != "" {
-		parentArg = parent.String
-	}
 	key := titleKey(parentArg, op.Content)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET content = ?, title_key = ?, updated_at = ? WHERE id = ?`,
-		op.Content, key, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET content = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
+		op.Content, key, string(mode), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
@@ -475,8 +547,9 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		return err
 	}
 	var content string
+	var current knowledge.Mode
 	if err := tx.QueryRowContext(ctx,
-		`SELECT content FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&content); err != nil {
+		`SELECT content, mode FROM blocks WHERE id = ?`, string(op.BlockID)).Scan(&content, &current); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	var parent any
@@ -487,6 +560,7 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	if err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
 	}
+	mode := storedMode(parent, current, op.Mode)
 	key := titleKey(parent, content)
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
@@ -497,13 +571,14 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		Content:  content,
 		ParentID: knowledge.ID(op.Parent),
 		Position: pos,
+		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, updated_at = ? WHERE id = ?`,
-		parent, pos, key, b.now, string(op.BlockID)); err != nil {
+		`UPDATE blocks SET parent_id = ?, position = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
+		parent, pos, key, string(mode), b.now, string(op.BlockID)); err != nil {
 		return fmt.Errorf("apply move %s: %w", op.BlockID, translate(err))
 	}
 	return nil
@@ -559,6 +634,7 @@ func (r *Repo) applyDelete(ctx context.Context, tx *sql.Tx, op knowledge.Op, b b
 			Content:  blk.Content,
 			ParentID: blk.ParentID,
 			Position: blk.Position,
+			Mode:     blk.Mode,
 			Deleted:  true,
 		})
 		if err := insertRevision(ctx, tx, rev, b.now); err != nil {

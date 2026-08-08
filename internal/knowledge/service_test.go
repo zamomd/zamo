@@ -163,7 +163,7 @@ func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
 	return f.unreviewed, f.unreviewedErr
 }
 
-func (f *fakeRepo) Search(context.Context, string) ([]Block, error) { return nil, f.searchErr }
+func (f *fakeRepo) Search(context.Context, string) ([]SearchHit, error) { return nil, f.searchErr }
 
 type fakeLLM struct {
 	tree              []Op
@@ -174,6 +174,11 @@ type fakeLLM struct {
 	editErr        error
 	gotScope       []Block
 	gotInstruction string
+	editOpsCalls   int
+
+	document    string
+	documentErr error
+	gotDocument Block
 
 	pingErr error
 }
@@ -184,8 +189,19 @@ func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, err
 }
 
 func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction string) ([]Op, error) {
+	l.editOpsCalls++
 	l.gotScope, l.gotInstruction = scope, instruction
 	return l.editOps, l.editErr
+}
+
+func (l *fakeLLM) GenerateDocument(_ context.Context, topic, hint string) (string, error) {
+	l.gotTopic, l.gotHint = topic, hint
+	return l.document, l.documentErr
+}
+
+func (l *fakeLLM) GenerateDocumentEdit(_ context.Context, doc Block, instruction string) (string, error) {
+	l.gotDocument, l.gotInstruction = doc, instruction
+	return l.document, l.documentErr
 }
 
 func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
@@ -267,7 +283,7 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	id, err := svc.CreateTopic(t.Context(), "Local-first")
+	id, err := svc.CreateTopic(t.Context(), "Local-first", "")
 	if err != nil {
 		t.Fatalf("CreateTopic: %v", err)
 	}
@@ -291,6 +307,30 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	}
 }
 
+func TestCreateTopicTakesItsMode(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Mode != ModeDoc {
+		t.Errorf("ops = %#v, want one add in doc mode", repo.applyOps)
+	}
+}
+
+func TestCreateTopicDefaultsToOutline(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(nil, repo, seqIDs(), nil)
+
+	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ""); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if got := repo.applyOps[0].Mode; got != ModeOutline {
+		t.Errorf("mode = %q, want %q", got, ModeOutline)
+	}
+}
+
 func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs(), nil)
@@ -298,7 +338,7 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	// A bracketed name belongs here too: the root would be created and the
 	// [[...]] that asked for it would still resolve to nothing.
 	for _, name := range []string{"", "   ", "###", "Notes [WIP]"} {
-		if _, err := svc.CreateTopic(t.Context(), name); !errors.Is(err, ErrInvalidOps) {
+		if _, err := svc.CreateTopic(t.Context(), name, ""); !errors.Is(err, ErrInvalidOps) {
 			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
 		}
 	}
@@ -311,7 +351,7 @@ func TestCreateTopicReportsATakenName(t *testing.T) {
 	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
 	svc := NewService(nil, repo, seqIDs(), nil)
 
-	if _, err := svc.CreateTopic(t.Context(), "Local-first"); !errors.Is(err, ErrDuplicateTopic) {
+	if _, err := svc.CreateTopic(t.Context(), "Local-first", ""); !errors.Is(err, ErrDuplicateTopic) {
 		t.Errorf("error = %v, want ErrDuplicateTopic", err)
 	}
 }
@@ -489,6 +529,142 @@ func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	}
 	if repo.applyCalls != 0 {
 		t.Errorf("an empty expansion was applied")
+	}
+}
+
+func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "# Doc\n\nOld body.", Mode: ModeDoc}},
+	}}
+	llm := &fakeLLM{document: "# Doc\n\nNew body."}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.EditWithAI(t.Context(), "t", "rewrite the body"); err != nil {
+		t.Fatalf("EditWithAI: %v", err)
+	}
+	if llm.editOpsCalls != 0 {
+		t.Errorf("GenerateEdit was called %d times on a document", llm.editOpsCalls)
+	}
+	if len(repo.applyOps) != 1 {
+		t.Fatalf("ops = %#v, want one edit", repo.applyOps)
+	}
+	op := repo.applyOps[0]
+	if op.Kind != OpEdit || op.BlockID != "t" || op.Content != "# Doc\n\nNew body." {
+		t.Errorf("op = %#v, want an edit of t with the new document", op)
+	}
+	if repo.applyMeta.Author != AuthorAI {
+		t.Errorf("author = %q, want %q", repo.applyMeta.Author, AuthorAI)
+	}
+	if llm.gotDocument.ID != "t" {
+		t.Errorf("model got document %+v, want the block being edited", llm.gotDocument)
+	}
+}
+
+func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts", Mode: ModeDoc}},
+	}}
+	llm := &fakeLLM{document: "# Go Contexts\n\nBody."}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
+		t.Fatalf("ExpandTopicByID: %v", err)
+	}
+	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "# Go Contexts\n\nBody." {
+		t.Errorf("ops = %#v, want one edit carrying the generated document", repo.applyOps)
+	}
+}
+
+func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts"}},
+	}}
+	llm := &fakeLLM{tree: []Op{
+		addOp("t1", "", "Go Contexts"),
+		addOp("t2", "t1", "Cancellation propagates."),
+		addOp("t3", "t2", "A derived context is cancelled with its parent."),
+	}}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	got, err := svc.ExpandTopicByID(t.Context(), "t", "cancellation")
+	if err != nil {
+		t.Fatalf("ExpandTopicByID: %v", err)
+	}
+	if llm.gotTopic != "Go Contexts" || llm.gotHint != "cancellation" {
+		t.Errorf("LLM asked for (%q, %q), want (Go Contexts, cancellation)", llm.gotTopic, llm.gotHint)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Fatalf("ops = %+v, want the two blocks below the generated root", repo.applyOps)
+	}
+	if got, want := repo.applyOps[0].Content, "Cancellation propagates."; got != want {
+		t.Errorf("first op content = %q, want %q", got, want)
+	}
+	if repo.applyOps[0].Parent != "t" {
+		t.Errorf("first op parent = %q, want the topic t", repo.applyOps[0].Parent)
+	}
+	if repo.applyOps[1].Parent != string(repo.applyOps[0].BlockID) {
+		t.Errorf("nesting below the graft was lost: op = %+v", repo.applyOps[1])
+	}
+	badMeta := repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand ||
+		repo.applyMeta.Title != "Go Contexts"
+	if badMeta {
+		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
+	}
+	if got.GroupID == "" {
+		t.Errorf("GroupID is empty, want a generated group id")
+	}
+}
+
+func TestExpandTopicByIDGraftsAFlatTreeOntoTheTopic(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts"}},
+	}}
+	llm := &fakeLLM{tree: []Op{
+		addOp("t1", "", "Cancellation propagates."),
+		addOp("t2", "", "Deadlines are contexts too."),
+	}}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
+		t.Fatalf("ExpandTopicByID: %v", err)
+	}
+	if len(repo.applyOps) != 2 {
+		t.Fatalf("ops = %+v, want both generated blocks", repo.applyOps)
+	}
+	for i, op := range repo.applyOps {
+		if op.Parent != "t" {
+			t.Errorf("op %d parent = %q, want the topic t", i, op.Parent)
+		}
+	}
+}
+
+func TestExpandTopicByIDRefusesAnEmptyExpansion(t *testing.T) {
+	repo := &fakeRepo{subtrees: map[ID][]Block{
+		"t": {{ID: "t", Content: "Go Contexts"}},
+	}}
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "Go Contexts")}}
+	svc := NewService(llm, repo, seqIDs(), nil)
+
+	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
+	if !errors.Is(err, ErrLLMBadResponse) {
+		t.Fatalf("error = %v, want ErrLLMBadResponse", err)
+	}
+	if repo.applyCalls != 0 {
+		t.Errorf("storage was written to %d times, want none", repo.applyCalls)
+	}
+}
+
+func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
+	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
+	repo := &fakeRepo{subtrees: map[ID][]Block{"t": {{ID: "t", Content: "private topic"}}}}
+	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+
+	_, err := svc.ExpandTopicByID(t.Context(), "t", "private hint")
+	if !errors.Is(err, ErrAIDisabled) {
+		t.Fatalf("error = %v, want ErrAIDisabled", err)
+	}
+	if repo.gotSubtree != "" || llm.gotTopic != "" || llm.gotHint != "" {
+		t.Error("storage or the model was called while AI was disabled")
 	}
 }
 

@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -15,7 +16,7 @@ const serverName = "comind"
 
 // Searcher runs full-text search over the base.
 type Searcher interface {
-	Search(ctx context.Context, query string) ([]knowledge.Block, error)
+	Search(ctx context.Context, query string) ([]knowledge.SearchHit, error)
 }
 
 // TreeReader serves the topic map (base overview), subtrees, and backlinks.
@@ -61,11 +62,15 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 		Description: "Apply block operations directly. Changes are live " +
 			"immediately but every touched block is flagged for the human's " +
 			"review and can be rolled back — write carefully and set " +
-			"rationale on every op.",
+			"rationale on every op.\n" +
+			"A topic is either an outline (a block tree) or a document (one " +
+			"root holding the whole markdown page, no children). An add or " +
+			"edit of a root may carry \"mode\": \"outline\" | \"doc\"; omit " +
+			"it to leave the shape alone.",
 	}, s.writeBlocks)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "search",
-		Description: "Full-text search over block content; returns matching blocks.",
+		Description: "Full-text search over block content; returns matching blocks with a snippet around each match.",
 	}, s.searchBlocks)
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "get_subtree",
@@ -88,6 +93,7 @@ type blockView struct {
 	ID      string `json:"id"`
 	Parent  string `json:"parent,omitempty"`
 	Content string `json:"content"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 // blocksOutput is the return shape shared by the read tools.
@@ -95,10 +101,28 @@ type blocksOutput struct {
 	Blocks []blockView `json:"blocks"`
 }
 
+// toBlockView maps one domain block onto its wire shape. Mode is only
+// meaningful on a topic root; storage stamps every child ModeOutline
+// regardless, so gating on IsTopic (not just omitempty) is what actually
+// keeps it off children on the wire. A root's mode defaults to outline, the
+// same default CreateTopic resolves an unset mode to, so the field is never
+// blank on a root.
+func toBlockView(b knowledge.Block) blockView {
+	v := blockView{ID: string(b.ID), Parent: string(b.ParentID), Content: b.Content}
+	if b.IsTopic() {
+		mode := b.Mode
+		if mode == "" {
+			mode = knowledge.ModeOutline
+		}
+		v.Mode = string(mode)
+	}
+	return v
+}
+
 func toBlocksOutput(blocks []knowledge.Block) blocksOutput {
 	views := make([]blockView, len(blocks))
 	for i, b := range blocks {
-		views[i] = blockView{ID: string(b.ID), Parent: string(b.ParentID), Content: b.Content}
+		views[i] = toBlockView(b)
 	}
 	return blocksOutput{Blocks: views}
 }
@@ -107,14 +131,30 @@ type searchInput struct {
 	Query string `json:"query" jsonschema:"the full-text query"`
 }
 
+// hitView is one search match on the wire: the block plus an excerpt around
+// the matching words, since a block's content alone (a whole document, for
+// one) doesn't say where in it the match landed.
+type hitView struct {
+	blockView
+	Snippet string `json:"snippet"`
+}
+
+type searchOutput struct {
+	Hits []hitView `json:"hits"`
+}
+
 func (s *Server) searchBlocks(
 	ctx context.Context, _ *mcpsdk.CallToolRequest, in searchInput,
-) (*mcpsdk.CallToolResult, blocksOutput, error) {
-	blocks, err := s.search.Search(ctx, in.Query)
+) (*mcpsdk.CallToolResult, searchOutput, error) {
+	hits, err := s.search.Search(ctx, in.Query)
 	if err != nil {
-		return nil, blocksOutput{}, err
+		return nil, searchOutput{}, err
 	}
-	return nil, toBlocksOutput(blocks), nil
+	views := make([]hitView, len(hits))
+	for i, h := range hits {
+		views[i] = hitView{blockView: toBlockView(h.Block), Snippet: h.Snippet}
+	}
+	return nil, searchOutput{Hits: views}, nil
 }
 
 type subtreeInput struct {
@@ -195,6 +235,7 @@ type opInput struct {
 	Parent    string `json:"parent,omitzero" jsonschema:"temp_id or existing id; empty means topic root"`
 	BlockID   string `json:"block_id,omitzero" jsonschema:"existing block to edit/move/delete"`
 	Content   string `json:"content,omitzero" jsonschema:"the block content"`
+	Mode      string `json:"mode,omitzero" jsonschema:"outline or doc; only on a topic root, empty leaves the shape alone"`
 	Rationale string `json:"rationale,omitzero" jsonschema:"why the AI makes this change"`
 }
 
@@ -206,6 +247,7 @@ func (in opInput) toOp() knowledge.Op {
 		Parent:    in.Parent,
 		BlockID:   knowledge.ID(in.BlockID),
 		Content:   in.Content,
+		Mode:      knowledge.Mode(in.Mode),
 		Rationale: in.Rationale,
 		Origin:    originMCP,
 	}
@@ -223,6 +265,16 @@ type writeInput struct {
 	Ops   []opInput `json:"ops" jsonschema:"the block operations to apply (add/edit/move/delete)"`
 }
 
+// explain turns a domain error into something an AI client can act on. The
+// document refusal names the write that would have worked, because the model
+// has no other way to learn the topic's shape mid-batch.
+func explain(err error) string {
+	if errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		return err.Error() + "; edit its root content instead of adding children"
+	}
+	return err.Error()
+}
+
 // writeBlocks applies the operations as an mcp-sourced, AI-authored batch. The
 // source and author are fixed here: an MCP client never chooses its own
 // provenance.
@@ -236,7 +288,8 @@ func (s *Server) writeBlocks(
 	applied, err := s.writer.ApplyOps(ctx,
 		knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: in.Title}, ops)
 	if err != nil {
-		return nil, writeOutput{}, err
+		// The SDK omits StructuredContent only for a non-nil Go error.
+		return nil, writeOutput{}, errors.New(explain(err))
 	}
 	ids := make(map[string]string, len(applied.IDs))
 	for temp, id := range applied.IDs {

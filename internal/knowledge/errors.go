@@ -69,4 +69,9 @@ var (
 	// ErrLLMBadResponse reports that the model answered, but the answer
 	// could not be parsed into operations even after a retry.
 	ErrLLMBadResponse = errors.New("LLM returned an unparsable response")
+
+	// ErrDocumentHasChildren reports a write that would leave a block under a
+	// topic root in ModeDoc. A document is the whole topic: its text is the
+	// page, and a child would be content the reader never sees.
+	ErrDocumentHasChildren = errors.New("a document topic cannot have children")
 )

@@ -28,6 +28,14 @@ func (stubClient) GenerateEdit(_ context.Context, _ []knowledge.Block, _ string)
 	return nil, nil
 }
 
+func (stubClient) GenerateDocument(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+
+func (stubClient) GenerateDocumentEdit(_ context.Context, _ knowledge.Block, _ string) (string, error) {
+	return "", nil
+}
+
 func (stubClient) Ping(_ context.Context) error { return nil }
 
 func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string) {

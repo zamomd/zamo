@@ -336,6 +336,57 @@ func TestGenerateEditReportsProgressPhases(t *testing.T) {
 	}
 }
 
+func TestGenerateDocumentReportsProgressPhasesAndSkipsParsing(t *testing.T) {
+	const doc = "# Go contexts\n\nBody."
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(doc))
+	})
+
+	var phases []knowledge.GenerationPhase
+	ctx := knowledge.WithProgress(t.Context(), func(p knowledge.Progress) {
+		phases = append(phases, p.Phase)
+	})
+
+	got, err := c.GenerateDocument(ctx, "Go contexts", "")
+	if err != nil {
+		t.Fatalf("GenerateDocument: %v", err)
+	}
+	if got != doc {
+		t.Errorf("GenerateDocument = %q, want the model's text unparsed: %q", got, doc)
+	}
+	want := []knowledge.GenerationPhase{knowledge.PhaseRequesting, knowledge.PhaseAwaiting}
+	if !slices.Equal(phases, want) {
+		t.Errorf("phases = %v, want %v (no parsing phase for a document)", phases, want)
+	}
+}
+
+func TestGenerateDocumentEditReportsProgressPhasesAndSkipsParsing(t *testing.T) {
+	const doc = "# Go contexts\n\nNew body."
+	c := newTestClient(t, "test-key", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, chatReply(doc))
+	})
+
+	var phases []knowledge.GenerationPhase
+	ctx := knowledge.WithProgress(t.Context(), func(p knowledge.Progress) {
+		phases = append(phases, p.Phase)
+	})
+
+	original := knowledge.Block{ID: "01A", Content: "# Go contexts\n\nOld body."}
+	got, err := c.GenerateDocumentEdit(ctx, original, "rewrite the body")
+	if err != nil {
+		t.Fatalf("GenerateDocumentEdit: %v", err)
+	}
+	if got != doc {
+		t.Errorf("GenerateDocumentEdit = %q, want the model's text unparsed: %q", got, doc)
+	}
+	want := []knowledge.GenerationPhase{knowledge.PhaseRequesting, knowledge.PhaseAwaiting}
+	if !slices.Equal(phases, want) {
+		t.Errorf("phases = %v, want %v (no parsing phase for a document)", phases, want)
+	}
+}
+
 func bodyText(body map[string]any) string {
 	msgs, _ := body["messages"].([]any)
 	var b strings.Builder

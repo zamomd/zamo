@@ -249,3 +249,24 @@ func TestOpValidateRejectsAnAnchorOnAKindThatIgnoresIt(t *testing.T) {
 		t.Errorf("validate error = %v, want ErrInvalidOps", err)
 	}
 }
+
+func TestOpValidateRefusesModeOnAChild(t *testing.T) {
+	op := Op{Kind: OpAdd, TempID: "a", Parent: "root", Mode: ModeDoc}
+	if err := op.validate(); !errors.Is(err, ErrInvalidOps) {
+		t.Fatalf("validate = %v, want ErrInvalidOps", err)
+	}
+}
+
+func TestOpValidateRefusesAnUnknownMode(t *testing.T) {
+	op := Op{Kind: OpAdd, TempID: "a", Mode: Mode("prose")}
+	if err := op.validate(); !errors.Is(err, ErrInvalidOps) {
+		t.Fatalf("validate = %v, want ErrInvalidOps", err)
+	}
+}
+
+func TestOpValidateRefusesModeOnAMove(t *testing.T) {
+	op := Op{Kind: OpMove, BlockID: "b", Mode: ModeDoc}
+	if err := op.validate(); !errors.Is(err, ErrInvalidOps) {
+		t.Fatalf("validate = %v, want ErrInvalidOps", err)
+	}
+}

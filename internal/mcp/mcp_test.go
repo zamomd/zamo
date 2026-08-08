@@ -4,19 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
 type fakeBase struct {
-	searchQuery  string
-	searchBlocks []knowledge.Block
-	searchErr    error
+	searchQuery string
+	searchHits  []knowledge.SearchHit
+	searchErr   error
 
 	subtreeRoot knowledge.ID
 	subtree     []knowledge.Block
@@ -34,9 +35,9 @@ type fakeBase struct {
 	writeErr     error
 }
 
-func (f *fakeBase) Search(_ context.Context, q string) ([]knowledge.Block, error) {
+func (f *fakeBase) Search(_ context.Context, q string) ([]knowledge.SearchHit, error) {
 	f.searchQuery = q
-	return f.searchBlocks, f.searchErr
+	return f.searchHits, f.searchErr
 }
 
 func (f *fakeBase) TopicMap(context.Context) ([]knowledge.Block, error) {
@@ -140,8 +141,8 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 		t.Fatalf("decode output: %v", err)
 	}
 	want := writeOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
-	if !reflect.DeepEqual(out, want) {
-		t.Errorf("output = %+v, want %+v", out, want)
+	if diff := cmp.Diff(want, out); diff != "" {
+		t.Errorf("output mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -200,6 +201,128 @@ func TestWriteRejectsForgedOrigin(t *testing.T) {
 	}
 }
 
+func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
+	fake := &fakeBase{}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "Contexts in Go",
+			"ops": []map[string]any{
+				{"op": "add", "temp_id": "t1", "content": "# Contexts in Go", "mode": "doc"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
+	}
+	if len(fake.writeOps) != 1 {
+		t.Fatalf("ops not forwarded: %+v", fake.writeOps)
+	}
+	if got := fake.writeOps[0].Mode; got != knowledge.ModeDoc {
+		t.Errorf("Mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+}
+
+func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
+	fake := &fakeBase{writeErr: fmt.Errorf("block c1: %w", knowledge.ErrDocumentHasChildren)}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "fill the doc",
+			"ops": []map[string]any{
+				{"op": "add", "temp_id": "c1", "parent": "01ROOT", "content": "child"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("write_blocks accepted a child under a document")
+	}
+	text := contentText(t, res)
+	if !strings.Contains(text, "edit its root content instead of adding children") {
+		t.Errorf("error text = %q, want it to name the write that would work", text)
+	}
+}
+
+func TestWriteBlocksReportsNoStructuredContentOnFailure(t *testing.T) {
+	fake := &fakeBase{writeErr: errors.New("base unavailable")}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "write_blocks",
+		Arguments: map[string]any{
+			"title": "t",
+			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("write_blocks must report IsError on a capability failure")
+	}
+	if res.StructuredContent != nil {
+		t.Errorf("StructuredContent = %#v, want nil on a failed write "+
+			"(a client that reads it before IsError must not see a fake empty success)", res.StructuredContent)
+	}
+}
+
+func TestGetSubtreeReportsTheMode(t *testing.T) {
+	fake := &fakeBase{subtree: []knowledge.Block{
+		{ID: "01ROOT", Content: "# Doc", Mode: knowledge.ModeDoc},
+	}}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_subtree",
+		Arguments: map[string]any{"root": "01ROOT"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("get_subtree reported a tool error: %+v", res.Content)
+	}
+	var out blocksOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	want := blocksOutput{Blocks: []blockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
+	if diff := cmp.Diff(want, out); diff != "" {
+		t.Errorf("output mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
+	fake := &fakeBase{subtree: []knowledge.Block{
+		{ID: "01ROOT", Content: "Topic"},
+		{ID: "01KID", ParentID: "01ROOT", Content: "child"},
+	}}
+	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name:      "get_subtree",
+		Arguments: map[string]any{"root": "01ROOT"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	if strings.Count(string(raw), `"mode"`) != 1 {
+		t.Errorf("result = %s, want the mode reported for the root alone", raw)
+	}
+}
+
 func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
@@ -217,16 +340,49 @@ func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[st
 	return out
 }
 
+func callSearch(t *testing.T, cs *mcpsdk.ClientSession, args map[string]any) searchOutput {
+	t.Helper()
+	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "search", Arguments: args})
+	if err != nil {
+		t.Fatalf("CallTool search: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("search reported a tool error: %+v", res.Content)
+	}
+	var out searchOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode search output: %v", err)
+	}
+	return out
+}
+
+// contentText joins a tool result's text content, which is where a refused
+// call's explanation lands.
+func contentText(t *testing.T, res *mcpsdk.CallToolResult) string {
+	t.Helper()
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcpsdk.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
+}
+
 func TestSearchTool(t *testing.T) {
-	fake := &fakeBase{searchBlocks: []knowledge.Block{{ID: "01A", Content: "context deadlines"}}}
+	fake := &fakeBase{searchHits: []knowledge.SearchHit{
+		{Block: knowledge.Block{ID: "01A", Content: "context deadlines"}, Snippet: "…context deadlines…"},
+	}}
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
-	out := callBlocks(t, cs, "search", map[string]any{"query": "context"})
+	out := callSearch(t, cs, map[string]any{"query": "context"})
 	if fake.searchQuery != "context" {
 		t.Errorf("query forwarded = %q, want context", fake.searchQuery)
 	}
-	if len(out.Blocks) != 1 || out.Blocks[0].ID != "01A" || out.Blocks[0].Content != "context deadlines" {
-		t.Errorf("search result = %+v, want the block from the base", out.Blocks)
+	if len(out.Hits) != 1 || out.Hits[0].ID != "01A" || out.Hits[0].Content != "context deadlines" ||
+		out.Hits[0].Snippet != "…context deadlines…" {
+		t.Errorf("search result = %+v, want the block and snippet from the base", out.Hits)
 	}
 }
 
@@ -329,13 +485,13 @@ func TestToolSurface(t *testing.T) {
 
 func TestReadToolsNeverWrite(t *testing.T) {
 	fake := &fakeBase{
-		searchBlocks: []knowledge.Block{{ID: "01A"}},
-		subtree:      []knowledge.Block{{ID: "01ROOT"}},
-		topic:        []knowledge.Block{{ID: "01T"}},
+		searchHits: []knowledge.SearchHit{{Block: knowledge.Block{ID: "01A"}}},
+		subtree:    []knowledge.Block{{ID: "01ROOT"}},
+		topic:      []knowledge.Block{{ID: "01T"}},
 	}
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
-	callBlocks(t, cs, "search", map[string]any{"query": "x"})
+	callSearch(t, cs, map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	callBlocks(t, cs, "topic_map", map[string]any{})
 	if _, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{

@@ -104,6 +104,25 @@ func TestCurrentSchemaPassesEveryProbe(t *testing.T) {
 	}
 }
 
+func TestMigrateRefusesDatabaseWithoutMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(t.Context(),
+		`CREATE TABLE blocks (id TEXT PRIMARY KEY, title_key TEXT);
+		 CREATE TABLE refs (source_id TEXT);
+		 CREATE TABLE revision_groups (id TEXT, atomic INTEGER);
+		 PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(t.Context(), db); !errors.Is(err, ErrSchemaTooOld) {
+		t.Fatalf("Migrate = %v, want ErrSchemaTooOld", err)
+	}
+}
+
 func TestMigrateConcurrentStarts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "race.db")
 

@@ -23,6 +23,7 @@ type Revision struct {
 	Content   string
 	ParentID  ID // empty means topic root
 	Position  int
+	Mode      Mode // the shape the block had at this change (see Block.Mode)
 	Deleted   bool // tombstone: the block is absent from the projection
 	Author    Author
 	Source    Source
@@ -38,8 +39,9 @@ type Revision struct {
 	Atomic bool
 }
 
-// WriteMeta is the provenance of one ApplyOps batch. Author decides the
-// review state: owner revisions are born reviewed, AI revisions are not.
+// WriteMeta is the provenance of one ApplyOps batch. Author is a fact about who
+// made the change and nothing else is allowed to bend it; whether the batch has
+// to be reviewed is BornReviewed's answer.
 type WriteMeta struct {
 	Author Author
 	Source Source
@@ -50,6 +52,20 @@ type WriteMeta struct {
 	// [[New name]] while rejecting the rename would leave it resolving to
 	// nothing.
 	Atomic bool
+	// AwaitsReview sends an owner-authored batch to the review queue anyway.
+	// A restructuring the owner asked for is still one the owner may want back
+	// — and every mechanism that gives a batch back whole (the Changes screen's
+	// Reject batch, the atomic-group guards) reads the review state, so a batch
+	// born reviewed has no whole-batch revert at all. AI batches always await
+	// review and ignore this.
+	AwaitsReview bool
+}
+
+// BornReviewed reports whether the batch's revisions need no review decision.
+// The owner's own writes do not — typing must never queue up work for the
+// person who typed it — unless the batch asks for review explicitly.
+func (m WriteMeta) BornReviewed() bool {
+	return m.Author == AuthorOwner && !m.AwaitsReview
 }
 
 // Applied reports what an ApplyOps batch did: the group that ties its
@@ -76,6 +92,16 @@ type UnreviewedBlock struct {
 	GroupID    ID
 	GroupTitle string
 	Atomic     bool
+
+	// WrittenOver reports that the batch named by GroupID can no longer be
+	// given back: a later change of another batch sits on top of one of the
+	// blocks it touched — not necessarily this one, which is why no comparison
+	// of this entry's own fields can stand in for it. Undoing the batch would
+	// silently change what that later change was made against, so it is
+	// refused with ErrGroupWrittenOver: accepting is the only decision left,
+	// and a screen offering to reject is offering something that can only
+	// fail. Derived by storage on read; never written by callers.
+	WrittenOver bool
 }
 
 // UnreviewedChanges is everything awaiting review.

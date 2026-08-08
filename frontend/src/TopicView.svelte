@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Breadcrumbs from "./lib/Breadcrumbs.svelte";
 	import CommandBox from "./lib/CommandBox.svelte";
+	import DocView from "./lib/DocView.svelte";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import TreeNode from "./lib/TreeNode.svelte";
 	import { ai } from "./stores/ai.svelte";
@@ -20,11 +21,15 @@
 		</p>
 	{:else}
 		<Breadcrumbs />
-		<div class="tree">
-			<ul>
-				<TreeNode node={tree} title={true} />
-			</ul>
-		</div>
+		{#if base.topicMode === "doc"}
+			<div class="tree"><DocView node={tree} /></div>
+		{:else}
+			<div class="tree">
+				<ul>
+					<TreeNode node={tree} title={true} />
+				</ul>
+			</div>
+		{/if}
 	{/if}
 
 	<footer>

@@ -19,7 +19,7 @@ import (
 // revision carries whether its batch has to be reviewed whole, so no caller
 // has to look that up separately and none can forget to.
 const revisionSelect = `
-SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position,
+SELECT r.id, r.block_id, r.seq, r.content, r.parent_id, r.position, r.mode,
        r.deleted, r.author, r.source, r.origin, r.rationale, r.reviewed,
        r.group_id, r.created_at, COALESCE(g.atomic, 0)
 FROM block_revisions r LEFT JOIN revision_groups g ON g.id = r.group_id`
@@ -54,11 +54,11 @@ func insertRevision(ctx context.Context, tx *sql.Tx, rev knowledge.Revision, now
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO block_revisions
-		(id, block_id, seq, content, parent_id, position, deleted, author,
+		(id, block_id, seq, content, parent_id, position, mode, deleted, author,
 		 source, origin, rationale, reviewed, group_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(rev.ID), string(rev.BlockID), rev.Seq, rev.Content, parent,
-		rev.Position, rev.Deleted, string(rev.Author), string(rev.Source),
+		rev.Position, string(rev.Mode), rev.Deleted, string(rev.Author), string(rev.Source),
 		rev.Origin, rev.Rationale, rev.Reviewed, string(rev.GroupID), now)
 	return err
 }
@@ -90,8 +90,8 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 		created                                  string
 	)
 	if err := row.Scan(&id, &blockID, &rev.Seq, &rev.Content, &parent, &rev.Position,
-		&rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed, &group, &created,
-		&rev.Atomic); err != nil {
+		&rev.Mode, &rev.Deleted, &author, &source, &origin, &rationale, &rev.Reviewed,
+		&group, &created, &rev.Atomic); err != nil {
 		return knowledge.Revision{}, err
 	}
 	rev.ID = knowledge.ID(id)
@@ -113,6 +113,15 @@ func scanRevision(row scanner) (knowledge.Revision, error) {
 // projectHead rebuilds a block from its current head revision. A live head
 // requires a live parent, and a block with live children cannot be removed.
 // Timestamps come from revision history so rollback reproduces historical state.
+//
+// It also holds the document invariant the apply transaction enforces for
+// writes (see refuseDocumentChildren), from both ends: a live head cannot land
+// under a parent that is a document, and a head restoring a document cannot
+// land over live children. Both answer ErrInvalidRollback, so a page-wide or
+// group-wide rollback that also rolls back the other end retries and converges
+// (projectFixpoint), while one that does not is refused whole — which is what
+// keeps a review decision on half a conversion from leaving the base in a state
+// no write can repair.
 //
 // It restores every piece of state derived from content, not just the row:
 // blocks_fts through the normal triggers, blocks.title_key computed here, and
@@ -144,14 +153,18 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		return nil
 	}
 	if head.ParentID != "" {
-		var exists bool
-		if err := tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)`,
-			string(head.ParentID)).Scan(&exists); err != nil {
+		var parentMode knowledge.Mode
+		err := tx.QueryRowContext(ctx,
+			`SELECT mode FROM blocks WHERE id = ?`, string(head.ParentID)).Scan(&parentMode)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("block %s: restore parent %s first: %w",
+				blockID, head.ParentID, knowledge.ErrInvalidRollback)
+		}
+		if err != nil {
 			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 		}
-		if !exists {
-			return fmt.Errorf("block %s: restore parent %s first: %w",
+		if parentMode == knowledge.ModeDoc {
+			return fmt.Errorf("block %s: parent %s is a document: %w",
 				blockID, head.ParentID, knowledge.ErrInvalidRollback)
 		}
 	}
@@ -166,14 +179,30 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		parent = string(head.ParentID)
 	}
 	key := titleKey(parent, head.Content)
+	mode := storedMode(parent, head.Mode, "")
+	if mode == knowledge.ModeDoc {
+		var kids bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM blocks WHERE parent_id = ?)`,
+			blockID).Scan(&kids); err != nil {
+			return fmt.Errorf("project head of %s: %w", blockID, translate(err))
+		}
+		if kids {
+			// Not "roll them back": the children reached here by surviving the
+			// rollback, so they are as likely to be reviewed blocks no rollback
+			// will ever remove. Deleting them is the action that always exists.
+			return fmt.Errorf("block %s: a document cannot keep its children; delete or move them first: %w",
+				blockID, knowledge.ErrInvalidRollback)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO blocks (id, parent_id, position, content, title_key, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
+		INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			parent_id = excluded.parent_id, position = excluded.position,
 			content = excluded.content, title_key = excluded.title_key,
-			updated_at = excluded.updated_at`,
-		blockID, parent, head.Position, head.Content, key,
+			mode = excluded.mode, updated_at = excluded.updated_at`,
+		blockID, parent, head.Position, head.Content, key, string(mode),
 		first, formatTime(head.CreatedAt)); err != nil {
 		return fmt.Errorf("project head of %s: %w", blockID, translate(err))
 	}
@@ -374,19 +403,37 @@ WHERE r.reviewed = 0 AND g.atomic = 1
   AND r.block_id IN (`+strings.Repeat(",?", len(ids))[1:]+`)`, args...)
 }
 
-// undoableBlockIDs returns the affected blocks when a group can be removed
-// without crossing newer revisions.
-func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
+// groupWrittenOver reports whether a batch has been written over: any of its
+// revisions has a later revision of the same block belonging to another batch,
+// so removing the batch would silently change what that later revision was
+// made against. It is a fact about the whole group, not about one block —
+// a batch is buried by a later change to *any* block it touched, which is why
+// no comparison of a single entry's own group ids can stand in for it.
+//
+// One definition on purpose, read through rowQueryer so it serves both callers:
+// UndoGroup refusing a batch (ErrGroupWrittenOver) and the Changes screen
+// deciding whether to offer that refusal have to agree exactly. A second copy
+// of a rule this subtle drifts, and the screen then renders a button that can
+// only fail.
+func groupWrittenOver(ctx context.Context, q rowQueryer, groupID string) (bool, error) {
 	var buried bool
-	if err := tx.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM block_revisions r
 			WHERE r.group_id = ? AND EXISTS(
 				SELECT 1 FROM block_revisions later
 				WHERE later.block_id = r.block_id AND later.seq > r.seq
 				  AND (later.group_id IS NULL OR later.group_id <> ?)))`,
-		groupID, groupID).Scan(&buried); err != nil {
-		return nil, translate(err)
+		groupID, groupID).Scan(&buried)
+	return buried, translate(err)
+}
+
+// undoableBlockIDs returns the affected blocks when a group can be removed
+// without crossing newer revisions.
+func undoableBlockIDs(ctx context.Context, tx *sql.Tx, groupID string) ([]string, error) {
+	buried, err := groupWrittenOver(ctx, tx, groupID)
+	if err != nil {
+		return nil, err
 	}
 	if buried {
 		return nil, fmt.Errorf("group %s: %w", groupID, knowledge.ErrGroupWrittenOver)
@@ -614,6 +661,7 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 	}
 
 	out := make([]knowledge.UnreviewedBlock, 0, len(blockIDs))
+	buried := make(map[string]bool)
 	for _, id := range blockIDs {
 		head, ok, err := headRevision(ctx, r.db, id)
 		if err != nil {
@@ -640,8 +688,28 @@ func (r *Repo) ListUnreviewed(ctx context.Context) (knowledge.UnreviewedChanges,
 			ORDER BY rv.seq DESC LIMIT 1`, id).Scan(&groupID, &title, &atomic); err != nil {
 			return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, translate(err))
 		}
+		// Asked of the group, not of this block's own row: the batch may have
+		// been buried by a later change to a different block of it, and a
+		// screen offering to reject the batch is offering to undo all of it.
+		// Comparing this row's group with the head's cannot see that, nor a
+		// burying revision that is itself unreviewed — which becomes this very
+		// row, making the two ids match again.
+		//
+		// Asked once per group, not once per block. The answer is a property of
+		// the group, so every block reporting that group shares it by
+		// construction — and the query scans a batch's whole history, on a path
+		// the Changes screen polls, where one batch commonly holds the entire
+		// queue.
+		writtenOver, known := buried[groupID]
+		if groupID != "" && !known {
+			if writtenOver, err = groupWrittenOver(ctx, r.db, groupID); err != nil {
+				return knowledge.UnreviewedChanges{}, fmt.Errorf("list unreviewed: group of %s: %w", id, err)
+			}
+			buried[groupID] = writtenOver
+		}
 		out = append(out, knowledge.UnreviewedBlock{
-			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title, Atomic: atomic,
+			Head: head, TopicID: topic, GroupID: knowledge.ID(groupID), GroupTitle: title,
+			Atomic: atomic, WrittenOver: writtenOver,
 		})
 	}
 	slices.SortStableFunc(out, func(a, b knowledge.UnreviewedBlock) int {

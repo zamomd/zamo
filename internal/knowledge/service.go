@@ -62,10 +62,11 @@ func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWr
 	return s
 }
 
-// ApplyOps validates and applies a write batch directly. Every touched
-// block gains a revision; AI revisions await review, owner revisions are
-// born reviewed. The single write path for MCP, the GUI AI flows, and the
-// owner's manual edits.
+// ApplyOps validates and applies a write batch directly. Every touched block
+// gains a revision, awaiting review or not as WriteMeta.BornReviewed decides:
+// AI revisions always wait, owner revisions do not unless the batch asked to
+// (WriteMeta.AwaitsReview). The single write path for MCP, the GUI AI flows,
+// and the owner's manual edits.
 func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Applied, error) {
 	if meta.Author == AuthorAI && s.requireAI() != nil {
 		return Applied{}, fmt.Errorf("%w: this batch is AI-authored", ErrAIDisabled)
@@ -88,17 +89,26 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 	return Applied{GroupID: groupID, IDs: ids}, nil
 }
 
-// CreateTopic adds an empty topic root named name. Owner-authored, so it is
-// born reviewed, and it needs no LLM — the provider has no default, so an AI
-// expansion is not a path a fresh install can rely on to make a topic exist.
-// The name is written verbatim, which is what makes the new root's title_key
-// exactly the key the [[Topic]] reference that asked for it resolves by.
-func (s *Service) CreateTopic(ctx context.Context, name string) (ID, error) {
+// CreateTopic adds an empty topic root named name, in the given mode; an
+// empty mode defaults to ModeOutline. Owner-authored, so it is born reviewed,
+// and it needs no LLM — the provider has no default, so an AI expansion is
+// not a path a fresh install can rely on to make a topic exist. The name is
+// written verbatim, which is what makes the new root's title_key exactly the
+// key the [[Topic]] reference that asked for it resolves by.
+func (s *Service) CreateTopic(ctx context.Context, name string, mode Mode) (ID, error) {
 	if TopicKey(name) == "" {
 		return "", fmt.Errorf("create topic %q: a topic needs a name: %w", name, ErrInvalidOps)
 	}
+	if mode == "" {
+		mode = ModeOutline
+	}
+	if !mode.valid() {
+		return "", fmt.Errorf("create topic %q: unknown mode %q: %w", name, mode, ErrInvalidOps)
+	}
 	const temp = "topic"
-	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{{Kind: OpAdd, TempID: temp, Content: name}})
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{
+		{Kind: OpAdd, TempID: temp, Content: name, Mode: mode},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -118,8 +128,72 @@ func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied,
 	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIExpand, Title: topic}, ops)
 }
 
-// EditWithAI turns a user's text command into structure edits and applies
-// them directly, awaiting review.
+// ExpandTopicByID expands an existing topic in the shape it has: an outline
+// grows a block tree, a document is written whole. Both await review.
+func (s *Service) ExpandTopicByID(ctx context.Context, id ID, hint string) (Applied, error) {
+	if err := s.requireAI(); err != nil {
+		return Applied{}, err
+	}
+	sub, err := s.repo.GetSubtree(ctx, id)
+	if err != nil {
+		return Applied{}, err
+	}
+	root := sub[0]
+	if root.Mode != ModeDoc {
+		ops, err := s.llm.GenerateTree(ctx, TopicName(root.Content), hint)
+		if err != nil {
+			return Applied{}, err
+		}
+		ops = graftOntoTopic(ops, id)
+		if len(ops) == 0 {
+			return Applied{}, fmt.Errorf(
+				"expand %s: the model returned nothing below the topic: %w", id, ErrLLMBadResponse)
+		}
+		return s.ApplyOps(ctx, WriteMeta{
+			Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
+		}, ops)
+	}
+	text, err := s.llm.GenerateDocument(ctx, TopicName(root.Content), hint)
+	if err != nil {
+		return Applied{}, err
+	}
+	return s.ApplyOps(ctx, WriteMeta{
+		Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
+	}, []Op{{Kind: OpEdit, BlockID: id, Content: text}})
+}
+
+// graftOntoTopic rebinds a generated tree onto a topic that already exists.
+// GenerateTree answers with a whole tree whose root names the topic.
+//
+// A single generated root is dropped and its children hang from id. When the
+// result has several top-level blocks, each becomes a child of the topic.
+func graftOntoTopic(ops []Op, id ID) []Op {
+	var roots []int
+	for i, op := range ops {
+		if op.Parent == "" {
+			roots = append(roots, i)
+		}
+	}
+	if len(roots) == 1 && ops[roots[0]].TempID != "" {
+		generated := ops[roots[0]].TempID
+		out := slices.Delete(slices.Clone(ops), roots[0], roots[0]+1)
+		for i := range out {
+			if out[i].Parent == generated {
+				out[i].Parent = string(id)
+			}
+		}
+		return out
+	}
+	out := slices.Clone(ops)
+	for _, i := range roots {
+		out[i].Parent = string(id)
+	}
+	return out
+}
+
+// EditWithAI turns a user's text command into a change of the scope and applies
+// it directly, awaiting review. A document is rewritten whole; an outline gets
+// structure edits.
 func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
 	if err := s.requireAI(); err != nil {
 		return Applied{}, err
@@ -128,11 +202,19 @@ func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) 
 	if err != nil {
 		return Applied{}, err
 	}
+	meta := WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}
+	if blocks[0].Mode == ModeDoc {
+		text, err := s.llm.GenerateDocumentEdit(ctx, blocks[0], instruction)
+		if err != nil {
+			return Applied{}, err
+		}
+		return s.ApplyOps(ctx, meta, []Op{{Kind: OpEdit, BlockID: scope, Content: text}})
+	}
 	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
 	if err != nil {
 		return Applied{}, err
 	}
-	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}, ops)
+	return s.ApplyOps(ctx, meta, ops)
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
@@ -461,7 +543,7 @@ func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
 }
 
 // Search runs a full-text search over block content.
-func (s *Service) Search(ctx context.Context, query string) ([]Block, error) {
+func (s *Service) Search(ctx context.Context, query string) ([]SearchHit, error) {
 	return s.repo.Search(ctx, query)
 }
 

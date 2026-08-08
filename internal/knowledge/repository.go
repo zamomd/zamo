@@ -46,5 +46,5 @@ type Repository interface {
 	MarkPageReviewed(ctx context.Context, topicID ID) error
 	ListUnreviewed(ctx context.Context) (UnreviewedChanges, error)
 
-	Search(ctx context.Context, query string) ([]Block, error)
+	Search(ctx context.Context, query string) ([]SearchHit, error)
 }

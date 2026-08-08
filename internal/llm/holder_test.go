@@ -18,6 +18,14 @@ func (s stubClient) GenerateEdit(context.Context, []knowledge.Block, string) ([]
 	return nil, nil
 }
 
+func (s stubClient) GenerateDocument(context.Context, string, string) (string, error) {
+	return s.name, nil
+}
+
+func (s stubClient) GenerateDocumentEdit(context.Context, knowledge.Block, string) (string, error) {
+	return s.name, nil
+}
+
 func (s stubClient) Ping(context.Context) error { return nil }
 
 func TestHolderSetSwapsClient(t *testing.T) {

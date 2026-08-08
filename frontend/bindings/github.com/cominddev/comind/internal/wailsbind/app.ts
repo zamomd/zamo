@@ -68,8 +68,8 @@ export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
  * CreateTopic passes the call to knowledge.Service: a new, empty topic named by
  * the user, written without the AI and reporting the new root's id.
  */
-export function CreateTopic(name: string): $CancellablePromise<knowledge$0.ID> {
-    return $Call.ByID(3007216784, name);
+export function CreateTopic(name: string, mode: knowledge$0.Mode): $CancellablePromise<knowledge$0.ID> {
+    return $Call.ByID(3007216784, name, mode);
 }
 
 /**
@@ -108,6 +108,14 @@ export function EditWithAI(scope: knowledge$0.ID, instruction: string): $Cancell
  */
 export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Applied> {
     return $Call.ByID(738254684, topic, hint);
+}
+
+/**
+ * ExpandTopicByID passes the call to knowledge.Service: expands an existing
+ * topic in the shape it has.
+ */
+export function ExpandTopicByID(id: knowledge$0.ID, hint: string): $CancellablePromise<knowledge$0.Applied> {
+    return $Call.ByID(2139554748, id, hint);
 }
 
 /**
@@ -189,8 +197,16 @@ export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
  * Search passes the call to knowledge.Service. The frontend supplies the raw
  * query string; the backend owns the FTS syntax and its neutralisation.
  */
-export function Search(query: string): $CancellablePromise<knowledge$0.Block[] | null> {
+export function Search(query: string): $CancellablePromise<knowledge$0.SearchHit[] | null> {
     return $Call.ByID(1512770581, query);
+}
+
+/**
+ * SetTopicMode passes the call to knowledge.Service: converts a topic between
+ * an outline and a document.
+ */
+export function SetTopicMode(id: knowledge$0.ID, mode: knowledge$0.Mode): $CancellablePromise<void> {
+    return $Call.ByID(410443209, id, mode);
 }
 
 /**

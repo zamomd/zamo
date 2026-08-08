@@ -3,8 +3,10 @@ package knowledge
 import (
 	"encoding/json"
 	"os"
-	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 )
 
 type refCase struct {
@@ -20,13 +22,9 @@ type refCase struct {
 func refFixture(t *testing.T) []refCase {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/refs.json")
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	require.NoError(t, err)
 	var cases []refCase
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatalf("decode fixture: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &cases))
 	if len(cases) == 0 {
 		t.Fatal("fixture is empty")
 	}
@@ -44,8 +42,8 @@ func TestParseRefs(t *testing.T) {
 			if len(got) == 0 && len(want) == 0 {
 				return
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("ParseRefs(%q)\n got %v\nwant %v", tc.Content, got, want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("ParseRefs(%q) mismatch (-want +got):\n%s", tc.Content, diff)
 			}
 		})
 	}

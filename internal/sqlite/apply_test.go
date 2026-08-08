@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -21,6 +22,16 @@ func testRepo(t *testing.T) *Repo {
 	seq := 0
 	return NewRepo(db, func() time.Time { return time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC) },
 		func() knowledge.ID { seq++; return knowledge.ID(fmt.Sprintf("rev-%03d", seq)) })
+}
+
+// testService wires the domain to repo with a counting id generator, for the
+// tests whose subject is a use case rather than a single storage call.
+func testService(repo *Repo) *knowledge.Service {
+	seq := 0
+	return knowledge.NewService(nil, repo, func() knowledge.ID {
+		seq++
+		return knowledge.ID(fmt.Sprintf("blk-%03d", seq))
+	}, nil)
 }
 
 func aiMeta(title string) knowledge.WriteMeta {
@@ -285,6 +296,110 @@ func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
 	}
 }
 
+func TestApplyAddCarriesMode(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "doc-1", Content: "# Go Contexts\n\nBody.", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpAdd, BlockID: "out-1", Content: "Go Idioms"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("two topics"), ops); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"doc-1", "out-1"})
+	if err != nil {
+		t.Fatalf("get blocks: %v", err)
+	}
+	if got := blocks["doc-1"].Mode; got != knowledge.ModeDoc {
+		t.Errorf("doc-1 mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+	if got := blocks["out-1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("out-1 mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+
+	revs, err := repo.ListRevisions(t.Context(), "doc-1")
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	if got := revs[0].Mode; got != knowledge.ModeDoc {
+		t.Errorf("revision mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+}
+
+func TestApplyEditKeepsModeUnlessAsked(t *testing.T) {
+	repo := testRepo(t)
+	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc}}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), add); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+
+	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Doc\n\nMore."}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit); err != nil {
+		t.Fatalf("apply edit: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeDoc {
+		t.Fatalf("after a plain edit mode = %q, want %q", got, knowledge.ModeDoc)
+	}
+
+	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Doc", Mode: knowledge.ModeOutline}}
+	if err := repo.ApplyOps(t.Context(), "g3", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+	blocks, err = repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("after an edit asking for outline mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	err := repo.ApplyOps(t.Context(), "g2", aiMeta("bad"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed", Mode: knowledge.ModeDoc},
+	})
+	if !errors.Is(err, knowledge.ErrInvalidOps) {
+		t.Fatalf("ApplyOps = %v, want ErrInvalidOps", err)
+	}
+	if _, _, content, _ := blockRow(t, repo, "c1"); content != "child" {
+		t.Errorf("the refused edit landed anyway: content = %q", content)
+	}
+}
+
+func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "host", Content: "Host"},
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), ops); err != nil {
+		t.Fatalf("apply add: %v", err)
+	}
+	move := []knowledge.Op{{Kind: knowledge.OpMove, BlockID: "t1", Parent: "host"}}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("move"), move); err != nil {
+		t.Fatalf("apply move: %v", err)
+	}
+	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
+		t.Errorf("moved under a parent mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
 func TestApplyOpsAtomic(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
@@ -306,4 +421,286 @@ func TestApplyOpsAtomic(t *testing.T) {
 	if n := countRows(t, repo, "revision_groups"); n != 0 {
 		t.Errorf("revision_groups has %d rows after a rolled-back apply, want 0", n)
 	}
+}
+
+func TestApplyRefusesAChildUnderADocument(t *testing.T) {
+	repo := testRepo(t)
+	ops := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	err := repo.ApplyOps(t.Context(), "g1", aiMeta("bad"), ops)
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
+	}
+	if _, _, _, ok := blockRow(t, repo, "t1"); ok {
+		t.Error("the refused batch left a block behind")
+	}
+}
+
+func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeDoc},
+	})
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
+	}
+	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
+		t.Errorf("after the refused batch mode = %q, want %q", got, knowledge.ModeOutline)
+	}
+}
+
+func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
+
+func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	convert := []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "c1"},
+		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
+	}
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
+		t.Fatalf("apply convert: %v", err)
+	}
+}
+
+func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
+	repo := testRepo(t)
+	build := []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
+		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
+	}
+	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
+		t.Fatalf("apply build: %v", err)
+	}
+	if _, err := repo.db.ExecContext(t.Context(),
+		`UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1"); err != nil {
+		t.Fatalf("plant the inconsistency: %v", err)
+	}
+
+	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("elsewhere"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
+	}); err != nil {
+		t.Fatalf("write touching neither block: %v", err)
+	}
+	err := repo.ApplyOps(t.Context(), "g3", aiMeta("touch the child"), []knowledge.Op{
+		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed"},
+	})
+	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
+		t.Fatalf("write touching the child = %v, want ErrDocumentHasChildren", err)
+	}
+}
+
+// convertedTopic builds an outline topic with one child through the service and
+// converts it to a document, returning the topic's id and the conversion's
+// group. Everything before the conversion is settled, so whatever is awaiting
+// review afterwards is the conversion alone.
+func convertedTopic(t *testing.T, svc *knowledge.Service) (knowledge.ID, knowledge.ID) {
+	t.Helper()
+	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if _, err := svc.ApplyOps(t.Context(), ownerMeta("fill"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First."},
+	}); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	applied, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc)
+	if err != nil {
+		t.Fatalf("to doc: %v", err)
+	}
+	return topicID, applied.GroupID
+}
+
+func TestConversionWaitsForReviewAsOneUnit(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+	topicID, groupID := convertedTopic(t, svc)
+
+	pending, err := svc.Unreviewed(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Blocks) != 2 {
+		t.Fatalf("%d blocks awaiting review, want the root and its child", len(pending.Blocks))
+	}
+	for _, b := range pending.Blocks {
+		if b.GroupID != groupID {
+			t.Errorf("block %s waits in group %s, want the conversion's %s", b.Head.BlockID, b.GroupID, groupID)
+		}
+		if !b.Atomic {
+			t.Errorf("block %s is decidable on its own, so the conversion is not one unit", b.Head.BlockID)
+		}
+		if b.Head.Author != knowledge.AuthorOwner {
+			t.Errorf("block %s is authored by %q, want %q", b.Head.BlockID, b.Head.Author, knowledge.AuthorOwner)
+		}
+	}
+	if err := svc.RejectBlock(t.Context(), topicID); !errors.Is(err, knowledge.ErrAtomicGroup) {
+		t.Errorf("rejecting the root alone = %v, want ErrAtomicGroup", err)
+	}
+}
+
+func TestConversionIsRevertedWholeByItsGroup(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+	topicID, groupID := convertedTopic(t, svc)
+
+	// UndoGroup is what the Changes screen's "Reject batch" calls.
+	if err := svc.UndoGroup(t.Context(), groupID); err != nil {
+		t.Fatalf("UndoGroup: %v", err)
+	}
+	sub, err := svc.GetSubtree(t.Context(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sub) != 2 {
+		t.Fatalf("the reverted topic has %d blocks, want the root and its child", len(sub))
+	}
+	if sub[0].Mode != knowledge.ModeOutline {
+		t.Errorf("root mode = %q, want %q", sub[0].Mode, knowledge.ModeOutline)
+	}
+	if sub[1].Content != "First." {
+		t.Errorf("child content = %q, want %q", sub[1].Content, "First.")
+	}
+	pending, err := svc.Unreviewed(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Blocks) != 0 {
+		t.Errorf("%d blocks still awaiting review after the revert, want none", len(pending.Blocks))
+	}
+}
+
+func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+	topicID, groupID := convertedTopic(t, svc)
+
+	if err := svc.EditBlockContent(t.Context(), topicID, "Go Contexts\n\nTyped."); err != nil {
+		t.Fatalf("type into the document: %v", err)
+	}
+
+	if err := svc.UndoGroup(t.Context(), groupID); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
+		t.Errorf("UndoGroup = %v, want ErrGroupWrittenOver", err)
+	}
+	if err := svc.RejectPage(t.Context(), topicID); !errors.Is(err, knowledge.ErrInvalidRollback) {
+		t.Errorf("RejectPage = %v, want ErrInvalidRollback", err)
+	}
+
+	pending, err := svc.Unreviewed(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen bool
+	for _, b := range pending.Blocks {
+		if b.Head.BlockID != topicID {
+			continue
+		}
+		seen = true
+		if b.Head.GroupID == b.GroupID {
+			t.Errorf("head group %s equals the pending group, so nothing tells the GUI the batch was written over",
+				b.Head.GroupID)
+		}
+	}
+	if !seen {
+		t.Error("the root left the review queue, so the conversion is no longer pending at all")
+	}
+}
+
+func TestOwnerEditsStayOutOfTheReviewQueue(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if err := svc.EditBlockContent(t.Context(), topicID, "Go Contexts, revisited"); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	pending, err := svc.Unreviewed(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Blocks) != 0 {
+		t.Errorf("%d blocks awaiting review, want none: ordinary typing is not reviewed", len(pending.Blocks))
+	}
+}
+
+func TestConversionRoundTripThroughStorage(t *testing.T) {
+	repo := testRepo(t)
+	svc := testService(repo)
+
+	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
+	if err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	if _, err := svc.ApplyOps(t.Context(), aiMeta("fill"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First.\nStill first."},
+		{Kind: knowledge.OpAdd, TempID: "b", Parent: "a", Content: "Nested."},
+	}); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	before, err := svc.GetSubtree(t.Context(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc); err != nil {
+		t.Fatalf("to doc: %v", err)
+	}
+	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeOutline); err != nil {
+		t.Fatalf("back to outline: %v", err)
+	}
+	after, err := svc.GetSubtree(t.Context(), topicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("round trip left %d blocks, want %d", len(after), len(before))
+	}
+	for i := range before {
+		if before[i].Content != after[i].Content {
+			t.Errorf("block %d content = %q, want %q", i, after[i].Content, before[i].Content)
+		}
+		if got, want := parentIndex(after, i), parentIndex(before, i); got != want {
+			t.Errorf("block %d hangs from block %d, want block %d", i, got, want)
+		}
+	}
+}
+
+// parentIndex reports where sub[i]'s parent sits in the same pre-ordered walk,
+// or -1 for the root.
+func parentIndex(sub []knowledge.Block, i int) int {
+	return slices.IndexFunc(sub, func(b knowledge.Block) bool { return b.ID == sub[i].ParentID })
 }

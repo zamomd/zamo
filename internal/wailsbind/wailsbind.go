@@ -77,13 +77,26 @@ func (a *App) TopicGraph(ctx context.Context) (knowledge.TopicGraph, error) {
 
 // CreateTopic passes the call to knowledge.Service: a new, empty topic named by
 // the user, written without the AI and reporting the new root's id.
-func (a *App) CreateTopic(ctx context.Context, name string) (knowledge.ID, error) {
-	return a.svc.CreateTopic(ctx, name)
+func (a *App) CreateTopic(ctx context.Context, name string, mode knowledge.Mode) (knowledge.ID, error) {
+	return a.svc.CreateTopic(ctx, name, mode)
+}
+
+// SetTopicMode passes the call to knowledge.Service: converts a topic between
+// an outline and a document.
+func (a *App) SetTopicMode(ctx context.Context, id knowledge.ID, mode knowledge.Mode) error {
+	_, err := a.svc.SetTopicMode(a.withProgress(ctx), id, mode)
+	return err
 }
 
 // ExpandTopic passes the call to knowledge.Service.
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
 	return a.svc.ExpandTopic(a.withProgress(ctx), topic, hint)
+}
+
+// ExpandTopicByID passes the call to knowledge.Service: expands an existing
+// topic in the shape it has.
+func (a *App) ExpandTopicByID(ctx context.Context, id knowledge.ID, hint string) (knowledge.Applied, error) {
+	return a.svc.ExpandTopicByID(a.withProgress(ctx), id, hint)
 }
 
 // EditWithAI passes the call to knowledge.Service. The frontend supplies the
@@ -155,7 +168,7 @@ func (a *App) UndoGroup(ctx context.Context, groupID knowledge.ID) error {
 
 // Search passes the call to knowledge.Service. The frontend supplies the raw
 // query string; the backend owns the FTS syntax and its neutralisation.
-func (a *App) Search(ctx context.Context, query string) ([]knowledge.Block, error) {
+func (a *App) Search(ctx context.Context, query string) ([]knowledge.SearchHit, error) {
 	return a.svc.Search(ctx, query)
 }
 

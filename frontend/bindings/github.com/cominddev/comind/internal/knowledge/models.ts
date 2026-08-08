@@ -35,6 +35,13 @@ export enum Author {
 export interface Backlink {
     "Block": Block;
     "TopicID": ID;
+
+    /**
+     * Excerpt is the paragraph of Block.Content carrying the reference (see
+     * BacklinkExcerpt). Computed here, where the reference that matched is
+     * known, rather than left to a reader to find again in the text.
+     */
+    "Excerpt": string;
     "TopicTitle": string;
 }
 
@@ -53,6 +60,12 @@ export interface Block {
     "Position": number;
     "Content": string;
     "Meta": Metadata;
+
+    /**
+     * Mode is the shape of the topic this block roots. Meaningful only when
+     * IsTopic reports true; a child is always ModeOutline.
+     */
+    "Mode": Mode;
     "CreatedAt": string;
     "UpdatedAt": string;
 
@@ -75,6 +88,24 @@ export type ID = string;
  * provenance, model, etc. Stored in the database as JSON.
  */
 export type Metadata = { [_ in string]?: any } | null;
+
+/**
+ * Mode is the shape a topic takes: a tree of blocks, or a single block holding
+ * a whole markdown document. It is a property of a topic root and of nothing
+ * else; no other state is derived from it.
+ */
+export enum Mode {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    /**
+     * The two shapes a topic can have.
+     */
+    ModeOutline = "outline",
+    ModeDoc = "doc",
+};
 
 /**
  * OutlineChange identifies an outline operation for undo and caret placement.
@@ -109,6 +140,11 @@ export interface Revision {
     "Position": number;
 
     /**
+     * the shape the block had at this change (see Block.Mode)
+     */
+    "Mode": Mode;
+
+    /**
      * tombstone: the block is absent from the projection
      */
     "Deleted": boolean;
@@ -130,6 +166,17 @@ export interface Revision {
      * nor deleted alone. Derived by storage on read; never written by callers.
      */
     "Atomic": boolean;
+}
+
+/**
+ * SearchHit is one full-text match: the block that carries it and an excerpt
+ * around the matching words. A block can be a whole document, whose first
+ * line says only what topic was hit, so the excerpt is what locates the
+ * match.
+ */
+export interface SearchHit {
+    "Block": Block;
+    "Snippet": string;
 }
 
 /**
@@ -222,6 +269,18 @@ export interface UnreviewedBlock {
     "GroupID": ID;
     "GroupTitle": string;
     "Atomic": boolean;
+
+    /**
+     * WrittenOver reports that the batch named by GroupID can no longer be
+     * given back: a later change of another batch sits on top of one of the
+     * blocks it touched — not necessarily this one, which is why no comparison
+     * of this entry's own fields can stand in for it. Undoing the batch would
+     * silently change what that later change was made against, so it is
+     * refused with ErrGroupWrittenOver: accepting is the only decision left,
+     * and a screen offering to reject is offering something that can only
+     * fail. Derived by storage on read; never written by callers.
+     */
+    "WrittenOver": boolean;
 }
 
 /**

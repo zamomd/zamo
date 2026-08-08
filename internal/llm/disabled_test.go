@@ -22,3 +22,14 @@ func TestDisabledReturnsErrLLMUnavailable(t *testing.T) {
 		t.Errorf("Ping error = %v, want wrapping %v", err, knowledge.ErrLLMUnavailable)
 	}
 }
+
+func TestDisabledRefusesDocumentGeneration(t *testing.T) {
+	var d Disabled
+	if _, err := d.GenerateDocument(t.Context(), "Topic", ""); !errors.Is(err, knowledge.ErrLLMUnavailable) {
+		t.Errorf("GenerateDocument = %v, want ErrLLMUnavailable", err)
+	}
+	_, err := d.GenerateDocumentEdit(t.Context(), knowledge.Block{}, "do it")
+	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
+		t.Errorf("GenerateDocumentEdit = %v, want ErrLLMUnavailable", err)
+	}
+}

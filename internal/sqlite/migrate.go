@@ -19,6 +19,7 @@ CREATE TABLE blocks (
     position   INTEGER NOT NULL DEFAULT 0,
     content    TEXT NOT NULL,
     title_key  TEXT,
+    mode       TEXT NOT NULL DEFAULT 'outline' CHECK (mode IN ('outline','doc')),
     metadata   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -51,6 +52,7 @@ CREATE TABLE block_revisions (
     content    TEXT NOT NULL,
     parent_id  TEXT,
     position   INTEGER NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'outline',
     deleted    INTEGER NOT NULL DEFAULT 0,
     author     TEXT NOT NULL,
     source     TEXT,
@@ -63,6 +65,15 @@ CREATE TABLE block_revisions (
 );
 
 CREATE INDEX idx_revisions_unreviewed ON block_revisions(block_id) WHERE reviewed = 0;
+
+-- Whether a batch can still be undone is asked of its group id (see
+-- groupWrittenOver), once per pending batch on a path the Changes screen polls.
+-- Without this the question is a full scan of the revision history, which is
+-- what it costs on a queue holding many small batches.
+--
+-- Deliberately absent from schemaFeatures: a missing index changes only speed,
+-- and that list refuses to open the database at all.
+CREATE INDEX idx_revisions_group ON block_revisions(group_id);
 
 -- atomic marks a batch whose blocks are only true together: a topic rename
 -- and the reference rewrites it implies. Review takes such a group whole.
@@ -133,6 +144,7 @@ var schemaFeatures = []struct {
 	{"refs", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'refs')`},
 	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
 	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
+	{"blocks.mode", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'mode')`},
 }
 
 // checkCurrent verifies that a database already at the current schema version

@@ -19,6 +19,7 @@ linters:
         domain-stdlib-only:
           files:
             - "**/internal/knowledge/**"
+            - "!$test"
           allow:
             - $gostd
     errcheck:

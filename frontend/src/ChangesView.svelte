@@ -87,15 +87,24 @@
 							>
 								Accept batch
 							</button>
-							<button
-								type="button"
-								class="reject"
-								title="reject every change in this batch"
-								disabled={base.busy}
-								onclick={() => reviewBatch(() => App.UndoGroup(groupID), "rejected batch")}
-							>
-								Reject batch
-							</button>
+							{#if changes.writtenOverGroups.has(groupID)}
+								<!-- A later change was saved over this batch, so undoing it
+								     would have to discard that change; the backend refuses
+								     (ErrGroupWrittenOver) and the button could only fail. -->
+								<span class="meta" title="a later edit was saved on top of this batch, so it can only be accepted now"
+									>accept only</span
+								>
+							{:else}
+								<button
+									type="button"
+									class="reject"
+									title="reject every change in this batch"
+									disabled={base.busy}
+									onclick={() => reviewBatch(() => App.UndoGroup(groupID), "rejected batch")}
+								>
+									Reject batch
+								</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>

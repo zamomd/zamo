@@ -41,6 +41,12 @@ type Op struct {
 	BlockID ID     `json:"block_id,omitzero"` // existing block (edit/move/delete)
 	Content string `json:"content,omitzero"`
 
+	// Mode sets the shape of the topic root the op addresses. Empty leaves it
+	// alone — on an add that means ModeOutline, on an edit the mode the block
+	// already has. Only a root has a mode, so an op naming a Parent must leave
+	// this empty.
+	Mode Mode `json:"mode,omitzero"`
+
 	// Anchor: where among its siblings a new or moved block lands. At most
 	// one may be set; both empty appends at the end. A TempID of this batch
 	// or an existing block ID, resolved like Parent. Needed because position
@@ -131,6 +137,17 @@ func (op Op) validate() error {
 			// The only two kinds that place a block among siblings.
 		default:
 			return fmt.Errorf("%s op carries an anchor, which it ignores: %w", op.Kind, ErrInvalidOps)
+		}
+	}
+	if op.Mode != "" {
+		if !op.Mode.valid() {
+			return fmt.Errorf("unknown mode %q: %w", op.Mode, ErrInvalidOps)
+		}
+		if op.Parent != "" {
+			return fmt.Errorf("%s op sets a mode on a child of %q: %w", op.Kind, op.Parent, ErrInvalidOps)
+		}
+		if op.Kind != OpAdd && op.Kind != OpEdit {
+			return fmt.Errorf("%s op carries a mode, which it ignores: %w", op.Kind, ErrInvalidOps)
 		}
 	}
 	switch op.Kind {
