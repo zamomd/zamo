@@ -25,7 +25,7 @@ type DocChild struct {
 }
 
 // SplitDocument splits a document into the topic root's own first line, kept
-// verbatim so the split renames nothing, and the blocks its body becomes.
+// byte for byte so the split renames nothing, and the blocks its body becomes.
 //
 // Headings and list items carry the nesting: a heading opens a level by its
 // depth below the body's shallowest heading, a list item by its indent.
@@ -34,14 +34,17 @@ type DocChild struct {
 // blank lines and all — and a list item's unmarked continuation lines rejoin
 // the item, so a multi-line block survives a conversion.
 //
-// One ambiguity is inherent to the bullet format rather than to this function:
-// a block whose own later line begins with a list marker ("- ", "* " or "+ ")
-// renders indistinguishably from a nested child and comes back as one. The
-// format is the export format, which Obsidian and Logseq read, and resolving
-// the ambiguity would mean leaving it.
+// Two ambiguities are inherent to the bullet format rather than to this
+// function. A block whose own later line begins with a list marker ("- ", "* "
+// or "+ ") renders indistinguishably from a nested child and comes back as one.
+// And a root carrying more than its name renders exactly like a document
+// opening with a title and an intro paragraph, so only the first line stays the
+// root's: text the root held below it comes back as its first child. Both are
+// resolved in favour of reading the document, because the format is the export
+// format Obsidian and Logseq read.
 func SplitDocument(content string) (root string, children []DocChild) {
 	lines := strings.Split(content, "\n")
-	root = strings.TrimSpace(lines[0])
+	root = lines[0]
 	base := baseHeadingLevel(lines[1:])
 
 	var out []DocChild

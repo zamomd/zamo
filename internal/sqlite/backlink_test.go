@@ -140,3 +140,57 @@ func TestBacklinksUnknownTargetIsEmpty(t *testing.T) {
 		t.Errorf("got %d backlinks, want 0", len(got))
 	}
 }
+
+func TestBacklinkCarriesTheParagraphMakingTheReference(t *testing.T) {
+	repo := testRepo(t)
+	if err := ownerOps(t, repo, "01G1",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01CCCCCCCCCCCCCCCCCCCCCCCC",
+			Parent: "01RUST", Content: "Borrow checking is static.",
+		},
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01BARE", Parent: "01ZIG",
+			Content: "An opening line.\n\nCompare ((01CCCCCCCCCCCCCCCCCCCCCCCC)).",
+		},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01LABEL", Parent: "01ZIG",
+			Content: "An opening line.\n\nAlso ((01CCCCCCCCCCCCCCCCCCCCCCCC|the other claim)).",
+		},
+		knowledge.Op{
+			Kind: knowledge.OpAdd, BlockID: "01LOOSE", Parent: "01ZIG",
+			Content: "An opening line.\n\nUnlike [[rust   ]], allocation is explicit.",
+		},
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	toBlock, err := repo.GetBacklinks(t.Context(), "01CCCCCCCCCCCCCCCCCCCCCCCC")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	wantBlock := map[knowledge.ID]string{
+		"01BARE":  "Compare ((01CCCCCCCCCCCCCCCCCCCCCCCC)).",
+		"01LABEL": "Also ((01CCCCCCCCCCCCCCCCCCCCCCCC|the other claim)).",
+	}
+	if len(toBlock) != len(wantBlock) {
+		t.Fatalf("got %d backlinks to the block, want %d", len(toBlock), len(wantBlock))
+	}
+	for _, link := range toBlock {
+		if got, want := link.Excerpt, wantBlock[link.Block.ID]; got != want {
+			t.Errorf("excerpt of %s = %q, want %q", link.Block.ID, got, want)
+		}
+	}
+
+	toTopic, err := repo.GetBacklinks(t.Context(), "01RUST")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(toTopic) != 1 {
+		t.Fatalf("got %d backlinks to the topic, want 1", len(toTopic))
+	}
+	if got, want := toTopic[0].Excerpt, "Unlike [[rust   ]], allocation is explicit."; got != want {
+		t.Errorf("excerpt = %q, want %q", got, want)
+	}
+}

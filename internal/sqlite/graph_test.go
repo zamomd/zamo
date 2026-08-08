@@ -1,10 +1,11 @@
 package sqlite
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetTopicGraphCountsBlocks(t *testing.T) {
@@ -18,45 +19,34 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 	insertBlock(ctx, t, db, "b", "", 1, "Topic B")
 
 	got, err := r(db).GetTopicGraph(ctx)
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	want := []knowledge.TopicNode{
 		{ID: "a", Title: "Topic A", Blocks: 4},
 		{ID: "b", Title: "Topic B", Blocks: 1},
 	}
-	if len(got.Topics) != len(want) {
-		t.Fatalf("topics = %v, want %v", got.Topics, want)
-	}
-	for i := range want {
-		if got.Topics[i] != want[i] {
-			t.Errorf("topic %d = %+v, want %+v", i, got.Topics[i], want[i])
-		}
+	if diff := cmp.Diff(want, got.Topics); diff != "" {
+		t.Errorf("topics mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestTopicEdgesFromTopicReferences(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG", Content: "Unlike [[Rust]]."},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	))
 	g, err := repo.GetTopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if !reflect.DeepEqual(g.Edges, want) {
-		t.Errorf("edges = %v, want %v", g.Edges, want)
+	if diff := cmp.Diff(want, g.Edges); diff != "" {
+		t.Errorf("edges mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestTopicEdgesFromBlockReferences(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
 		knowledge.Op{
@@ -67,22 +57,18 @@ func TestTopicEdgesFromBlockReferences(t *testing.T) {
 			Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG",
 			Content: "See ((01CCCCCCCCCCCCCCCCCCCCCCCC|A claim)).",
 		},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	))
 	g, err := repo.GetTopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if !reflect.DeepEqual(g.Edges, want) {
-		t.Errorf("edges = %v, want %v", g.Edges, want)
+	if diff := cmp.Diff(want, g.Edges); diff != "" {
+		t.Errorf("edges mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestTopicEdgesDropSelfLoops(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{
 			Kind: knowledge.OpAdd, BlockID: "01AAAAAAAAAAAAAAAAAAAAAAAA",
@@ -92,13 +78,9 @@ func TestTopicEdgesDropSelfLoops(t *testing.T) {
 			Kind: knowledge.OpAdd, BlockID: "01B", Parent: "01ZIG",
 			Content: "Two, see ((01AAAAAAAAAAAAAAAAAAAAAAAA|One)).",
 		},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	))
 	g, err := repo.GetTopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	if len(g.Edges) != 0 {
 		t.Errorf("edges = %v, want none", g.Edges)
 	}
@@ -106,18 +88,14 @@ func TestTopicEdgesDropSelfLoops(t *testing.T) {
 
 func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N1", Parent: "01ZIG", Content: "Zig has no borrow checker."},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N2", Parent: "01RUST", Content: "Rust has a borrow checker."},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	))
 	g, err := repo.GetTopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	if len(g.Edges) != 0 {
 		t.Errorf("edges = %v, want none: two populated topics with no references between them", g.Edges)
 	}
@@ -125,22 +103,18 @@ func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
 
 func TestTopicEdgesCollapseMultiplicityAndDirection(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N1", Parent: "01ZIG", Content: "First, unlike [[Rust]]."},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N2", Parent: "01ZIG", Content: "Second, unlike [[Rust]]."},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01N3", Parent: "01RUST", Content: "And [[Zig]] again."},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	))
 	g, err := repo.GetTopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if !reflect.DeepEqual(g.Edges, want) {
-		t.Errorf("edges = %v, want %v (references both ways must collapse to one edge)", g.Edges, want)
+	if diff := cmp.Diff(want, g.Edges); diff != "" {
+		t.Errorf("edges mismatch (-want +got), references both ways must collapse to one edge:\n%s", diff)
 	}
 }
 
@@ -153,9 +127,7 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	insertBlock(ctx, t, db, "b", "", 2, "Topic B")
 
 	got, err := r(db).GetTopicGraph(ctx)
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	ids := []knowledge.ID{got.Topics[0].ID, got.Topics[1].ID, got.Topics[2].ID}
 	if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
 		t.Errorf("topic order = %v, want a b c", ids)
@@ -189,13 +161,8 @@ func TestPruneDanglingEdges(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := pruneDanglingEdges(topics, tc.edges)
-			if len(got) != len(tc.want) {
-				t.Fatalf("pruneDanglingEdges = %v, want %v", got, tc.want)
-			}
-			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Errorf("edge %d = %+v, want %+v", i, got[i], tc.want[i])
-				}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("pruneDanglingEdges mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -206,9 +173,7 @@ func TestGetTopicGraphEmptyBase(t *testing.T) {
 	db := openTestDB(t)
 
 	got, err := r(db).GetTopicGraph(ctx)
-	if err != nil {
-		t.Fatalf("GetTopicGraph: %v", err)
-	}
+	require.NoError(t, err)
 	if len(got.Topics) != 0 || len(got.Edges) != 0 {
 		t.Errorf("graph = %+v, want empty", got)
 	}

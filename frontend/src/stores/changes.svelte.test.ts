@@ -92,19 +92,9 @@ describe("refresh", () => {
 		expect([...changes.straddling]).toEqual([]);
 	});
 
-	// One keystroke into a freshly converted document lands an edit on top of
-	// the conversion's pending revision. Undoing the batch would have to
-	// discard that edit, which the backend refuses, so the views must stop
-	// offering the reject controls rather than offering ones that fail. The
-	// fixtures carry matching group ids throughout: the gate has to hold on
-	// storage's answer alone, since that is all a real payload shows when the
-	// burying change is unreviewed or landed on another block of the batch.
 	it("collects the batches a later change was saved on top of", async () => {
 		unreviewedFixture.respond = () =>
 			Promise.resolve({
-				// The flag is a fact about the batch, so every entry of a buried
-				// one carries it — the backend cannot emit a group flagged on
-				// one block and not on another.
 				Blocks: [buried("root", "convert", true, "zig"), buried("child", "convert", true, "zig")],
 			});
 
@@ -126,9 +116,6 @@ describe("refresh", () => {
 		expect([...changes.writtenOverPages]).toEqual([]);
 	});
 
-	// Undo is refused for any buried batch, so the Changes screen's control
-	// goes either way; a page-wide rollback only takes an *atomic* batch apart,
-	// so the page control is gated on that.
 	it("reports a buried plain batch to the batch screen but not to the page", async () => {
 		unreviewedFixture.respond = () => Promise.resolve({ Blocks: [buried("note", "plain", false, "zig")] });
 

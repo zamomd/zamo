@@ -104,11 +104,6 @@ func TestSetTopicModeRefusesANonRoot(t *testing.T) {
 	}
 }
 
-// TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut covers
-// expandToOutline's parents map for a section nested deeper than its
-// predecessor (an h3 under an h2) followed by one back at the shallower
-// level. The later h2 must attach to the root, not linger under the h3's
-// stale depth-1 entry.
 func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	doc := "Go Contexts\n\n## A\n\nA text.\n\n### AA\n\nAA text.\n\n## B\n\nB text.\n"
 	repo := &fakeRepo{subtrees: map[ID][]Block{
@@ -119,8 +114,6 @@ func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
 	}
-	// ops[0] is the root edit; ops[1:] are, in order: "## A", "A text.",
-	// "### AA", "AA text.", "## B", "B text.".
 	if len(repo.applyOps) != 7 {
 		t.Fatalf("ops = %#v, want an edit and six adds", repo.applyOps)
 	}
@@ -147,9 +140,6 @@ func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	}
 }
 
-// TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALevel
-// covers a document that jumps from an h2 straight to an h4, leaving depth 1
-// empty. The h4 belongs to the h2 above it, not to the topic root.
 func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALevel(t *testing.T) {
 	doc := "Go Contexts\n\n## A\n\n#### B\n\nB text.\n"
 	repo := &fakeRepo{subtrees: map[ID][]Block{
@@ -176,9 +166,6 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALeve
 	}
 }
 
-// TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel
-// covers a nested list item indented four spaces, as several editors write it.
-// The two levels of indent it reads as must still land it under the item above.
 func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel(t *testing.T) {
 	doc := "Go Contexts\n\n- top\n\n    - deep\n"
 	repo := &fakeRepo{subtrees: map[ID][]Block{
@@ -202,10 +189,6 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel(t
 	}
 }
 
-// TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch covers the two
-// shapes meeting: a heading pulls back out, then the next one skips a level
-// going deeper. The depth it lands on was last filled inside the branch the
-// document already left, which must not make that block its parent.
 func TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch(t *testing.T) {
 	doc := "Go Contexts\n\n## A\n\nA text.\n\n## B\n\n#### C\n"
 	repo := &fakeRepo{subtrees: map[ID][]Block{

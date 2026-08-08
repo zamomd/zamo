@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/cominddev/comind/internal/knowledge"
@@ -141,8 +141,8 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 		t.Fatalf("decode output: %v", err)
 	}
 	want := writeOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
-	if !reflect.DeepEqual(out, want) {
-		t.Errorf("output = %+v, want %+v", out, want)
+	if diff := cmp.Diff(want, out); diff != "" {
+		t.Errorf("output mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -298,8 +298,8 @@ func TestGetSubtreeReportsTheMode(t *testing.T) {
 		t.Fatalf("decode output: %v", err)
 	}
 	want := blocksOutput{Blocks: []blockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
-	if !reflect.DeepEqual(out, want) {
-		t.Errorf("output = %+v, want %+v", out, want)
+	if diff := cmp.Diff(want, out); diff != "" {
+		t.Errorf("output mismatch (-want +got):\n%s", diff)
 	}
 }
 

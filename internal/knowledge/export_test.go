@@ -1,7 +1,7 @@
 package knowledge
 
 import (
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -69,7 +69,7 @@ func TestRenderMarkdownDedupesCollidingNames(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Go Contexts.md", "Go contexts!.md", "GO CONTEXTS-2.md"}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
 }
@@ -100,7 +100,7 @@ func TestRenderMarkdownFallsBackOnAnUnusableName(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Untitled.md", "Untitled-2.md", "Untitled-3.md"}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("names = %v, want %v", got, want)
 	}
 }

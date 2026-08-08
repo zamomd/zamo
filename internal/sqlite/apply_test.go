@@ -367,9 +367,6 @@ func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
 		t.Fatalf("apply build: %v", err)
 	}
-	// An edit names its target by id, so nothing before storage knows the
-	// target is a child. Coercing the mode to outline and reporting success
-	// tells a model its write landed as asked.
 	err := repo.ApplyOps(t.Context(), "g2", aiMeta("bad"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed", Mode: knowledge.ModeDoc},
 	})
@@ -450,9 +447,6 @@ func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
 		t.Fatalf("apply build: %v", err)
 	}
-	// The batch names only the root. The child it would strand is reached
-	// through the parent side of the check alone — the side a conversion that
-	// forgets its children takes, which is the whole point of the invariant.
 	err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeDoc},
 	})
@@ -491,9 +485,6 @@ func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
 		t.Fatalf("apply build: %v", err)
 	}
-	// The same conversion with its two ops the other way round. Checking at the
-	// end of the batch rather than per op is what makes this legal, and only a
-	// batch in this order can tell the two rules apart.
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
@@ -512,9 +503,6 @@ func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
 		t.Fatalf("apply build: %v", err)
 	}
-	// A base that reached the forbidden state some other way — an older build,
-	// a hand-edited file. The check exists to stop a batch creating it, not to
-	// make every unrelated write in the base fail until it is cleaned up.
 	if _, err := repo.db.ExecContext(t.Context(),
 		`UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1"); err != nil {
 		t.Fatalf("plant the inconsistency: %v", err)
@@ -614,15 +602,6 @@ func TestConversionIsRevertedWholeByItsGroup(t *testing.T) {
 	}
 }
 
-// TestAnEditOverAConversionClosesItsWholeBatchRevert pins what the GUI reads to
-// decide whether to offer the reject controls. Typing into a freshly converted
-// document is the very next thing a user does, and an owner edit is born
-// reviewed, so it lands straight on top of the conversion's pending revision.
-// That edit asserts the topic is a document holding its text, so giving the
-// conversion back would have to discard it — and rolling the page back instead
-// would restore the children under a root the edit keeps a document. Both are
-// refused, which is correct; what the frontend must not do is keep offering
-// them.
 func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
 	repo := testRepo(t)
 	svc := testService(repo)
@@ -639,8 +618,6 @@ func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
 		t.Errorf("RejectPage = %v, want ErrInvalidRollback", err)
 	}
 
-	// The signal the frontend derives "written over" from: the block's head
-	// belongs to a newer group than the one still pending on it.
 	pending, err := svc.Unreviewed(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -716,10 +693,6 @@ func TestConversionRoundTripThroughStorage(t *testing.T) {
 		if before[i].Content != after[i].Content {
 			t.Errorf("block %d content = %q, want %q", i, after[i].Content, before[i].Content)
 		}
-		// The split mints new ids, so the tree is compared by position in the
-		// pre-order walk: each block's parent is the same block of the walk it
-		// was before. Content and length alone cannot see this — flattening
-		// every block under the root leaves both identical.
 		if got, want := parentIndex(after, i), parentIndex(before, i); got != want {
 			t.Errorf("block %d hangs from block %d, want block %d", i, got, want)
 		}

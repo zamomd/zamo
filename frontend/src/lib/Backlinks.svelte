@@ -1,16 +1,11 @@
 <script lang="ts">
 	import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { base } from "../stores/base.svelte";
-	import { excerptAround } from "./excerpt";
 	import { jumpToBlock } from "./navigate";
-	import { topicName } from "./refs";
 
 	let { block }: { block: Block } = $props();
 
 	const backlinks = $derived(base.backlinksById.get(block.ID) ?? []);
-	// The reference a source block carries names this panel's target the way
-	// [[Topic]] syntax would, so that's what locates the sentence that made it.
-	const targetName = $derived(topicName(block.Content));
 </script>
 
 {#if backlinks.length > 0}
@@ -27,7 +22,7 @@
 						disabled={base.busy}
 						onclick={() => jumpToBlock(link.Block.ID)}
 					>
-						<code>{excerptAround(link.Block.Content, targetName)}</code>
+						<code>{link.Excerpt}</code>
 						<span class="topic">{link.TopicTitle}</span>
 					</button>
 				</li>

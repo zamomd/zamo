@@ -319,9 +319,8 @@ SELECT source_id FROM refs WHERE kind = 'topic' AND target_key = ? ORDER BY sour
 // Scoped to the blocks the batch touched, on both sides of the parent link: an
 // op can only create the pair by placing a child (the child is touched) or by
 // making a parent a document (the parent is touched). A violation the batch did
-// not cause is left alone deliberately — asking the whole base would make one
-// inconsistency anywhere, from any older build, refuse every subsequent write
-// with an error naming a block the writer never addressed.
+// not cause is left alone: an existing inconsistency elsewhere must not refuse
+// a write that never addressed it.
 func refuseDocumentChildren(ctx context.Context, tx *sql.Tx, ops []knowledge.Op) error {
 	touched := make([]any, 0, len(ops))
 	seen := make(map[knowledge.ID]bool, len(ops))
@@ -486,10 +485,8 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 // revision that carries the block's unchanged parent/position alongside the
 // new content — a revision is a full snapshot, not a diff.
 //
-// An edit names its target by id alone, so this is the first place that knows
-// whether the target is a topic root: a mode asked for on a child is refused
-// here rather than quietly coerced to outline, which would report success for a
-// write that did something else.
+// An edit names its target by id alone, so storage validates that a requested
+// mode belongs to a topic root.
 func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
 	var parent sql.NullString
 	var pos int

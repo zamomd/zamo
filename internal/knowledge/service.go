@@ -144,6 +144,11 @@ func (s *Service) ExpandTopicByID(ctx context.Context, id ID, hint string) (Appl
 		if err != nil {
 			return Applied{}, err
 		}
+		ops = graftOntoTopic(ops, id)
+		if len(ops) == 0 {
+			return Applied{}, fmt.Errorf(
+				"expand %s: the model returned nothing below the topic: %w", id, ErrLLMBadResponse)
+		}
 		return s.ApplyOps(ctx, WriteMeta{
 			Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
 		}, ops)
@@ -155,6 +160,35 @@ func (s *Service) ExpandTopicByID(ctx context.Context, id ID, hint string) (Appl
 	return s.ApplyOps(ctx, WriteMeta{
 		Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
 	}, []Op{{Kind: OpEdit, BlockID: id, Content: text}})
+}
+
+// graftOntoTopic rebinds a generated tree onto a topic that already exists.
+// GenerateTree answers with a whole tree whose root names the topic.
+//
+// A single generated root is dropped and its children hang from id. When the
+// result has several top-level blocks, each becomes a child of the topic.
+func graftOntoTopic(ops []Op, id ID) []Op {
+	var roots []int
+	for i, op := range ops {
+		if op.Parent == "" {
+			roots = append(roots, i)
+		}
+	}
+	if len(roots) == 1 && ops[roots[0]].TempID != "" {
+		generated := ops[roots[0]].TempID
+		out := slices.Delete(slices.Clone(ops), roots[0], roots[0]+1)
+		for i := range out {
+			if out[i].Parent == generated {
+				out[i].Parent = string(id)
+			}
+		}
+		return out
+	}
+	out := slices.Clone(ops)
+	for _, i := range roots {
+		out[i].Parent = string(id)
+	}
+	return out
 }
 
 // EditWithAI turns a user's text command into a change of the scope and applies

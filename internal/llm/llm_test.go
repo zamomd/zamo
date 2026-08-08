@@ -3,11 +3,12 @@ package llm
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 )
 
 func add(tempID, parent, content string) knowledge.Op {
@@ -133,16 +134,12 @@ func TestParseOps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseOps([]byte(tt.raw))
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("ParseOps error = %v, want errors.Is %v", err, tt.wantErr)
-				}
+				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("ParseOps unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("ParseOps ops =\n %#v\nwant\n %#v", got, tt.want)
+			require.NoError(t, err)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(knowledge.Op{})); diff != "" {
+				t.Fatalf("ParseOps ops mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

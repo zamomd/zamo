@@ -20,7 +20,7 @@ func (r *Repo) GetBacklinks(ctx context.Context, target knowledge.ID) ([]knowled
 	const q = topicRoots + `
 SELECT DISTINCT s.id, s.parent_id, s.position, s.content, s.metadata, s.created_at, s.updated_at,
 	EXISTS(SELECT 1 FROM block_revisions rv WHERE rv.block_id = s.id AND rv.reviewed = 0),
-	r.root, t.content
+	r.root, t.content, COALESCE(target.title_key, '')
 FROM refs f
 JOIN blocks s ON s.id = f.source_id
 JOIN roots r ON r.id = s.id
@@ -41,15 +41,17 @@ ORDER BY s.id`
 		var b knowledge.Backlink
 		var parent sql.NullString
 		var meta, created, updated string
-		var topicContent string
+		var topicContent, targetTitleKey string
 		if err := rows.Scan(&b.Block.ID, &parent, &b.Block.Position, &b.Block.Content,
-			&meta, &created, &updated, &b.Block.Unreviewed, &b.TopicID, &topicContent); err != nil {
+			&meta, &created, &updated, &b.Block.Unreviewed, &b.TopicID, &topicContent,
+			&targetTitleKey); err != nil {
 			return nil, fmt.Errorf("get backlinks of %s: %w", target, translate(err))
 		}
 		if err := decodeBlockFields(&b.Block, parent, meta, created, updated); err != nil {
 			return nil, fmt.Errorf("get backlinks of %s: %w", target, translate(err))
 		}
 		b.TopicTitle = knowledge.FirstLine(topicContent)
+		b.Excerpt = knowledge.BacklinkExcerpt(b.Block.Content, target, targetTitleKey)
 		out = append(out, b)
 	}
 	if err := rows.Err(); err != nil {

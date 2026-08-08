@@ -143,3 +143,30 @@ func TestSplitDocumentReversesRenderDocumentOfABlockStartingWithAHeadingLine(t *
 		t.Errorf("children = %#v, want %#v", children, want)
 	}
 }
+
+func TestSplitDocumentKeepsTheFirstLineVerbatim(t *testing.T) {
+	for _, line := range []string{"# Topic  ", "  # Topic", "# Topic\t"} {
+		root, _ := SplitDocument(line + "\n\n- child\n")
+		if root != line {
+			t.Errorf("root = %q, want the first line unchanged: %q", root, line)
+		}
+	}
+}
+
+func TestSplitDocumentLeavesARootBodyBehindAsAChild(t *testing.T) {
+	sub := []Block{
+		{ID: "t", Content: "Go Contexts\n\nAn intro written into the root."},
+		{ID: "a", ParentID: "t", Position: 1, Content: "Cancellation propagates."},
+	}
+	root, children := SplitDocument(RenderDocument(sub))
+	if root != "Go Contexts" {
+		t.Errorf("root = %q, want its first line", root)
+	}
+	want := []DocChild{
+		{Text: "An intro written into the root.", Depth: 0},
+		{Text: "Cancellation propagates.", Depth: 0},
+	}
+	if !slices.Equal(children, want) {
+		t.Errorf("children = %#v, want %#v", children, want)
+	}
+}

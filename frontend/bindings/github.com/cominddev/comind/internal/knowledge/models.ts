@@ -35,6 +35,13 @@ export enum Author {
 export interface Backlink {
     "Block": Block;
     "TopicID": ID;
+
+    /**
+     * Excerpt is the paragraph of Block.Content carrying the reference (see
+     * BacklinkExcerpt). Computed here, where the reference that matched is
+     * known, rather than left to a reader to find again in the text.
+     */
+    "Excerpt": string;
     "TopicTitle": string;
 }
 

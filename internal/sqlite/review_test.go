@@ -211,9 +211,6 @@ func TestRejectRestoresTheModeTheBlockHad(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
 		t.Fatalf("apply convert: %v", err)
 	}
-	// Assert the conversion landed before rejecting it. Without this the test
-	// passes on a build where the edit never wrote the mode at all: the row
-	// would read outline throughout and the final assertion would be vacuous.
 	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
 		t.Fatalf("before reject mode = %q, want %q", got, knowledge.ModeDoc)
 	}
@@ -236,9 +233,6 @@ func TestUndoGroupRestoresTheModeTheBlockHad(t *testing.T) {
 	if err := repo.ApplyOps(t.Context(), "g2", owner, convert); err != nil {
 		t.Fatalf("apply convert: %v", err)
 	}
-	// Assert the conversion landed before undoing it. Without this the test
-	// passes on a build where the edit never wrote the mode at all: the row
-	// would read outline throughout and the final assertion would be vacuous.
 	if got := modeOf(t, repo, "t1"); got != knowledge.ModeDoc {
 		t.Fatalf("before undo mode = %q, want %q", got, knowledge.ModeDoc)
 	}

@@ -288,11 +288,7 @@ func (s *Server) writeBlocks(
 	applied, err := s.writer.ApplyOps(ctx,
 		knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: in.Title}, ops)
 	if err != nil {
-		// A non-nil Go error, not a hand-built result: the SDK's own error
-		// path (SetError) is what skips marshaling writeOutput{} into
-		// StructuredContent. Returning a result here instead, with a nil
-		// error, defeats that and leaves a spurious {"group_id":""} riding
-		// alongside IsError on every failure.
+		// The SDK omits StructuredContent only for a non-nil Go error.
 		return nil, writeOutput{}, errors.New(explain(err))
 	}
 	ids := make(map[string]string, len(applied.IDs))

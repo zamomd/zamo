@@ -14,8 +14,10 @@ import (
 // property of the batch, not a claim about its author.
 //
 // Both directions keep the root's first line exactly as it was, so the topic
-// keeps its name and no [[Topic]] reference is touched. Converting a topic to
-// the mode it already has is not a write.
+// keeps its name and no [[Topic]] reference is touched. Text the root held
+// below that line survives the round trip as its first child rather than in the
+// root, for the reason SplitDocument gives. Converting a topic to the mode it
+// already has is not a write.
 func (s *Service) SetTopicMode(ctx context.Context, id ID, mode Mode) (Applied, error) {
 	if !mode.valid() {
 		return Applied{}, fmt.Errorf("set mode of %s: unknown mode %q: %w", id, mode, ErrInvalidOps)
