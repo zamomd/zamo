@@ -41,6 +41,10 @@ english-only:
 web-lint:
     cd frontend && bun run lint
 
+# type-check the frontend, .svelte files included
+web-check:
+    cd frontend && bun run check
+
 # run the frontend unit tests
 web-test:
     cd frontend && bun run test
@@ -54,7 +58,7 @@ changelog:
     git-cliff -o CHANGELOG.md
 
 # everything CI checks
-check: lint web-lint english-only test web-test
+check: lint web-lint web-check english-only test web-test
     go mod tidy -diff
 
 # per-package coverage (atomic mode: the only one correct under -race)
