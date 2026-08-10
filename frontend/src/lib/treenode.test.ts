@@ -2,6 +2,7 @@
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import { base } from "../stores/base.svelte";
 import TreeNode from "./TreeNode.svelte";
 
@@ -35,6 +36,7 @@ function block(overrides: Partial<Block> = {}): Block {
 		Position: 1,
 		Content: "a claim",
 		Meta: null,
+		Mode: Mode.ModeOutline,
 		CreatedAt: "",
 		UpdatedAt: "",
 		Unreviewed: false,
