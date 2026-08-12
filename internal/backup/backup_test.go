@@ -67,7 +67,8 @@ func liveBase(ctx context.Context, t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content) VALUES ('b1', '', 1, 'a claim')`); err != nil {
+		`INSERT INTO blocks (id, parent_id, position, content, created_at, updated_at)
+		 VALUES ('b1', NULL, 1, 'a claim', '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("seed the live base: %v", err)
 	}
 	return db
