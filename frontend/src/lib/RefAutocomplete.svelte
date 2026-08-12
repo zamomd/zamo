@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+	import type { Block, SearchHit } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 	import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { base } from "../stores/base.svelte";
 	import { messageFor } from "./callerror";
@@ -73,10 +73,10 @@
 	// Block search is debounced to avoid a backend call per keystroke, and only
 	// the current query's hits are ever listed (createRefSearch). Topics are
 	// filtered client-side against one fetch, so they need neither.
-	const search = createRefSearch<Block>({
+	const search = createRefSearch<SearchHit>({
 		search: (q) => App.Search(q),
 		onResults: (hits) => {
-			blocks = hits;
+			blocks = hits.map((h) => h.Block);
 		},
 		onError: (err) => {
 			blocks = [];
