@@ -3,24 +3,8 @@ package knowledge
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 )
-
-type fakeFileWriter struct {
-	dir      string
-	files    []ExportFile
-	writeErr error
-}
-
-func (w *fakeFileWriter) WriteFiles(ctx context.Context, dir string, files []ExportFile) error {
-	if w.writeErr != nil {
-		return w.writeErr
-	}
-	w.dir = dir
-	w.files = files
-	return nil
-}
 
 type fakeRepo struct {
 	topics     []Block // what GetTopics returns
@@ -208,7 +192,7 @@ func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
 
 func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	ops := []Op{
 		addOp("child", "root", "Child"),
@@ -240,7 +224,7 @@ func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 
 func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	_, err := svc.ApplyOps(t.Context(),
 		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "   "},
@@ -256,7 +240,7 @@ func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 func TestApplyOpsPropagatesRepoError(t *testing.T) {
 	boom := errors.New("disk full")
 	repo := &fakeRepo{applyErr: boom}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{addOp("t1", "", "A")})
@@ -267,7 +251,7 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 
 func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: "explode"}})
@@ -281,7 +265,7 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 
 func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	id, err := svc.CreateTopic(t.Context(), "Local-first", "")
 	if err != nil {
@@ -309,7 +293,7 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 
 func TestCreateTopicTakesItsMode(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc); err != nil {
 		t.Fatalf("CreateTopic: %v", err)
@@ -321,7 +305,7 @@ func TestCreateTopicTakesItsMode(t *testing.T) {
 
 func TestCreateTopicDefaultsToOutline(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ""); err != nil {
 		t.Fatalf("CreateTopic: %v", err)
@@ -333,7 +317,7 @@ func TestCreateTopicDefaultsToOutline(t *testing.T) {
 
 func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	// A bracketed name belongs here too: the root would be created and the
 	// [[...]] that asked for it would still resolve to nothing.
@@ -349,7 +333,7 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 
 func TestCreateTopicReportsATakenName(t *testing.T) {
 	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.CreateTopic(t.Context(), "Local-first", ""); !errors.Is(err, ErrDuplicateTopic) {
 		t.Errorf("error = %v, want ErrDuplicateTopic", err)
@@ -358,7 +342,7 @@ func TestCreateTopicReportsATakenName(t *testing.T) {
 
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -377,7 +361,7 @@ func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 
 func TestEditBlockContentRefusesAMissingBlock(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("error = %v, want ErrNotFound", err)
@@ -391,7 +375,7 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	scope := []Block{{ID: "01A", Content: "old text"}}
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.EditWithAI(t.Context(), "01A", "revise this block")
 	if err != nil {
@@ -417,7 +401,7 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 func TestEditWithAISurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{editErr: ErrLLMUnavailable}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.EditWithAI(t.Context(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
 		t.Errorf("error = %v, want ErrLLMUnavailable", err)
@@ -431,7 +415,7 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 	boom := errors.New("db down")
 	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
 	repo := &fakeRepo{subtreeErr: boom}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
 	if !errors.Is(err, boom) {
@@ -445,7 +429,7 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 	llm := &fakeLLM{editOps: nil}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.EditWithAI(t.Context(), "01A", "do nothing"); !errors.Is(err, ErrEmptyOps) {
 		t.Errorf("error = %v, want ErrEmptyOps", err)
@@ -458,7 +442,7 @@ func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 func TestExpandTopicAppliesDirectly(t *testing.T) {
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.ExpandTopic(t.Context(), "Go contexts", "cancellation")
 	if err != nil {
@@ -480,7 +464,7 @@ func TestExpandTopicAppliesDirectly(t *testing.T) {
 func TestExpandTopicSurfacesLLMError(t *testing.T) {
 	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
 	if !errors.Is(err, ErrLLMUnavailable) {
@@ -494,7 +478,7 @@ func TestExpandTopicSurfacesLLMError(t *testing.T) {
 func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.ExpandTopic(t.Context(), "private topic", "private hint")
 	if !errors.Is(err, ErrAIDisabled) {
@@ -508,7 +492,7 @@ func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
 func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
 	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "should not be used"}}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "private"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.EditWithAI(t.Context(), "01A", "private instruction")
 	if !errors.Is(err, ErrAIDisabled) {
@@ -522,7 +506,7 @@ func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
 func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	llm := &fakeLLM{tree: nil}
 	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.ExpandTopic(t.Context(), "Go contexts", ""); !errors.Is(err, ErrEmptyOps) {
 		t.Errorf("error = %v, want ErrEmptyOps", err)
@@ -537,7 +521,7 @@ func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
 		"t": {{ID: "t", Content: "# Doc\n\nOld body.", Mode: ModeDoc}},
 	}}
 	llm := &fakeLLM{document: "# Doc\n\nNew body."}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.EditWithAI(t.Context(), "t", "rewrite the body"); err != nil {
 		t.Fatalf("EditWithAI: %v", err)
@@ -565,7 +549,7 @@ func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
 		"t": {{ID: "t", Content: "Go Contexts", Mode: ModeDoc}},
 	}}
 	llm := &fakeLLM{document: "# Go Contexts\n\nBody."}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
 		t.Fatalf("ExpandTopicByID: %v", err)
@@ -584,7 +568,7 @@ func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
 		addOp("t2", "t1", "Cancellation propagates."),
 		addOp("t3", "t2", "A derived context is cancelled with its parent."),
 	}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.ExpandTopicByID(t.Context(), "t", "cancellation")
 	if err != nil {
@@ -623,7 +607,7 @@ func TestExpandTopicByIDGraftsAFlatTreeOntoTheTopic(t *testing.T) {
 		addOp("t1", "", "Cancellation propagates."),
 		addOp("t2", "", "Deadlines are contexts too."),
 	}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
 		t.Fatalf("ExpandTopicByID: %v", err)
@@ -643,7 +627,7 @@ func TestExpandTopicByIDRefusesAnEmptyExpansion(t *testing.T) {
 		"t": {{ID: "t", Content: "Go Contexts"}},
 	}}
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "Go Contexts")}}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
 	if !errors.Is(err, ErrLLMBadResponse) {
@@ -657,7 +641,7 @@ func TestExpandTopicByIDRefusesAnEmptyExpansion(t *testing.T) {
 func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
 	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
 	repo := &fakeRepo{subtrees: map[ID][]Block{"t": {{ID: "t", Content: "private topic"}}}}
-	svc := NewService(llm, repo, seqIDs(), nil, WithAIPolicy(func() bool { return false }))
+	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.ExpandTopicByID(t.Context(), "t", "private hint")
 	if !errors.Is(err, ErrAIDisabled) {
@@ -670,7 +654,7 @@ func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
 
 func TestServiceReviewPassThroughs(t *testing.T) {
 	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if got, err := svc.Unreviewed(t.Context()); err != nil || len(got.Blocks) != 1 {
 		t.Errorf("Unreviewed = %+v, %v, want the repo's changes", got, err)
@@ -707,7 +691,7 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 		Edges:  []TopicEdge{{From: "01A", To: "01B"}},
 	}
 	repo := &fakeRepo{graph: want}
-	svc := NewService(nil, repo, nil, nil)
+	svc := NewService(nil, repo, nil)
 
 	got, err := svc.TopicGraph(t.Context())
 	if err != nil {
@@ -721,84 +705,8 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 	}
 
 	boom := errors.New("boom")
-	if _, err := NewService(nil, &fakeRepo{graphErr: boom}, nil, nil).TopicGraph(t.Context()); !errors.Is(err, boom) {
+	if _, err := NewService(nil, &fakeRepo{graphErr: boom}, nil).TopicGraph(t.Context()); !errors.Is(err, boom) {
 		t.Errorf("error = %v, want %v", err, boom)
-	}
-}
-
-func TestServiceExportMarkdownWritesThroughWriter(t *testing.T) {
-	repo := &fakeRepo{
-		topics: []Block{
-			blk("t1", "", 0, "# Alpha"),
-			blk("c1", "t1", 0, "child of alpha"),
-			blk("t2", "", 1, "# Beta"),
-		},
-		subtrees: map[ID][]Block{
-			"t1": {blk("t1", "", 0, "# Alpha"), blk("c1", "t1", 0, "child of alpha")},
-			"t2": {blk("t2", "", 1, "# Beta")},
-		},
-	}
-	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer)
-
-	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
-		t.Fatalf("ExportMarkdown: %v", err)
-	}
-
-	if writer.dir != "/export/here" {
-		t.Errorf("writer got dir %q, want the dir passed to ExportMarkdown", writer.dir)
-	}
-	want := []ExportFile{
-		{Name: "Alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
-		{Name: "Beta.md", Content: "- # Beta\n"},
-	}
-	if !slices.Equal(writer.files, want) {
-		t.Errorf("writer got files %+v, want %+v", writer.files, want)
-	}
-}
-
-func TestServiceExportMarkdownSurfacesWriteError(t *testing.T) {
-	boom := errors.New("disk full")
-	repo := &fakeRepo{
-		topics:   []Block{blk("t1", "", 0, "# Alpha")},
-		subtrees: map[ID][]Block{"t1": {blk("t1", "", 0, "# Alpha")}},
-	}
-	svc := NewService(nil, repo, seqIDs(), &fakeFileWriter{writeErr: boom})
-
-	err := svc.ExportMarkdown(context.Background(), "/export/here")
-	if !errors.Is(err, boom) {
-		t.Errorf("error = %v, want the writer error surfaced", err)
-	}
-}
-
-func TestServiceExportMarkdownEmptyBase(t *testing.T) {
-	repo := &fakeRepo{topics: nil}
-	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer)
-
-	if err := svc.ExportMarkdown(context.Background(), "/export/here"); err != nil {
-		t.Fatalf("empty base must export cleanly, got %v", err)
-	}
-	if len(writer.files) != 0 {
-		t.Errorf("handed %d files for an empty base, want 0", len(writer.files))
-	}
-}
-
-func TestServiceExportMarkdownPropagatesReadError(t *testing.T) {
-	boom := errors.New("db down")
-	repo := &fakeRepo{
-		topics:     []Block{blk("t1", "", 0, "# Alpha")},
-		subtreeErr: boom,
-	}
-	writer := &fakeFileWriter{}
-	svc := NewService(nil, repo, seqIDs(), writer)
-
-	err := svc.ExportMarkdown(context.Background(), "/export/here")
-	if !errors.Is(err, boom) {
-		t.Errorf("error = %v, want the storage read error surfaced", err)
-	}
-	if writer.files != nil {
-		t.Errorf("writer was handed %+v; a read failure must write nothing", writer.files)
 	}
 }
 
@@ -825,7 +733,7 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeRepo{}
-			svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(off))
+			svc := NewService(nil, repo, seqIDs(), WithAIPolicy(off))
 
 			_, err := svc.ApplyOps(t.Context(), tt.meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
 			switch {
@@ -844,7 +752,7 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 	enabled := true
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil, WithAIPolicy(func() bool { return enabled }))
+	svc := NewService(nil, repo, seqIDs(), WithAIPolicy(func() bool { return enabled }))
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
 	ops := []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}
@@ -863,7 +771,7 @@ func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 
 func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
 	if _, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}); err != nil {

@@ -194,7 +194,7 @@ func TestRenameTopicRewritesReferencesInOneBatch(t *testing.T) {
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]], see [[local-first]] again."),
 		blk("01OTHER", "01ZIG", 1, "Unrelated [[Zig]]."),
 	)
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Local-first architecture"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -227,7 +227,7 @@ func TestRenameBatchTitleCountsTheBlocksItTouched(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01A", "01ZIG", 0, "One [[Local-first]] and another [[Local-first]]."),
 		blk("01B", "01ZIG", 1, "A second block on [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -240,7 +240,7 @@ func TestRenameBatchTitleCountsTheBlocksItTouched(t *testing.T) {
 func TestRenameToAHeadingWritesThePlainName(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "# Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "# Offline-first"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -256,7 +256,7 @@ func TestRenameToAHeadingWritesThePlainName(t *testing.T) {
 func TestUnnamingAReferencedTopicIsRefused(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	err := svc.EditBlockContent(t.Context(), "01ROOT", "###")
 	if !errors.Is(err, ErrUnreferenceableTopic) {
@@ -269,7 +269,7 @@ func TestUnnamingAReferencedTopicIsRefused(t *testing.T) {
 
 func TestUnnamingAnUnreferencedTopicIsAllowed(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "###"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -282,7 +282,7 @@ func TestUnnamingAnUnreferencedTopicIsAllowed(t *testing.T) {
 func TestMovingAReferencedTopicUnderAnotherBlockIsRefused(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01OTHER", 0, "We use [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	_, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
@@ -297,7 +297,7 @@ func TestMovingAReferencedTopicUnderAnotherBlockIsRefused(t *testing.T) {
 
 func TestMovingAnUnreferencedTopicUnderAnotherBlockIsAllowed(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
@@ -314,7 +314,7 @@ func TestMovingAnUnreferencedTopicUnderAnotherBlockIsAllowed(t *testing.T) {
 // decided against a name that is no longer there.
 func TestMovingATopicGuardsAgainstAConcurrentRename(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
 		{Kind: OpMove, BlockID: "01ROOT", Parent: "01OTHER"},
@@ -342,7 +342,7 @@ func TestGuardKeepsTheTextTheRewriteWasComputedFrom(t *testing.T) {
 		},
 		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {concurrent}},
 	}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.ApplyOps(t.Context(), ownerMeta(), []Op{
 		{Kind: OpEdit, BlockID: "01A", Content: "Alpha renamed"},
@@ -363,7 +363,7 @@ func TestGuardKeepsTheTextTheRewriteWasComputedFrom(t *testing.T) {
 func TestUnnamingATopicTheBatchAlreadyRewritesIsAllowed(t *testing.T) {
 	note := blk("01NOTE", "01ZIG", 0, "We use [[Local-first]].")
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"), note)
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	ops := []Op{
 		{Kind: OpEdit, BlockID: "01ROOT", Content: "###"},
@@ -397,7 +397,7 @@ func TestUnnamingATopicTheBatchStillReferencesIsRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 				blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-			svc := NewService(nil, repo, seqIDs(), nil)
+			svc := NewService(nil, repo, seqIDs())
 
 			ops := []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "###"}, tc.op}
 			_, err := svc.ApplyOps(t.Context(), ownerMeta(), ops)
@@ -416,7 +416,7 @@ func TestUnnamingATopicTheBatchStillReferencesIsRefused(t *testing.T) {
 func TestUnnamingATopicWhoseOnlyReferenceIsItsOwnBodyIsAllowed(t *testing.T) {
 	root := blk("01ROOT", "", 0, "Local-first\nSee also [[Local-first]].")
 	repo := renameRepo(root, root)
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "###\nNo reference left."); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -432,7 +432,7 @@ func TestUnnamingATopicWhoseOnlyReferenceIsItsOwnBodyIsAllowed(t *testing.T) {
 func TestRenamingAReferencedTopicToABracketedNameIsRefused(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first [draft]")
 	if !errors.Is(err, ErrUnreferenceableTopic) {
@@ -447,7 +447,7 @@ func TestRenamingAReferencedTopicToABracketedNameIsRefused(t *testing.T) {
 // ordinary content. Refusing it would kill the whole batch over a checkbox.
 func TestRenamingAnUnreferencedTopicToABracketedNameIsAllowed(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Ship list"))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "- [ ] Ship v1"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -462,7 +462,7 @@ func TestRenamingAnUnreferencedTopicToABracketedNameIsAllowed(t *testing.T) {
 func TestRenameFollowsTheRootsOwnSelfReference(t *testing.T) {
 	root := blk("01ROOT", "", 0, "Local-first\nSee also [[Local-first]].")
 	repo := renameRepo(root, root)
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first\nSee also [[Local-first]]."); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -484,7 +484,7 @@ func TestRenameFollowsTheRootsOwnSelfReference(t *testing.T) {
 func TestRenameEmitsNothingForUnchangedSources(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "No reference in this text at all."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); err != nil {
 		t.Fatalf("EditBlockContent: %v", err)
@@ -522,7 +522,7 @@ func TestEditsThatAreNotRenamesDoNotExpand(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := renameRepo(tc.block, blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-			svc := NewService(nil, repo, seqIDs(), nil)
+			svc := NewService(nil, repo, seqIDs())
 
 			if err := svc.EditBlockContent(t.Context(), tc.block.ID, tc.content); err != nil {
 				t.Fatalf("EditBlockContent: %v", err)
@@ -541,7 +541,7 @@ func TestRenameSurfacesLookupErrorWithoutWriting(t *testing.T) {
 	boom := errors.New("db down")
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"))
 	repo.referencingErr = boom
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first")
 	if !errors.Is(err, boom) {
@@ -555,7 +555,7 @@ func TestRenameSurfacesLookupErrorWithoutWriting(t *testing.T) {
 func TestAIRenameExpandsTheSameWayTheOwnersDoes(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename the topic"}
 	if _, err := svc.ApplyOps(t.Context(), meta,
@@ -617,7 +617,7 @@ func TestRenameRewritesTheContentTheBatchWillStore(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 				blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-			svc := NewService(nil, repo, seqIDs(), nil)
+			svc := NewService(nil, repo, seqIDs())
 
 			meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename and more"}
 			ops := []Op{{Kind: OpEdit, BlockID: "01ROOT", Content: "Offline-first"}, tc.op}
@@ -650,7 +650,7 @@ func TestRenameWritesEachBlocksContentThroughOneOp(t *testing.T) {
 		},
 		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {note}},
 	}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename both topics"}
 	if _, err := svc.ApplyOps(t.Context(), meta, []Op{
@@ -678,7 +678,7 @@ func TestTwoRenamesInOneBatchChainOntoOneRewrite(t *testing.T) {
 		},
 		referencingByKey: map[string][]Block{"alpha": {note}, "beta": {note}},
 	}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename both topics"}
 	if _, err := svc.ApplyOps(t.Context(), meta, []Op{
@@ -745,7 +745,7 @@ func TestSeveralEditsOfOneRootRewriteReferencesOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := blk("01ROOT", "", 0, tc.root)
 			repo := renameRepo(root, root, blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
-			svc := NewService(nil, repo, seqIDs(), nil)
+			svc := NewService(nil, repo, seqIDs())
 
 			ops := make([]Op, len(tc.edits))
 			for i, content := range tc.edits {
@@ -777,7 +777,7 @@ func TestRenameOntoATakenNameFails(t *testing.T) {
 	repo := renameRepo(blk("01ROOT", "", 0, "Local-first"),
 		blk("01NOTE", "01ZIG", 0, "We use [[Local-first]]."))
 	repo.applyErr = ErrDuplicateTopic
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if err := svc.EditBlockContent(t.Context(), "01ROOT", "Offline-first"); !errors.Is(err, ErrDuplicateTopic) {
 		t.Errorf("error = %v, want ErrDuplicateTopic", err)

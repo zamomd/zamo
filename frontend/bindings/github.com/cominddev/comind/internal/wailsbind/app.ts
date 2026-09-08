@@ -142,14 +142,6 @@ export function ExpandTopicByID(id: knowledge$0.ID, hint: string): $CancellableP
 }
 
 /**
- * ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
- * directory chosen through the folder picker.
- */
-export function ExportMarkdown(dir: string): $CancellablePromise<void> {
-    return $Call.ByID(3261496674, dir);
-}
-
-/**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {

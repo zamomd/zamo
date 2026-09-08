@@ -45,6 +45,13 @@ just check          # lint + race tests + go mod tidy -diff
   the XDG data dir, not the config dir.
 - Prompts are embedded template files in `internal/llm/prompts/` —
   edit them there, not as string literals in Go.
+- Features live in `internal/modules/<name>`, one package each, built
+  only from the capability interfaces in `internal/host` (never
+  `knowledge.Service` or `internal/sqlite`) and assembled in `main.go`,
+  where each module is bound as its own Wails service. The core does
+  not grow a method per feature; a module must be deletable without
+  breaking the core build. Long-running work runs under
+  `internal/jobs` so it can be cancelled and ends with the process.
 
 ## Gotchas
 

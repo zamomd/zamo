@@ -22,6 +22,7 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
 	"github.com/cominddev/comind/internal/mcp"
+	"github.com/cominddev/comind/internal/modules/export"
 	"github.com/cominddev/comind/internal/settings"
 	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/cominddev/comind/internal/ulid"
@@ -123,19 +124,23 @@ func buildService(
 	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{},
-		knowledge.WithAIPolicy(policy))
+	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, knowledge.WithAIPolicy(policy))
 	return svc, holder, backup.NewBase(db, dbPath, version), func() { db.Close() }, nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.
+//
+// Feature modules are assembled here, each from the host capabilities it
+// names, and bound as their own Wails services next to the core bindings.
 func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base) error {
 	bind := wailsbind.New(svc, mgr, reg, base)
+	exporter := export.New(svc, fsexport.Writer{})
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
 			wailsbind.Service(bind),
+			application.NewServiceWithOptions(exporter, wailsbind.ServiceOptions()),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the

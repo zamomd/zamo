@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/fsexport"
 	"github.com/cominddev/comind/internal/jobs"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/sqlite"
@@ -51,7 +50,7 @@ func TestCancelGenerationInterruptsARunningExpansion(t *testing.T) {
 	defer db.Close()
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 	llm := hangingLLM{started: make(chan struct{})}
-	svc := knowledge.NewService(llm, sqlite.NewRepo(db, time.Now, newID), newID, fsexport.Writer{})
+	svc := knowledge.NewService(llm, sqlite.NewRepo(db, time.Now, newID), newID)
 	app := New(svc, nil, jobs.New(t.Context(), ulid.New, time.Now), nil)
 
 	result := make(chan error, 1)
