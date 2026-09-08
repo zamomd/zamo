@@ -12,6 +12,7 @@ const backend = vi.hoisted(() => ({
 	pending: "",
 	chosen: "",
 	cancelled: false,
+	exportDir: "",
 }));
 
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
@@ -24,6 +25,12 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			baseUrl: { value: "", origin: "", override: null },
 			apiKey: { value: "", origin: "", override: null },
 		}),
+	},
+}));
+
+vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/export", () => ({
+	Module: {
+		Export: async () => backend.exportDir,
 	},
 }));
 
@@ -48,6 +55,42 @@ const restoreButton = (c: Element) =>
 	[...c.querySelectorAll("button")].find((b) => b.textContent?.includes("Restore from a backup"));
 const chooseButton = (c: Element) =>
 	[...c.querySelectorAll("button")].find((b) => b.textContent?.includes("Choose a backup"));
+
+const exportButton = (c: Element) =>
+	[...c.querySelectorAll("button")].find((b) => b.textContent?.includes("Export as Markdown"));
+
+describe("exporting the base as markdown", () => {
+	beforeEach(() => {
+		backend.exportDir = "";
+	});
+
+	it("reports where the export landed", async () => {
+		backend.exportDir = "/vault";
+		const { container } = render(SettingsView);
+		await waitFor(() => {
+			expect(exportButton(container)).toBeDefined();
+		});
+
+		await fireEvent.click(exportButton(container) as Element);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain("Exported to /vault");
+		});
+	});
+
+	it("says nothing when the directory dialog is dismissed", async () => {
+		const { container } = render(SettingsView);
+		await waitFor(() => {
+			expect(exportButton(container)).toBeDefined();
+		});
+
+		await fireEvent.click(exportButton(container) as Element);
+		await Promise.resolve();
+
+		expect(container.textContent).not.toContain("Exported to");
+		expect(container.textContent).not.toContain("error:");
+	});
+});
 
 describe("backing up and restoring the base", () => {
 	// The webview implements no confirm() (see AGENTS.md), so the warning

@@ -43,6 +43,15 @@ func (w *fakeFiles) WriteFiles(_ context.Context, dir string, files []knowledge.
 	return nil
 }
 
+type fakePicker struct {
+	answer string
+	err    error
+}
+
+func (p fakePicker) SaveFile(_, _ string) (string, error)   { return p.answer, p.err }
+func (p fakePicker) OpenFile(_ string) (string, error)      { return p.answer, p.err }
+func (p fakePicker) OpenDirectory(_ string) (string, error) { return p.answer, p.err }
+
 func blk(id, parent knowledge.ID, content string) knowledge.Block {
 	return knowledge.Block{ID: id, ParentID: parent, Content: content}
 }
@@ -115,5 +124,49 @@ func TestMarkdownWritesNothingOnAReadError(t *testing.T) {
 	}
 	if files.files != nil {
 		t.Errorf("wrote %d files after a read error, want none", len(files.files))
+	}
+}
+
+func TestExportWritesIntoTheChosenDirectory(t *testing.T) {
+	base := &fakeBase{
+		topics:   []knowledge.Block{blk("t1", "", "# Alpha")},
+		subtrees: map[knowledge.ID][]knowledge.Block{"t1": {blk("t1", "", "# Alpha")}},
+	}
+	files := &fakeFiles{}
+	m := export.New(base, files)
+	export.SetPicker(m, fakePicker{answer: "/vault"})
+
+	got, err := m.Export(t.Context())
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if got != "/vault" || files.dir != "/vault" {
+		t.Errorf("reported %q and wrote into %q, want the chosen directory", got, files.dir)
+	}
+}
+
+// A cancelled dialog is not a failure: the frontend tells the two apart by
+// the empty path.
+func TestExportCancelledDialogWritesNothing(t *testing.T) {
+	files := &fakeFiles{}
+	m := export.New(&fakeBase{topics: []knowledge.Block{blk("t1", "", "# Alpha")}}, files)
+	export.SetPicker(m, fakePicker{answer: ""})
+
+	got, err := m.Export(t.Context())
+	if err != nil || got != "" {
+		t.Fatalf("Export = %q, %v; want an empty path and no error", got, err)
+	}
+	if files.files != nil {
+		t.Errorf("wrote %d files after the dialog was cancelled", len(files.files))
+	}
+}
+
+func TestExportReportsAWriteFailure(t *testing.T) {
+	boom := errors.New("disk full")
+	m := export.New(&fakeBase{topics: []knowledge.Block{blk("t1", "", "# Alpha")}}, &fakeFiles{writeErr: boom})
+	export.SetPicker(m, fakePicker{answer: "/vault"})
+
+	if _, err := m.Export(t.Context()); !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want the write failure passed through", err)
 	}
 }

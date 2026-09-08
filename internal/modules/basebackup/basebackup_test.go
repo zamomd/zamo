@@ -44,8 +44,9 @@ type fakePicker struct {
 	err    error
 }
 
-func (p fakePicker) SaveFile(_, _ string) (string, error) { return p.answer, p.err }
-func (p fakePicker) OpenFile(_ string) (string, error)    { return p.answer, p.err }
+func (p fakePicker) SaveFile(_, _ string) (string, error)   { return p.answer, p.err }
+func (p fakePicker) OpenFile(_ string) (string, error)      { return p.answer, p.err }
+func (p fakePicker) OpenDirectory(_ string) (string, error) { return p.answer, p.err }
 
 func TestBackupWritesWhereTheUserChose(t *testing.T) {
 	archive := &fakeArchive{}

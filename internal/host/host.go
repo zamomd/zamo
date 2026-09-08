@@ -35,6 +35,7 @@ type FileWriter interface {
 type FilePicker interface {
 	SaveFile(title, suggestedName string) (string, error)
 	OpenFile(title string) (string, error)
+	OpenDirectory(title string) (string, error)
 }
 
 // BaseArchive captures and restores the whole base as one archive.
