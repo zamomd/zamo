@@ -57,6 +57,14 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
+ * CancelGeneration cancels every generation in flight and returns how many
+ * there were. The cancelled call fails with the "cancelled" code.
+ */
+export function CancelGeneration(): $CancellablePromise<number> {
+    return $Call.ByID(1308611245);
+}
+
+/**
  * CheckSettings passes the call to settings.Manager: a reachability check for
  * values the user has not saved yet.
  */

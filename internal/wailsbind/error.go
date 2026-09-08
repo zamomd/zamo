@@ -1,6 +1,7 @@
 package wailsbind
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 
@@ -47,10 +48,17 @@ var codes = []struct {
 // the frontend must never match on error text (see #58).
 func MarshalError(err error) []byte {
 	p := ErrorPayload{Code: "internal", Message: err.Error()}
-	for _, c := range codes {
-		if errors.Is(err, c.err) {
-			p.Code = c.code
-			break
+	switch {
+	// A cancelled generation reaches here wrapped in a provider failure; the
+	// user asked for it, so it must not read as the provider being down.
+	case errors.Is(err, context.Canceled):
+		p.Code = "cancelled"
+	default:
+		for _, c := range codes {
+			if errors.Is(err, c.err) {
+				p.Code = c.code
+				break
+			}
 		}
 	}
 	b, jsonErr := json.Marshal(p)

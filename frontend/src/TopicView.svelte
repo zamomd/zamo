@@ -33,7 +33,11 @@
 	{/if}
 
 	<footer>
-		<StatusLine status={base.status} error={base.error} />
+		<StatusLine
+			status={base.status}
+			error={base.error}
+			onCancel={base.generating ? () => base.cancelAI() : undefined}
+		/>
 		{#if ai.enabled}
 			<CommandBox />
 		{/if}

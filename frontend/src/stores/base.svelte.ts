@@ -56,6 +56,9 @@ class BaseStore {
 	status = $state("");
 	error = $state("");
 	busy = $state(false);
+	// generating is the subset of busy spent waiting on the model: the only
+	// work the user can cancel.
+	generating = $state(false);
 	forest = $state<TreeNodeData[]>([]);
 
 	selectedTopicID = $state<string | null>(null);
@@ -362,6 +365,32 @@ class BaseStore {
 		this.scopeID = null;
 	}
 
+	// generationFailed reports a failed generation. A cancellation is the
+	// user's own doing, so it lands in the status line, not as an error.
+	private generationFailed(err: unknown): void {
+		if (callError(err).code === "cancelled") {
+			this.status = "cancelled";
+			this.error = "";
+			return;
+		}
+		this.error = messageFor(err);
+		this.status = "";
+	}
+
+	// cancelAI stops the generation in flight; the awaiting call then fails
+	// with the "cancelled" code and its own handler settles the state.
+	async cancelAI(): Promise<void> {
+		if (!this.generating) {
+			return;
+		}
+		this.status = "cancelling…";
+		try {
+			await App.CancelGeneration();
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		}
+	}
+
 	async askAI(): Promise<void> {
 		const text = this.command.trim();
 		if (text === "" || this.busy) {
@@ -373,6 +402,7 @@ class BaseStore {
 			return;
 		}
 		this.error = "";
+		this.generating = true;
 		try {
 			const scope = this.scopeID;
 			if (scope === null) {
@@ -386,9 +416,9 @@ class BaseStore {
 			this.command = "";
 			this.clearScope();
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.generationFailed(err);
 		} finally {
+			this.generating = false;
 			this.busy = false;
 		}
 	}
@@ -441,15 +471,16 @@ class BaseStore {
 			return;
 		}
 		this.error = "";
+		this.generating = true;
 		try {
 			this.status = "asking the AI to write this…";
 			await App.ExpandTopicByID(id, "");
 			await this.reload();
 			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.generationFailed(err);
 		} finally {
+			this.generating = false;
 			this.busy = false;
 		}
 	}
