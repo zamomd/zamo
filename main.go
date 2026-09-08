@@ -160,6 +160,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	// Run, so generation progress reaches the frontend.
 	wailsbind.SetEmitter(bind, app.Event)
 	basebackup.SetPicker(archive, dialogPicker{app})
+	export.SetPicker(exporter, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",
@@ -190,5 +191,14 @@ func (d dialogPicker) OpenFile(title string) (string, error) {
 		CanChooseFiles(true).
 		CanChooseDirectories(false).
 		AddFilter("Comind backup", "*.comind-backup").
+		PromptForSingleSelection()
+}
+
+func (d dialogPicker) OpenDirectory(title string) (string, error) {
+	return d.app.Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseFiles(false).
+		CanChooseDirectories(true).
+		CanCreateDirectories(true).
 		PromptForSingleSelection()
 }

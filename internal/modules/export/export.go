@@ -12,13 +12,35 @@ import (
 // Module exports the base. Its exported methods are bound into the desktop
 // frontend as the export service.
 type Module struct {
-	base  host.BaseReader
-	files host.FileWriter
+	base   host.BaseReader
+	files  host.FileWriter
+	picker host.FilePicker
 }
 
-// New assembles the module from the capabilities it needs.
+// New assembles the module from the capabilities it needs. The file picker
+// arrives through SetPicker once the desktop application exists.
 func New(base host.BaseReader, files host.FileWriter) *Module {
 	return &Module{base: base, files: files}
+}
+
+// SetPicker wires the platform file dialogs, which only exist once the
+// desktop application does. A package function rather than a method so it
+// is not itself exposed as a frontend binding.
+func SetPicker(m *Module, p host.FilePicker) { m.picker = p }
+
+// Export asks for a directory and writes the base into it as markdown,
+// answering with the directory it wrote. An empty answer means the user
+// cancelled. Files named after topics already in the directory are
+// overwritten; nothing else in it is touched.
+func (m *Module) Export(ctx context.Context) (string, error) {
+	dir, err := m.picker.OpenDirectory("Export the Comind base as Markdown")
+	if err != nil || dir == "" {
+		return "", err
+	}
+	if err := m.Markdown(ctx, dir); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // Markdown exports the base into dir: one markdown file per topic, block

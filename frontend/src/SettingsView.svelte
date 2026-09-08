@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { Module as BaseBackup } from "../bindings/github.com/cominddev/comind/internal/modules/basebackup";
+	import { Module as Export } from "../bindings/github.com/cominddev/comind/internal/modules/export";
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
@@ -54,6 +55,14 @@
 		} finally {
 			baseBusy = false;
 		}
+	}
+
+	function exportMarkdown(): Promise<void> {
+		return runBase(async () => {
+			const dir = await Export.Export();
+			// An empty path is the directory dialog being dismissed, not a failure.
+			baseStatus = dir === "" ? "" : `Exported to ${dir}`;
+		});
 	}
 
 	function backUp(): Promise<void> {
@@ -360,11 +369,14 @@
 
 		<h2>The base</h2>
 		<p class="hint">
-			A backup holds what Markdown export leaves out: stable ids, revisions, review state and
-			references. It carries no API key.
+			Export writes one Markdown file per topic, readable by Obsidian and Logseq, into a
+			directory you choose; files named after topics already there are overwritten. A backup
+			holds what Markdown leaves out: stable ids, revisions, review state and references. Neither
+			carries an API key.
 		</p>
 
 		<div class="actions">
+			<button type="button" onclick={exportMarkdown} disabled={baseBusy}>Export as Markdown…</button>
 			<button type="button" onclick={backUp} disabled={baseBusy}>Back up now…</button>
 			{#if !restoreConfirming && pendingRestore === ""}
 				<button type="button" onclick={() => (restoreConfirming = true)} disabled={baseBusy}>

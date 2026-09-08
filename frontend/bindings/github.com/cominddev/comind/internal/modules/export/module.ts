@@ -12,6 +12,16 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 /**
+ * Export asks for a directory and writes the base into it as markdown,
+ * answering with the directory it wrote. An empty answer means the user
+ * cancelled. Files named after topics already in the directory are
+ * overwritten; nothing else in it is touched.
+ */
+export function Export(): $CancellablePromise<string> {
+    return $Call.ByID(2257586129);
+}
+
+/**
  * Markdown exports the base into dir: one markdown file per topic, block
  * nesting rendered as nested lists. All reads complete before any write, so a
  * read failure aborts with nothing written; how a mid-write failure is
