@@ -56,6 +56,9 @@ class BaseStore {
 	status = $state("");
 	error = $state("");
 	busy = $state(false);
+	// generating is the subset of busy spent waiting on the model: the only
+	// work the user can cancel.
+	generating = $state(false);
 	forest = $state<TreeNodeData[]>([]);
 
 	selectedTopicID = $state<string | null>(null);
@@ -143,10 +146,12 @@ class BaseStore {
 	}
 
 	async reload(): Promise<void> {
-		const topics = (await App.TopicMap()) ?? [];
-		const roots = topics.filter((b) => b.ParentID === "");
+		const [topics] = await Promise.all([App.TopicMap(), changes.refresh()]);
+		const roots = (topics ?? []).filter((b) => b.ParentID === "");
+		// One round trip per topic, all in flight at once: a sequential loop made
+		// reload time grow linearly with the number of topics.
+		const subtrees = await Promise.all(roots.map((r) => App.GetSubtree(r.ID)));
 
-		await changes.refresh();
 		this.ghosts.clear();
 		const ghostTopics = new Set<string>();
 		for (const u of changes.blocks) {
@@ -158,8 +163,8 @@ class BaseStore {
 		}
 
 		const trees: TreeNodeData[] = [];
-		for (const r of roots) {
-			const blocks = (await App.GetSubtree(r.ID)) ?? [];
+		for (const [i, r] of roots.entries()) {
+			const blocks = subtrees[i] ?? [];
 			const extra = this.ghostsFor(r.ID);
 			ghostTopics.delete(r.ID);
 			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
@@ -360,6 +365,32 @@ class BaseStore {
 		this.scopeID = null;
 	}
 
+	// generationFailed reports a failed generation. A cancellation is the
+	// user's own doing, so it lands in the status line, not as an error.
+	private generationFailed(err: unknown): void {
+		if (callError(err).code === "cancelled") {
+			this.status = "cancelled";
+			this.error = "";
+			return;
+		}
+		this.error = messageFor(err);
+		this.status = "";
+	}
+
+	// cancelAI stops the generation in flight; the awaiting call then fails
+	// with the "cancelled" code and its own handler settles the state.
+	async cancelAI(): Promise<void> {
+		if (!this.generating) {
+			return;
+		}
+		this.status = "cancelling…";
+		try {
+			await App.CancelGeneration();
+		} catch (err: unknown) {
+			this.error = messageFor(err);
+		}
+	}
+
 	async askAI(): Promise<void> {
 		const text = this.command.trim();
 		if (text === "" || this.busy) {
@@ -371,6 +402,7 @@ class BaseStore {
 			return;
 		}
 		this.error = "";
+		this.generating = true;
 		try {
 			const scope = this.scopeID;
 			if (scope === null) {
@@ -384,9 +416,9 @@ class BaseStore {
 			this.command = "";
 			this.clearScope();
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.generationFailed(err);
 		} finally {
+			this.generating = false;
 			this.busy = false;
 		}
 	}
@@ -439,15 +471,16 @@ class BaseStore {
 			return;
 		}
 		this.error = "";
+		this.generating = true;
 		try {
 			this.status = "asking the AI to write this…";
 			await App.ExpandTopicByID(id, "");
 			await this.reload();
 			this.status = "changes applied, awaiting review";
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.generationFailed(err);
 		} finally {
+			this.generating = false;
 			this.busy = false;
 		}
 	}

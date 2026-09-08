@@ -13,11 +13,14 @@ const reloadFixture = vi.hoisted(() => ({
 	gate: null as Promise<void> | null,
 	writeGate: null as Promise<void> | null,
 	onSubtree: null as ((id: string) => void) | null,
+	subtreeGate: null as Promise<void> | null,
 	backlinks: {} as Record<string, unknown[]>,
 	backlinksError: null as Error | null,
 	createdTopicID: "",
 	createTopicError: null as Error | null,
 	expandByIDError: null as Error | null,
+	editError: null as Error | null,
+	editGate: null as Promise<void> | null,
 }));
 const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }));
 vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
@@ -33,6 +36,9 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 		},
 		GetSubtree: async (id: string) => {
 			reloadFixture.onSubtree?.(id);
+			if (reloadFixture.subtreeGate !== null) {
+				await reloadFixture.subtreeGate;
+			}
 			return reloadFixture.subtrees[id] ?? [];
 		},
 		ExpandTopic: vi.fn(async () => {}),
@@ -54,7 +60,15 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			}
 			return reloadFixture.backlinks[id] ?? [];
 		}),
-		EditWithAI: vi.fn(async () => {}),
+		EditWithAI: vi.fn(async () => {
+			if (reloadFixture.editGate !== null) {
+				await reloadFixture.editGate;
+			}
+			if (reloadFixture.editError !== null) {
+				throw reloadFixture.editError;
+			}
+		}),
+		CancelGeneration: vi.fn(async () => 1),
 		EditBlockContent: vi.fn(async () => {
 			if (reloadFixture.writeGate !== null) {
 				await reloadFixture.writeGate;
@@ -139,6 +153,9 @@ beforeEach(() => {
 	reloadFixture.gate = null;
 	reloadFixture.writeGate = null;
 	reloadFixture.onSubtree = null;
+	reloadFixture.subtreeGate = null;
+	reloadFixture.editError = null;
+	reloadFixture.editGate = null;
 	reloadFixture.topics = [block("go", ""), block("sqlite", "")];
 	reloadFixture.subtrees = {
 		go: [block("go", ""), block("ctx", "go"), block("done", "ctx")],
@@ -261,6 +278,52 @@ describe("reveal", () => {
 		base.reveal("missing");
 		expect(base.selectedTopicID).toBe("go");
 		expect(base.highlightID).toBe(null);
+	});
+});
+
+describe("reload's fan-out", () => {
+	beforeEach(() => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("wails", "")];
+		reloadFixture.subtrees = {
+			go: [block("go", "")],
+			sqlite: [block("sqlite", "")],
+			wails: [block("wails", "")],
+		};
+	});
+
+	it("requests every topic's subtree before the first one answers", async () => {
+		const seen: string[] = [];
+		reloadFixture.onSubtree = (id) => seen.push(id);
+		let open = () => {};
+		reloadFixture.subtreeGate = new Promise<void>((resolve) => {
+			open = resolve;
+		});
+
+		const done = base.reload();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(seen).toEqual(["go", "sqlite", "wails"]);
+
+		open();
+		await done;
+	});
+
+	it("keeps the forest in topic-map order regardless of answer order", async () => {
+		let openGo = () => {};
+		const goGate = new Promise<void>((resolve) => {
+			openGo = resolve;
+		});
+		reloadFixture.onSubtree = (id) => {
+			reloadFixture.subtreeGate = id === "go" ? goGate : null;
+		};
+
+		const done = base.reload();
+		await Promise.resolve();
+		await Promise.resolve();
+		openGo();
+		await done;
+
+		expect(base.forest.map((t) => t.block.ID)).toEqual(["go", "sqlite", "wails"]);
 	});
 });
 
@@ -397,6 +460,62 @@ describe("zoom-in", () => {
 		await base.reload();
 
 		expect(base.viewRoot?.block.ID).toBe("go");
+	});
+});
+
+describe("cancelling a generation", () => {
+	beforeEach(() => {
+		base.command = "tighten this";
+		base.scopeID = "go";
+		base.busy = false;
+		base.editingID = null;
+		base.status = "";
+		base.error = "";
+	});
+
+	it("is a no-op unless a generation is in flight", async () => {
+		await base.cancelAI();
+
+		expect(App.CancelGeneration).not.toHaveBeenCalled();
+	});
+
+	it("asks the backend to cancel while the model is working", async () => {
+		let release = () => {};
+		reloadFixture.editGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }));
+
+		const asking = base.askAI();
+		await vi.waitFor(() => expect(base.generating).toBe(true));
+
+		await base.cancelAI();
+		expect(App.CancelGeneration).toHaveBeenCalled();
+		expect(base.status).toBe("cancelling…");
+
+		release();
+		await asking;
+		expect(base.status).toBe("cancelled");
+	});
+
+	it("settles a cancelled generation as a status, not an error", async () => {
+		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }));
+
+		await base.askAI();
+
+		expect(base.status).toBe("cancelled");
+		expect(base.error).toBe("");
+		expect(base.generating).toBe(false);
+		expect(base.busy).toBe(false);
+	});
+
+	it("still reports other generation failures as errors", async () => {
+		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "llm_unavailable", message: "x" } }));
+
+		await base.askAI();
+
+		expect(base.status).toBe("");
+		expect(base.error).not.toBe("");
 	});
 });
 

@@ -47,7 +47,7 @@ func (p fakePicker) OpenFile(_ string) (string, error)    { return p.answer, p.e
 
 func TestBackupBaseWritesWhereTheUserChose(t *testing.T) {
 	archive := &fakeArchive{}
-	app := New(nil, nil, archive)
+	app := New(nil, nil, nil, archive)
 	SetPicker(app, fakePicker{answer: "/tmp/chosen.comind-backup"})
 
 	got, err := app.BackupBase(t.Context())
@@ -67,7 +67,7 @@ func TestBackupBaseWritesWhereTheUserChose(t *testing.T) {
 func TestCancellingADialogWritesNothing(t *testing.T) {
 	t.Run("backup", func(t *testing.T) {
 		archive := &fakeArchive{}
-		app := New(nil, nil, archive)
+		app := New(nil, nil, nil, archive)
 		SetPicker(app, fakePicker{answer: ""})
 
 		got, err := app.BackupBase(t.Context())
@@ -81,7 +81,7 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 
 	t.Run("restore", func(t *testing.T) {
 		archive := &fakeArchive{}
-		app := New(nil, nil, archive)
+		app := New(nil, nil, nil, archive)
 		SetPicker(app, fakePicker{answer: ""})
 
 		got, err := app.RestoreBase(t.Context())
@@ -96,7 +96,7 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 
 func TestRestoreBaseStagesTheChosenArchive(t *testing.T) {
 	archive := &fakeArchive{}
-	app := New(nil, nil, archive)
+	app := New(nil, nil, nil, archive)
 	SetPicker(app, fakePicker{answer: "/tmp/base.comind-backup"})
 
 	got, err := app.RestoreBase(t.Context())
@@ -112,7 +112,7 @@ func TestRestoreBaseStagesTheChosenArchive(t *testing.T) {
 // quiet empty answer, which the UI would read as "cancelled".
 func TestRestoreBaseReportsARefusedArchive(t *testing.T) {
 	refused := errors.New("not a Comind backup archive")
-	app := New(nil, nil, &fakeArchive{err: refused})
+	app := New(nil, nil, nil, &fakeArchive{err: refused})
 	SetPicker(app, fakePicker{answer: "/tmp/junk"})
 
 	if _, err := app.RestoreBase(t.Context()); !errors.Is(err, refused) {
@@ -122,7 +122,7 @@ func TestRestoreBaseReportsARefusedArchive(t *testing.T) {
 
 func TestPendingAndCancelPassThrough(t *testing.T) {
 	archive := &fakeArchive{pending: "/tmp/base.comind-backup"}
-	app := New(nil, nil, archive)
+	app := New(nil, nil, nil, archive)
 
 	got, err := app.PendingRestore(t.Context())
 	if err != nil || got != "/tmp/base.comind-backup" {

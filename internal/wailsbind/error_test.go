@@ -1,6 +1,7 @@
 package wailsbind
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -53,6 +54,14 @@ func TestMarshalErrorCodes(t *testing.T) {
 				t.Errorf("message = %q, want %q", p.Message, wrapped.Error())
 			}
 		})
+	}
+}
+
+func TestMarshalErrorCancelledWinsOverProviderFailure(t *testing.T) {
+	err := fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, context.Canceled)
+	p := unmarshalPayload(t, MarshalError(err))
+	if p.Code != "cancelled" {
+		t.Errorf("code = %q, want cancelled", p.Code)
 	}
 }
 

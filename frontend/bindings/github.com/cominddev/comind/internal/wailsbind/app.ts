@@ -65,6 +65,14 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
+ * CancelGeneration cancels every generation in flight and returns how many
+ * there were. The cancelled call fails with the "cancelled" code.
+ */
+export function CancelGeneration(): $CancellablePromise<number> {
+    return $Call.ByID(1308611245);
+}
+
+/**
  * CancelRestore drops a pending restore, leaving the live base in place.
  */
 export function CancelRestore(): $CancellablePromise<void> {

@@ -6,6 +6,7 @@ package wailsbind
 import (
 	"context"
 
+	"github.com/cominddev/comind/internal/jobs"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/settings"
 )
@@ -32,15 +33,17 @@ type progressPayload struct {
 type App struct {
 	svc      *knowledge.Service
 	settings *settings.Manager
+	jobs     *jobs.Registry
 	archive  BaseArchive
 	picker   FilePicker
 	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless (see SetEmitter)
 }
 
-// New wraps the service, the settings manager and the whole-base archive for
-// binding.
-func New(svc *knowledge.Service, mgr *settings.Manager, archive BaseArchive) *App {
-	return &App{svc: svc, settings: mgr, archive: archive}
+// New wraps the service, the settings manager, the job registry and the
+// whole-base archive for binding. Generations run as jobs so the frontend can
+// cancel them.
+func New(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, archive BaseArchive) *App {
+	return &App{svc: svc, settings: mgr, jobs: reg, archive: archive}
 }
 
 // SetEmitter wires the frontend event emitter. It is called once at startup,
@@ -95,21 +98,41 @@ func (a *App) SetTopicMode(ctx context.Context, id knowledge.ID, mode knowledge.
 	return err
 }
 
+// generation registers a generation job for the duration of one binding call
+// and returns the context to run it under: cancellable from the frontend and
+// reporting progress to it.
+func (a *App) generation(ctx context.Context) (context.Context, func()) {
+	ctx, done := a.jobs.Start(ctx, jobs.KindGeneration)
+	return a.withProgress(ctx), done
+}
+
+// CancelGeneration cancels every generation in flight and returns how many
+// there were. The cancelled call fails with the "cancelled" code.
+func (a *App) CancelGeneration(_ context.Context) int {
+	return a.jobs.CancelKind(jobs.KindGeneration)
+}
+
 // ExpandTopic passes the call to knowledge.Service.
 func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
-	return a.svc.ExpandTopic(a.withProgress(ctx), topic, hint)
+	ctx, done := a.generation(ctx)
+	defer done()
+	return a.svc.ExpandTopic(ctx, topic, hint)
 }
 
 // ExpandTopicByID passes the call to knowledge.Service: expands an existing
 // topic in the shape it has.
 func (a *App) ExpandTopicByID(ctx context.Context, id knowledge.ID, hint string) (knowledge.Applied, error) {
-	return a.svc.ExpandTopicByID(a.withProgress(ctx), id, hint)
+	ctx, done := a.generation(ctx)
+	defer done()
+	return a.svc.ExpandTopicByID(ctx, id, hint)
 }
 
 // EditWithAI passes the call to knowledge.Service. The frontend supplies the
 // scope (a block or subtree root) and the user's text command.
 func (a *App) EditWithAI(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Applied, error) {
-	return a.svc.EditWithAI(a.withProgress(ctx), scope, instruction)
+	ctx, done := a.generation(ctx)
+	defer done()
+	return a.svc.EditWithAI(ctx, scope, instruction)
 }
 
 // GetSubtree passes the call to knowledge.Service.

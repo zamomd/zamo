@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { render } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Mode } from "../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
 import type { View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 import TreeNode from "./lib/TreeNode.svelte";
 import SettingsView from "./SettingsView.svelte";
@@ -46,6 +47,7 @@ const row = {
 		Position: 1,
 		Content: "a claim",
 		Meta: null,
+		Mode: Mode.ModeOutline,
 		CreatedAt: "",
 		UpdatedAt: "",
 		Unreviewed: false,

@@ -18,6 +18,7 @@ import (
 	"github.com/cominddev/comind/internal/backup"
 	"github.com/cominddev/comind/internal/config"
 	"github.com/cominddev/comind/internal/fsexport"
+	"github.com/cominddev/comind/internal/jobs"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
 	"github.com/cominddev/comind/internal/mcp"
@@ -87,7 +88,8 @@ func run() error {
 
 	switch mode {
 	case "gui":
-		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), base)
+		reg := jobs.New(ctx, ulid.New, time.Now)
+		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), reg, base)
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -127,8 +129,8 @@ func buildService(
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.
-func runGUI(svc *knowledge.Service, mgr *settings.Manager, base backup.Base) error {
-	bind := wailsbind.New(svc, mgr, base)
+func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base) error {
+	bind := wailsbind.New(svc, mgr, reg, base)
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
