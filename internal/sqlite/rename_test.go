@@ -14,7 +14,7 @@ import (
 func renameService(repo *Repo) *knowledge.Service {
 	seq := 0
 	newID := func() knowledge.ID { seq++; return knowledge.ID(fmt.Sprintf("grp-%03d", seq)) }
-	return knowledge.NewService(nil, repo, newID, nil)
+	return knowledge.NewService(nil, repo, newID)
 }
 
 // headGroup returns the group id of a block's most recent revision.
@@ -127,7 +127,7 @@ func TestRenameRefusesANewConcurrentReference(t *testing.T) {
 		Kind: knowledge.OpAdd, BlockID: "01NEW", Parent: "01ZIG",
 		Content: "A new [[Local-first]] reference.",
 	}}
-	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
 	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
@@ -147,7 +147,7 @@ func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
 	concurrent := &concurrentRenameRepo{Repo: repo, t: t, op: knowledge.Op{
 		Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "A concurrent [[Local-first]] edit.",
 	}}
-	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
 	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
@@ -171,7 +171,7 @@ func TestRenameReportsAConcurrentlyDeletedBlockAsAConcurrentWrite(t *testing.T) 
 	concurrent := &concurrentRenameRepo{Repo: repo, t: t, op: knowledge.Op{
 		Kind: knowledge.OpDelete, BlockID: "01LOCAL",
 	}}
-	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" }, nil)
+	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
 	if !errors.Is(err, knowledge.ErrConcurrentWrite) {

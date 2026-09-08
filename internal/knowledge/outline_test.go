@@ -20,7 +20,7 @@ func outlineService(t *testing.T) (*Service, *fakeRepo) {
 			"root": {blocks["root"], blocks["first"], blocks["second"]},
 		},
 	}
-	return NewService(nil, repo, func() ID { return "new-1" }, nil), repo
+	return NewService(nil, repo, func() ID { return "new-1" }), repo
 }
 
 func TestSplitBlockEditsHeadAndAnchorsTailAfterIt(t *testing.T) {
@@ -126,7 +126,7 @@ func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
 	repo := &fakeRepo{
 		blocks: blocks,
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+	svc := NewService(nil, repo, func() ID { return "new-1" })
 
 	if _, err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
 		t.Fatalf("OutdentBlock: %v", err)
@@ -166,7 +166,7 @@ func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
 			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"]},
 		},
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+	svc := NewService(nil, repo, func() ID { return "new-1" })
 
 	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
 		t.Fatalf("MergeBlocks: %v", err)
@@ -208,7 +208,7 @@ func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
 			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"], blocks["grandkid"]},
 		},
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" }, nil)
+	svc := NewService(nil, repo, func() ID { return "new-1" })
 
 	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
 		t.Fatalf("MergeBlocks: %v", err)

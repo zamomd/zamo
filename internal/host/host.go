@@ -1,0 +1,31 @@
+// Package host declares the capabilities a feature module may receive from
+// the application: narrow interfaces over the core, each covering one kind of
+// access. A module names the capabilities it needs in its constructor and
+// gets implementations from the composition root, never the service or the
+// storage adapter behind them.
+//
+// Capabilities narrow what a module can call; they are not a security
+// boundary, because a module runs in the process with full authority.
+package host
+
+import (
+	"context"
+
+	"github.com/cominddev/comind/internal/knowledge"
+)
+
+// BaseReader is read access to the shape of the base: its topics and the
+// full subtree under any block.
+type BaseReader interface {
+	// TopicMap returns every topic root with its first-level children.
+	TopicMap(ctx context.Context) ([]knowledge.Block, error)
+	// GetSubtree returns a block and all of its descendants in pre-order.
+	GetSubtree(ctx context.Context, root knowledge.ID) ([]knowledge.Block, error)
+}
+
+// FileWriter persists rendered files into a directory the user chose.
+type FileWriter interface {
+	// WriteFiles writes each file into dir. Names are unique within files,
+	// so order does not matter.
+	WriteFiles(ctx context.Context, dir string, files []knowledge.ExportFile) error
+}

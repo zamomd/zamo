@@ -31,7 +31,7 @@ func testService(repo *Repo) *knowledge.Service {
 	return knowledge.NewService(nil, repo, func() knowledge.ID {
 		seq++
 		return knowledge.ID(fmt.Sprintf("blk-%03d", seq))
-	}, nil)
+	})
 }
 
 func aiMeta(title string) knowledge.WriteMeta {

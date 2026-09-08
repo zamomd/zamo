@@ -43,7 +43,7 @@ func expandService(repo *Repo, llm knowledge.LLMClient) *knowledge.Service {
 	return knowledge.NewService(llm, repo, func() knowledge.ID {
 		seq++
 		return knowledge.ID(fmt.Sprintf("blk-%03d", seq))
-	}, nil)
+	})
 }
 
 func TestExpandOutlineGrowsTheTopicItWasGiven(t *testing.T) {

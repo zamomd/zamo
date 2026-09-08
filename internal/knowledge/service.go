@@ -12,16 +12,6 @@ import (
 // on the standard library alone.
 type IDGenerator func() ID
 
-// FileWriter persists a rendered export. Writing to disk is an effect outside
-// the database, so the domain does not do it: the implementation lives outside
-// this package and is injected like IDGenerator, keeping knowledge on the
-// standard library alone and the export use case testable without a disk.
-type FileWriter interface {
-	// WriteFiles writes each file into dir. Names are unique within files
-	// (RenderMarkdown guarantees it), so order does not matter.
-	WriteFiles(ctx context.Context, dir string, files []ExportFile) error
-}
-
 // AIPolicy reports whether AI operations are allowed.
 type AIPolicy func() bool
 
@@ -39,7 +29,6 @@ type Service struct {
 	llm       LLMClient
 	repo      Repository
 	newID     IDGenerator
-	writer    FileWriter
 	aiAllowed AIPolicy
 }
 
@@ -51,11 +40,11 @@ func (s *Service) requireAI() error {
 }
 
 // NewService wires the domain to its boundaries: the LLM provider, storage,
-// and the injected ID and file-writer sources. Nothing in the domain stamps
+// and the injected ID source. Nothing in the domain stamps
 // time — storage does — so no time source is injected here.
 // AI operations are allowed when no policy is provided.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, writer FileWriter, opts ...Option) *Service {
-	s := &Service{llm: llm, repo: repo, newID: newID, writer: writer}
+func NewService(llm LLMClient, repo Repository, newID IDGenerator, opts ...Option) *Service {
+	s := &Service{llm: llm, repo: repo, newID: newID}
 	for _, o := range opts {
 		o(s)
 	}
@@ -574,30 +563,4 @@ func (s *Service) Backlinks(ctx context.Context, id ID) ([]Backlink, error) {
 		return nil, fmt.Errorf("backlinks of %s: %w", id, err)
 	}
 	return links, nil
-}
-
-// ExportMarkdown exports the base: one markdown file per topic, block nesting
-// rendered as nested lists (RenderMarkdown). It reads every topic's full
-// subtree, renders the set, then hands the files to the injected writer. All
-// reads complete before any write, so a read failure aborts with nothing
-// written; how a mid-write failure is handled is the writer's concern.
-func (s *Service) ExportMarkdown(ctx context.Context, dir string) error {
-	topics, err := s.repo.GetTopics(ctx)
-	if err != nil {
-		return err
-	}
-
-	var subtrees [][]Block
-	for _, t := range topics {
-		if !t.IsTopic() { // GetTopics also returns first-level children; skip them
-			continue
-		}
-		sub, err := s.repo.GetSubtree(ctx, t.ID)
-		if err != nil {
-			return err
-		}
-		subtrees = append(subtrees, sub)
-	}
-
-	return s.writer.WriteFiles(ctx, dir, RenderMarkdown(subtrees))
 }
