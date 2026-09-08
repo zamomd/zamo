@@ -1,9 +1,11 @@
-package wailsbind
+package basebackup_test
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/cominddev/comind/internal/modules/basebackup"
 )
 
 type fakeArchive struct {
@@ -45,14 +47,14 @@ type fakePicker struct {
 func (p fakePicker) SaveFile(_, _ string) (string, error) { return p.answer, p.err }
 func (p fakePicker) OpenFile(_ string) (string, error)    { return p.answer, p.err }
 
-func TestBackupBaseWritesWhereTheUserChose(t *testing.T) {
+func TestBackupWritesWhereTheUserChose(t *testing.T) {
 	archive := &fakeArchive{}
-	app := New(nil, nil, nil, archive)
-	SetPicker(app, fakePicker{answer: "/tmp/chosen.comind-backup"})
+	m := basebackup.New(archive)
+	basebackup.SetPicker(m, fakePicker{answer: "/tmp/chosen.comind-backup"})
 
-	got, err := app.BackupBase(t.Context())
+	got, err := m.Backup(t.Context())
 	if err != nil {
-		t.Fatalf("BackupBase: %v", err)
+		t.Fatalf("Backup: %v", err)
 	}
 	if got != "/tmp/chosen.comind-backup" {
 		t.Errorf("reported %q, want the chosen path", got)
@@ -67,12 +69,12 @@ func TestBackupBaseWritesWhereTheUserChose(t *testing.T) {
 func TestCancellingADialogWritesNothing(t *testing.T) {
 	t.Run("backup", func(t *testing.T) {
 		archive := &fakeArchive{}
-		app := New(nil, nil, nil, archive)
-		SetPicker(app, fakePicker{answer: ""})
+		m := basebackup.New(archive)
+		basebackup.SetPicker(m, fakePicker{answer: ""})
 
-		got, err := app.BackupBase(t.Context())
+		got, err := m.Backup(t.Context())
 		if err != nil || got != "" {
-			t.Fatalf("BackupBase = %q, %v; want an empty path and no error", got, err)
+			t.Fatalf("Backup = %q, %v; want an empty path and no error", got, err)
 		}
 		if archive.backedUpTo != "" {
 			t.Errorf("wrote to %q after the dialog was cancelled", archive.backedUpTo)
@@ -81,12 +83,12 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 
 	t.Run("restore", func(t *testing.T) {
 		archive := &fakeArchive{}
-		app := New(nil, nil, nil, archive)
-		SetPicker(app, fakePicker{answer: ""})
+		m := basebackup.New(archive)
+		basebackup.SetPicker(m, fakePicker{answer: ""})
 
-		got, err := app.RestoreBase(t.Context())
+		got, err := m.Restore(t.Context())
 		if err != nil || got != "" {
-			t.Fatalf("RestoreBase = %q, %v; want an empty path and no error", got, err)
+			t.Fatalf("Restore = %q, %v; want an empty path and no error", got, err)
 		}
 		if archive.staged != "" {
 			t.Errorf("staged %q after the dialog was cancelled", archive.staged)
@@ -94,14 +96,14 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 	})
 }
 
-func TestRestoreBaseStagesTheChosenArchive(t *testing.T) {
+func TestRestoreStagesTheChosenArchive(t *testing.T) {
 	archive := &fakeArchive{}
-	app := New(nil, nil, nil, archive)
-	SetPicker(app, fakePicker{answer: "/tmp/base.comind-backup"})
+	m := basebackup.New(archive)
+	basebackup.SetPicker(m, fakePicker{answer: "/tmp/base.comind-backup"})
 
-	got, err := app.RestoreBase(t.Context())
+	got, err := m.Restore(t.Context())
 	if err != nil {
-		t.Fatalf("RestoreBase: %v", err)
+		t.Fatalf("Restore: %v", err)
 	}
 	if got != "/tmp/base.comind-backup" || archive.staged != got {
 		t.Errorf("reported %q and staged %q, want both to be the chosen archive", got, archive.staged)
@@ -110,25 +112,25 @@ func TestRestoreBaseStagesTheChosenArchive(t *testing.T) {
 
 // A refused archive must reach the frontend as an error rather than as a
 // quiet empty answer, which the UI would read as "cancelled".
-func TestRestoreBaseReportsARefusedArchive(t *testing.T) {
+func TestRestoreReportsARefusedArchive(t *testing.T) {
 	refused := errors.New("not a Comind backup archive")
-	app := New(nil, nil, nil, &fakeArchive{err: refused})
-	SetPicker(app, fakePicker{answer: "/tmp/junk"})
+	m := basebackup.New(&fakeArchive{err: refused})
+	basebackup.SetPicker(m, fakePicker{answer: "/tmp/junk"})
 
-	if _, err := app.RestoreBase(t.Context()); !errors.Is(err, refused) {
+	if _, err := m.Restore(t.Context()); !errors.Is(err, refused) {
 		t.Fatalf("error = %v, want the refusal passed through", err)
 	}
 }
 
 func TestPendingAndCancelPassThrough(t *testing.T) {
 	archive := &fakeArchive{pending: "/tmp/base.comind-backup"}
-	app := New(nil, nil, nil, archive)
+	m := basebackup.New(archive)
 
-	got, err := app.PendingRestore(t.Context())
+	got, err := m.PendingRestore(t.Context())
 	if err != nil || got != "/tmp/base.comind-backup" {
 		t.Fatalf("PendingRestore = %q, %v", got, err)
 	}
-	if err := app.CancelRestore(t.Context()); err != nil {
+	if err := m.CancelRestore(t.Context()); err != nil {
 		t.Fatalf("CancelRestore: %v", err)
 	}
 	if !archive.cancelled {

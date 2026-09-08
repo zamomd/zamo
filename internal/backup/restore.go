@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cominddev/comind/internal/sqlite"
 )
 
 // Restore refuses an archive it cannot vouch for, and says which way.
@@ -25,11 +27,6 @@ var (
 	// layout or a database schema this build cannot read.
 	ErrUnsupported = errors.New("the backup archive comes from a newer version of Comind")
 )
-
-// currentSchema is the schema version this build understands. A database
-// carrying more than this was written by a later release, which may have
-// migrated it in ways this one cannot read.
-const currentSchema = 1
 
 // Restore replaces the database at dbPath with the one inside archive and
 // reports where the base it replaced was kept.
@@ -102,8 +99,10 @@ func verified(ctx context.Context, archive string) (Manifest, error) {
 	if m.Format > Format {
 		return Manifest{}, fmt.Errorf("%w (archive layout %d, this build reads %d)", ErrUnsupported, m.Format, Format)
 	}
-	if m.Schema > currentSchema {
-		return Manifest{}, fmt.Errorf("%w (database schema %d, this build reads %d)", ErrUnsupported, m.Schema, currentSchema)
+	// A database carrying a later schema was written by a later release, which
+	// may have migrated it in ways this one cannot read.
+	if current := sqlite.SchemaVersion(); m.Schema > current {
+		return Manifest{}, fmt.Errorf("%w (database schema %d, this build reads %d)", ErrUnsupported, m.Schema, current)
 	}
 	return m, ctx.Err()
 }

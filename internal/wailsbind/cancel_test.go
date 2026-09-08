@@ -51,7 +51,7 @@ func TestCancelGenerationInterruptsARunningExpansion(t *testing.T) {
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 	llm := hangingLLM{started: make(chan struct{})}
 	svc := knowledge.NewService(llm, sqlite.NewRepo(db, time.Now, newID), newID)
-	app := New(svc, nil, jobs.New(t.Context(), ulid.New, time.Now), nil)
+	app := New(svc, nil, jobs.New(t.Context(), ulid.New, time.Now))
 
 	result := make(chan error, 1)
 	go func() {

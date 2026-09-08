@@ -22,6 +22,7 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
 	"github.com/cominddev/comind/internal/mcp"
+	"github.com/cominddev/comind/internal/modules/basebackup"
 	"github.com/cominddev/comind/internal/modules/export"
 	"github.com/cominddev/comind/internal/settings"
 	"github.com/cominddev/comind/internal/sqlite"
@@ -133,14 +134,16 @@ func buildService(
 // Feature modules are assembled here, each from the host capabilities it
 // names, and bound as their own Wails services next to the core bindings.
 func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base) error {
-	bind := wailsbind.New(svc, mgr, reg, base)
+	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
+	archive := basebackup.New(base)
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
 		Services: []application.Service{
 			wailsbind.Service(bind),
 			application.NewServiceWithOptions(exporter, wailsbind.ServiceOptions()),
+			application.NewServiceWithOptions(archive, wailsbind.ServiceOptions()),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the
@@ -156,7 +159,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	// The event manager exists only after the app is built; wire it now, before
 	// Run, so generation progress reaches the frontend.
 	wailsbind.SetEmitter(bind, app.Event)
-	wailsbind.SetPicker(bind, dialogPicker{app})
+	basebackup.SetPicker(archive, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",
