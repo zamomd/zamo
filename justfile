@@ -74,7 +74,11 @@ cover-html: cover
 vuln:
     go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-# mutation testing over a package that has tests (config in .gremlins.yaml)
+# mutation testing (config in .gremlins.yaml); local only, not part of `check`.
 # install: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-mutation package='./internal/llm/':
+# The test cache is cleared first: gremlins derives the per-mutant timeout from
+# the coverage run, and a cached run makes nearly every mutant time out.
+# The whole backend takes ~5 min; pass a package dir to narrow the run.
+mutation package='.':
+    go clean -testcache
     gremlins unleash --timeout-coefficient 8 {{package}}
