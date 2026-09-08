@@ -1,5 +1,5 @@
 // Package fsexport is the filesystem adapter for exporting the base: the
-// knowledge.FileWriter implementation that writes rendered files to disk.
+// host.FileWriter implementation that writes rendered files to disk.
 package fsexport
 
 import (
@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cominddev/comind/internal/host"
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
@@ -14,7 +15,7 @@ import (
 // os: knowledge renders the files, this writes them.
 type Writer struct{}
 
-var _ knowledge.FileWriter = Writer{}
+var _ host.FileWriter = Writer{}
 
 // WriteFiles writes each file into dir with a fixed 0644 mode. dir must already
 // exist; a nonexistent directory surfaces as a write error rather than being

@@ -195,12 +195,6 @@ func (a *App) Search(ctx context.Context, query string) ([]knowledge.SearchHit, 
 	return a.svc.Search(ctx, query)
 }
 
-// ExportMarkdown passes the call to knowledge.Service. The frontend supplies a
-// directory chosen through the folder picker.
-func (a *App) ExportMarkdown(ctx context.Context, dir string) error {
-	return a.svc.ExportMarkdown(ctx, dir)
-}
-
 // Unreviewed passes the call to knowledge.Service: the AI-authored blocks
 // still awaiting a human decision.
 func (a *App) Unreviewed(ctx context.Context) (knowledge.UnreviewedChanges, error) {

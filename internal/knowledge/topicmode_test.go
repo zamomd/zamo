@@ -12,7 +12,7 @@ func TestSetTopicModeToDocCollapsesTheSubtree(t *testing.T) {
 			{ID: "a", ParentID: "t", Position: 1, Content: "First."},
 		},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeDoc); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -39,7 +39,7 @@ func TestSetTopicModeToOutlineSplitsTheDocument(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: "Go Contexts\n\n- First.\n  - Nested.\n", Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -67,7 +67,7 @@ func TestSetTopicModeAwaitsReviewWithoutLyingAboutTheAuthor(t *testing.T) {
 			{ID: "a", ParentID: "t", Position: 1, Content: "First."},
 		},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeDoc); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -97,7 +97,7 @@ func TestSetTopicModeRefusesANonRoot(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"c": {{ID: "c", ParentID: "t", Content: "child"}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "c", ModeDoc); !errors.Is(err, ErrInvalidOps) {
 		t.Fatalf("SetTopicMode = %v, want ErrInvalidOps", err)
@@ -109,7 +109,7 @@ func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -145,7 +145,7 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALeve
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -171,7 +171,7 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel(t
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -194,7 +194,7 @@ func TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeOutline); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -222,7 +222,7 @@ func TestSetTopicModeToTheModeAlreadyHeldWritesNothing(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: "# Doc", Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs(), nil)
+	svc := NewService(nil, repo, seqIDs())
 
 	if _, err := svc.SetTopicMode(t.Context(), "t", ModeDoc); err != nil {
 		t.Fatalf("SetTopicMode: %v", err)
@@ -243,7 +243,7 @@ func TestAIRewriteChangingTheFirstLineRewritesBacklinks(t *testing.T) {
 		referencing: []Block{{ID: "s", ParentID: "other", Content: "See [[Go Contexts]]."}},
 	}
 	llm := &fakeLLM{document: "# Contexts in Go\n\nBody."}
-	svc := NewService(llm, repo, seqIDs(), nil)
+	svc := NewService(llm, repo, seqIDs())
 
 	if _, err := svc.EditWithAI(t.Context(), "t", "rename it"); err != nil {
 		t.Fatalf("EditWithAI: %v", err)
