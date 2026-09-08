@@ -143,10 +143,12 @@ class BaseStore {
 	}
 
 	async reload(): Promise<void> {
-		const topics = (await App.TopicMap()) ?? [];
-		const roots = topics.filter((b) => b.ParentID === "");
+		const [topics] = await Promise.all([App.TopicMap(), changes.refresh()]);
+		const roots = (topics ?? []).filter((b) => b.ParentID === "");
+		// One round trip per topic, all in flight at once: a sequential loop made
+		// reload time grow linearly with the number of topics.
+		const subtrees = await Promise.all(roots.map((r) => App.GetSubtree(r.ID)));
 
-		await changes.refresh();
 		this.ghosts.clear();
 		const ghostTopics = new Set<string>();
 		for (const u of changes.blocks) {
@@ -158,8 +160,8 @@ class BaseStore {
 		}
 
 		const trees: TreeNodeData[] = [];
-		for (const r of roots) {
-			const blocks = (await App.GetSubtree(r.ID)) ?? [];
+		for (const [i, r] of roots.entries()) {
+			const blocks = subtrees[i] ?? [];
 			const extra = this.ghostsFor(r.ID);
 			ghostTopics.delete(r.ID);
 			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
