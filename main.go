@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/cominddev/comind/internal/backup"
 	"github.com/cominddev/comind/internal/config"
 	"github.com/cominddev/comind/internal/fsexport"
 	"github.com/cominddev/comind/internal/jobs"
@@ -80,7 +81,7 @@ func run() error {
 		}
 	}
 
-	svc, holder, cleanup, err := buildService(ctx, resolved, policy)
+	svc, holder, base, cleanup, err := buildService(ctx, resolved, policy)
 	if err != nil {
 		return err
 	}
@@ -89,7 +90,7 @@ func run() error {
 	switch mode {
 	case "gui":
 		reg := jobs.New(ctx, ulid.New, time.Now)
-		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), reg)
+		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), reg, base)
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -100,34 +101,39 @@ func run() error {
 // buildService creates the knowledge service and its runtime dependencies.
 func buildService(
 	ctx context.Context, resolved config.Resolved, policy knowledge.AIPolicy,
-) (*knowledge.Service, *llm.Holder, func(), error) {
+) (*knowledge.Service, *llm.Holder, backup.Base, func(), error) {
 	dbPath, err := resolved.Config.DatabasePath()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, backup.Base{}, nil, err
+	}
+	// A restore accepted in an earlier run is carried out here, before
+	// anything opens the base: it is the one moment no process holds it.
+	if _, err := backup.ApplyStaged(ctx, dbPath); err != nil {
+		return nil, nil, backup.Base{}, nil, err
 	}
 	db, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, backup.Base{}, nil, err
 	}
 
 	client, err := settings.BuildClient(resolved)
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, err
+		return nil, nil, backup.Base{}, nil, err
 	}
 	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
 	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, knowledge.WithAIPolicy(policy))
-	return svc, holder, func() { db.Close() }, nil
+	return svc, holder, backup.NewBase(db, dbPath, version), func() { db.Close() }, nil
 }
 
 // runGUI runs the Wails application; it blocks until the window closes.
 //
 // Feature modules are assembled here, each from the host capabilities it
 // names, and bound as their own Wails services next to the core bindings.
-func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry) error {
-	bind := wailsbind.New(svc, mgr, reg)
+func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base) error {
+	bind := wailsbind.New(svc, mgr, reg, base)
 	exporter := export.New(svc, fsexport.Writer{})
 	app := application.New(application.Options{
 		Name:        "Comind",
@@ -150,6 +156,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry) e
 	// The event manager exists only after the app is built; wire it now, before
 	// Run, so generation progress reaches the frontend.
 	wailsbind.SetEmitter(bind, app.Event)
+	wailsbind.SetPicker(bind, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",
@@ -159,4 +166,26 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry) e
 	})
 
 	return app.Run()
+}
+
+// dialogPicker asks through the platform's own file dialogs. Cancelling
+// yields an empty path and no error, which the bindings pass on as "nothing
+// was chosen".
+type dialogPicker struct{ app *application.App }
+
+func (d dialogPicker) SaveFile(title, suggestedName string) (string, error) {
+	return d.app.Dialog.SaveFile().
+		SetMessage(title).
+		SetFilename(suggestedName).
+		CanCreateDirectories(true).
+		PromptForSingleSelection()
+}
+
+func (d dialogPicker) OpenFile(title string) (string, error) {
+	return d.app.Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		AddFilter("Comind backup", "*.comind-backup").
+		PromptForSingleSelection()
 }

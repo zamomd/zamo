@@ -23,6 +23,66 @@
 
 	let resetConfirming = $state(false);
 
+	// The whole base: one archive holding what Markdown export cannot carry.
+	let pendingRestore = $state("");
+	let baseStatus = $state("");
+	let baseError = $state("");
+	let baseBusy = $state(false);
+	let restoreConfirming = $state(false);
+
+	onMount(() => {
+		void refreshPending();
+	});
+
+	async function refreshPending(): Promise<void> {
+		try {
+			pendingRestore = await App.PendingRestore();
+		} catch (err: unknown) {
+			baseError = messageFor(err);
+		}
+	}
+
+	async function runBase(action: () => Promise<void>): Promise<void> {
+		baseBusy = true;
+		baseStatus = "";
+		baseError = "";
+		try {
+			await action();
+		} catch (err: unknown) {
+			baseError = messageFor(err);
+		} finally {
+			baseBusy = false;
+		}
+	}
+
+	function backUp(): Promise<void> {
+		return runBase(async () => {
+			const dest = await App.BackupBase();
+			// An empty path is the file dialog being dismissed, not a failure.
+			baseStatus = dest === "" ? "" : `Backed up to ${dest}`;
+		});
+	}
+
+	function chooseRestore(): Promise<void> {
+		restoreConfirming = false;
+		return runBase(async () => {
+			const archive = await App.RestoreBase();
+			if (archive === "") {
+				return;
+			}
+			pendingRestore = archive;
+			baseStatus = "";
+		});
+	}
+
+	function cancelRestore(): Promise<void> {
+		return runBase(async () => {
+			await App.CancelRestore();
+			pendingRestore = "";
+			baseStatus = "The pending restore was dropped.";
+		});
+	}
+
 	let ro = $derived(view?.declarative ?? false);
 	let noProvider = $derived(provider === "");
 
@@ -296,6 +356,45 @@
 
 		{#if status !== ""}<p><code>{status}</code></p>{/if}
 		{#if error !== ""}<p><code>error: {error}</code></p>{/if}
+
+		<h2>The base</h2>
+		<p class="hint">
+			A backup holds what Markdown export leaves out: stable ids, revisions, review state and
+			references. It carries no API key.
+		</p>
+
+		<div class="actions">
+			<button type="button" onclick={backUp} disabled={baseBusy}>Back up now…</button>
+			{#if !restoreConfirming && pendingRestore === ""}
+				<button type="button" onclick={() => (restoreConfirming = true)} disabled={baseBusy}>
+					Restore from a backup…
+				</button>
+			{/if}
+		</div>
+
+		{#if restoreConfirming}
+			<p class="confirm">
+				Restoring replaces this base with the one in the backup. The base you have now is kept
+				beside it, and nothing changes until you restart Comind.
+				<button type="button" onclick={chooseRestore} disabled={baseBusy}>Choose a backup…</button>
+				<button type="button" onclick={() => (restoreConfirming = false)} disabled={baseBusy}>
+					Cancel
+				</button>
+			</p>
+		{/if}
+
+		{#if pendingRestore !== ""}
+			<p class="confirm">
+				<code>{pendingRestore}</code> replaces this base the next time Comind starts. It cannot
+				happen while the app is running, because the MCP server may be reading the base too.
+				<button type="button" onclick={cancelRestore} disabled={baseBusy}>
+					Cancel the restore
+				</button>
+			</p>
+		{/if}
+
+		{#if baseStatus !== ""}<p><code>{baseStatus}</code></p>{/if}
+		{#if baseError !== ""}<p><code>error: {baseError}</code></p>{/if}
 	</section>
 {/if}
 

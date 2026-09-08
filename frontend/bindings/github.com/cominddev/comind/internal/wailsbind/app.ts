@@ -49,6 +49,14 @@ export function Backlinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.B
 }
 
 /**
+ * BackupBase asks where to write a snapshot of the base and writes it,
+ * answering with the path it wrote. An empty answer means the user cancelled.
+ */
+export function BackupBase(): $CancellablePromise<string> {
+    return $Call.ByID(3108608582);
+}
+
+/**
  * BlockHistory passes the call to knowledge.Service: the block's revisions,
  * newest first.
  */
@@ -62,6 +70,13 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
  */
 export function CancelGeneration(): $CancellablePromise<number> {
     return $Call.ByID(1308611245);
+}
+
+/**
+ * CancelRestore drops a pending restore, leaving the live base in place.
+ */
+export function CancelRestore(): $CancellablePromise<void> {
+    return $Call.ByID(611428975);
 }
 
 /**
@@ -172,6 +187,14 @@ export function OutdentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
+ * PendingRestore reports the archive that will replace the base at the next
+ * start, or "" when there is none.
+ */
+export function PendingRestore(): $CancellablePromise<string> {
+    return $Call.ByID(3468094210);
+}
+
+/**
  * RejectBlock passes the call to knowledge.Service.
  */
 export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
@@ -183,6 +206,16 @@ export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
  */
 export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
     return $Call.ByID(370056809, topicID);
+}
+
+/**
+ * RestoreBase asks for an archive and accepts it for the next start,
+ * answering with the path it accepted. An empty answer means the user
+ * cancelled. The base itself is replaced at the next launch — see
+ * backup.Stage for why it cannot happen while the app is running.
+ */
+export function RestoreBase(): $CancellablePromise<string> {
+    return $Call.ByID(926481552);
 }
 
 /**
