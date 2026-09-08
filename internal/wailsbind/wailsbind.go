@@ -34,16 +34,13 @@ type App struct {
 	svc      *knowledge.Service
 	settings *settings.Manager
 	jobs     *jobs.Registry
-	archive  BaseArchive
-	picker   FilePicker
 	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless (see SetEmitter)
 }
 
-// New wraps the service, the settings manager, the job registry and the
-// whole-base archive for binding. Generations run as jobs so the frontend can
-// cancel them.
-func New(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, archive BaseArchive) *App {
-	return &App{svc: svc, settings: mgr, jobs: reg, archive: archive}
+// New wraps the service, the settings manager and the job registry for
+// binding. Generations run as jobs so the frontend can cancel them.
+func New(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry) *App {
+	return &App{svc: svc, settings: mgr, jobs: reg}
 }
 
 // SetEmitter wires the frontend event emitter. It is called once at startup,
@@ -55,10 +52,6 @@ func New(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, arch
 // As a method this was reachable from JavaScript, where passing null would
 // silently detach progress events. Startup wiring is not the frontend's to do.
 func SetEmitter(a *App, e Emitter) { a.emit = e }
-
-// SetPicker wires the platform file dialogs, which only exist once the Wails
-// application does. A package function for the same reason as SetEmitter.
-func SetPicker(a *App, p FilePicker) { a.picker = p }
 
 // withProgress returns a context that forwards LLM generation progress to the
 // frontend as GenerationProgressEvent events. With no emitter set (headless,

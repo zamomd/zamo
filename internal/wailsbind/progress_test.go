@@ -23,7 +23,7 @@ func (f *fakeEmitter) Emit(name string, data ...any) bool {
 
 func TestWithProgressForwardsReportsAsEvents(t *testing.T) {
 	fe := &fakeEmitter{}
-	app := New(nil, nil, nil, nil)
+	app := New(nil, nil, nil)
 	SetEmitter(app, fe)
 
 	ctx := app.withProgress(context.Background())
@@ -49,7 +49,7 @@ func TestWithProgressForwardsReportsAsEvents(t *testing.T) {
 }
 
 func TestWithProgressWithoutEmitterIsPassthrough(t *testing.T) {
-	app := New(nil, nil, nil, nil) // no SetEmitter
+	app := New(nil, nil, nil) // no SetEmitter
 	ctx := context.Background()
 	if got := app.withProgress(ctx); got != ctx {
 		t.Error("withProgress changed the context with no emitter set")

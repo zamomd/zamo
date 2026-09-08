@@ -118,6 +118,10 @@ var ErrSchemaTooOld = errors.New(
 	"this database was created before inline references and cannot be upgraded: " +
 		"delete the database file to start fresh")
 
+// SchemaVersion is the schema version this build reads and writes: the
+// PRAGMA user_version a fully migrated database reports.
+func SchemaVersion() int { return len(migrations) }
+
 // Migrate applies missing migrations. The current schema version is kept
 // in PRAGMA user_version.
 func Migrate(ctx context.Context, db *sql.DB) error {

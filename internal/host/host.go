@@ -29,3 +29,23 @@ type FileWriter interface {
 	// so order does not matter.
 	WriteFiles(ctx context.Context, dir string, files []knowledge.ExportFile) error
 }
+
+// FilePicker asks the user for a path through the platform's own dialog. An
+// empty path and no error means the user cancelled.
+type FilePicker interface {
+	SaveFile(title, suggestedName string) (string, error)
+	OpenFile(title string) (string, error)
+}
+
+// BaseArchive captures and restores the whole base as one archive.
+type BaseArchive interface {
+	// Backup writes a snapshot of the base to dest.
+	Backup(ctx context.Context, dest string) error
+	// StageRestore accepts an archive and leaves the replacement for the
+	// next startup, when nothing holds the base open.
+	StageRestore(ctx context.Context, archive string) error
+	// PendingRestore reports the archive waiting for the next startup, or "".
+	PendingRestore() string
+	// CancelRestore drops a pending restore.
+	CancelRestore() error
+}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { Module as BaseBackup } from "../bindings/github.com/cominddev/comind/internal/modules/basebackup";
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
@@ -36,7 +37,7 @@
 
 	async function refreshPending(): Promise<void> {
 		try {
-			pendingRestore = await App.PendingRestore();
+			pendingRestore = await BaseBackup.PendingRestore();
 		} catch (err: unknown) {
 			baseError = messageFor(err);
 		}
@@ -57,7 +58,7 @@
 
 	function backUp(): Promise<void> {
 		return runBase(async () => {
-			const dest = await App.BackupBase();
+			const dest = await BaseBackup.Backup();
 			// An empty path is the file dialog being dismissed, not a failure.
 			baseStatus = dest === "" ? "" : `Backed up to ${dest}`;
 		});
@@ -66,7 +67,7 @@
 	function chooseRestore(): Promise<void> {
 		restoreConfirming = false;
 		return runBase(async () => {
-			const archive = await App.RestoreBase();
+			const archive = await BaseBackup.Restore();
 			if (archive === "") {
 				return;
 			}
@@ -77,7 +78,7 @@
 
 	function cancelRestore(): Promise<void> {
 		return runBase(async () => {
-			await App.CancelRestore();
+			await BaseBackup.CancelRestore();
 			pendingRestore = "";
 			baseStatus = "The pending restore was dropped.";
 		});

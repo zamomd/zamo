@@ -24,9 +24,14 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 			baseUrl: { value: "", origin: "", override: null },
 			apiKey: { value: "", origin: "", override: null },
 		}),
+	},
+}));
+
+vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/basebackup", () => ({
+	Module: {
 		PendingRestore: async () => backend.pending,
-		RestoreBase: async () => backend.chosen,
-		BackupBase: async () => "/tmp/base.comind-backup",
+		Restore: async () => backend.chosen,
+		Backup: async () => "/tmp/base.comind-backup",
 		CancelRestore: async () => {
 			backend.cancelled = true;
 		},

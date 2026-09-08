@@ -9,7 +9,7 @@ import (
 
 func TestCancelGenerationEndsTheRegisteredContext(t *testing.T) {
 	reg := jobs.New(t.Context(), func() string { return "job" }, time.Now)
-	app := New(nil, nil, reg, nil)
+	app := New(nil, nil, reg)
 
 	ctx, done := app.generation(t.Context())
 	defer done()
@@ -23,7 +23,7 @@ func TestCancelGenerationEndsTheRegisteredContext(t *testing.T) {
 }
 
 func TestCancelGenerationWithNothingInFlight(t *testing.T) {
-	app := New(nil, nil, jobs.New(t.Context(), func() string { return "job" }, time.Now), nil)
+	app := New(nil, nil, jobs.New(t.Context(), func() string { return "job" }, time.Now))
 
 	if n := app.CancelGeneration(t.Context()); n != 0 {
 		t.Fatalf("CancelGeneration = %d, want 0", n)
