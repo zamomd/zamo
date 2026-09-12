@@ -270,3 +270,56 @@ func TestOpValidateRefusesModeOnAMove(t *testing.T) {
 		t.Fatalf("validate = %v, want ErrInvalidOps", err)
 	}
 }
+
+func TestPrepareOpsRewritesBatchLocalBlockRefs(t *testing.T) {
+	ops := []Op{
+		addOp("a", "", "see ((b|the other one)) and ((b))"),
+		addOp("b", "", "target"),
+	}
+	out, ids, err := prepareOps(ops, seqIDs())
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	var got string
+	for _, op := range out {
+		if op.BlockID == ids["a"] {
+			got = op.Content
+		}
+	}
+	want := "see ((" + string(ids["b"]) + "|the other one)) and ((" + string(ids["b"]) + "))"
+	if got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+}
+
+func TestPrepareOpsLeavesForeignBlockRefsAlone(t *testing.T) {
+	const content = "((x|not ours)) ((01ARZ3NDEKTSV4RRFFQ69G5FAV|real)) \\((a|escaped))"
+	ops := []Op{addOp("a", "", content)}
+	out, _, err := prepareOps(ops, seqIDs())
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	if out[0].Content != content {
+		t.Fatalf("content = %q, want unchanged %q", out[0].Content, content)
+	}
+}
+
+func TestPrepareOpsRewritesBlockRefsInEdits(t *testing.T) {
+	ops := []Op{
+		{Kind: OpEdit, BlockID: "existing", Content: "now points at ((n|new))"},
+		addOp("n", "", "new block"),
+	}
+	out, ids, err := prepareOps(ops, seqIDs())
+	if err != nil {
+		t.Fatalf("prepareOps: %v", err)
+	}
+	var got string
+	for _, op := range out {
+		if op.Kind == OpEdit {
+			got = op.Content
+		}
+	}
+	if want := "now points at ((" + string(ids["n"]) + "|new))"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+}

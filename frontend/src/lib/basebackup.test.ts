@@ -34,6 +34,14 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/export", ()
 	},
 }));
 
+vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/vaultimport", () => ({
+	Module: {
+		Preview: async () => ({ token: "" }),
+		Apply: async () => ({}),
+		Discard: async () => {},
+	},
+}));
+
 vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/basebackup", () => ({
 	Module: {
 		PendingRestore: async () => backend.pending,

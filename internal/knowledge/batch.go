@@ -3,6 +3,7 @@ package knowledge
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // validateDistinctTempIDs rejects a batch whose adds would collapse onto one
@@ -181,6 +182,9 @@ func prepareOps(ops []Op, newID IDGenerator) ([]Op, map[string]ID, error) {
 			op.After = resolve(op.After)
 			op.Before = resolve(op.Before)
 			op.TempID = ""
+			op.Content = rewriteTempRefs(op.Content, idOf)
+		case OpEdit:
+			op.Content = rewriteTempRefs(op.Content, idOf)
 		case OpMove:
 			op.Parent = resolve(op.Parent)
 			op.After = resolve(op.After)
@@ -189,4 +193,59 @@ func prepareOps(ops []Op, newID IDGenerator) ([]Op, map[string]ID, error) {
 		out = append(out, op)
 	}
 	return out, idOf, nil
+}
+
+// rewriteTempRefs replaces the target of every ((target|label)) span in
+// content that names a temp id of the batch with the real id assigned to it,
+// so a batch can reference its own new blocks. Anything else inside ((...))
+// is left as written, like every reference that resolves to nothing.
+func rewriteTempRefs(content string, idOf map[string]ID) string {
+	if !strings.Contains(content, "((") {
+		return content
+	}
+	var b strings.Builder
+	first := true
+	for line := range strings.SplitSeq(content, "\n") {
+		if !first {
+			b.WriteByte('\n')
+		}
+		first = false
+		b.WriteString(rewriteTempRefsLine(line, idOf))
+	}
+	return b.String()
+}
+
+// rewriteTempRefsLine rewrites the temp-id block references on one line,
+// reading spans exactly as scanLine does.
+func rewriteTempRefsLine(line string, idOf map[string]ID) string {
+	var b strings.Builder
+	var esc escapeState
+	for i := 0; i < len(line); i++ {
+		if !esc.step(line[i]) {
+			b.WriteByte(line[i])
+			continue
+		}
+		if _, end, ok := topicRefAt(line, i); ok {
+			b.WriteString(line[i:end])
+			i = end - 1
+			continue
+		}
+		if i+1 < len(line) && line[i] == '(' && line[i+1] == '(' {
+			if body, end, ok := until(line, i+2, "))"); ok {
+				target, label := body, ""
+				if pipe := strings.IndexByte(body, '|'); pipe >= 0 {
+					target, label = body[:pipe], body[pipe:]
+				}
+				if id, known := idOf[strings.TrimSpace(target)]; known {
+					b.WriteString("((" + string(id) + label + "))")
+				} else {
+					b.WriteString(line[i:end])
+				}
+				i = end - 1
+				continue
+			}
+		}
+		b.WriteByte(line[i])
+	}
+	return b.String()
 }

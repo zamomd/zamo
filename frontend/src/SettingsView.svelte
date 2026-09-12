@@ -2,10 +2,13 @@
 	import { onMount } from "svelte";
 	import { Module as BaseBackup } from "../bindings/github.com/cominddev/comind/internal/modules/basebackup";
 	import { Module as Export } from "../bindings/github.com/cominddev/comind/internal/modules/export";
+	import { Module as VaultImport } from "../bindings/github.com/cominddev/comind/internal/modules/vaultimport";
+	import type { Plan } from "../bindings/github.com/cominddev/comind/internal/modules/vaultimport/models";
 	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
 	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
 	import { submittedSwitch, submittedText } from "./lib/settingsinput";
+	import { canApply, count, describeKind, groupByKind, summaryLine } from "./lib/vaultimport";
 	import { ai } from "./stores/ai.svelte";
 
 	let view = $state<View | null>(null);
@@ -31,6 +34,10 @@
 	let baseError = $state("");
 	let baseBusy = $state(false);
 	let restoreConfirming = $state(false);
+
+	// An import previewed and not yet applied or dropped. The backend holds
+	// the same plan under its token; nothing is written until Apply names it.
+	let importPlan = $state<Plan | null>(null);
 
 	onMount(() => {
 		void refreshPending();
@@ -62,6 +69,33 @@
 			const dir = await Export.Export();
 			// An empty path is the directory dialog being dismissed, not a failure.
 			baseStatus = dir === "" ? "" : `Exported to ${dir}`;
+		});
+	}
+
+	function previewImport(): Promise<void> {
+		return runBase(async () => {
+			const plan = await VaultImport.Preview();
+			// An empty token is the directory dialog being dismissed, not a failure.
+			importPlan = plan.token === "" ? null : plan;
+		});
+	}
+
+	function applyImport(): Promise<void> {
+		const plan = importPlan;
+		if (plan === null) {
+			return Promise.resolve();
+		}
+		return runBase(async () => {
+			const result = await VaultImport.Apply(plan.token);
+			importPlan = null;
+			baseStatus = `Imported ${count(result.pages, "page")} as ${count(result.blocks, "block")}`;
+		});
+	}
+
+	function discardImport(): Promise<void> {
+		return runBase(async () => {
+			await VaultImport.Discard();
+			importPlan = null;
 		});
 	}
 
@@ -377,6 +411,9 @@
 
 		<div class="actions">
 			<button type="button" onclick={exportMarkdown} disabled={baseBusy}>Export as Markdown…</button>
+			{#if importPlan === null}
+				<button type="button" onclick={previewImport} disabled={baseBusy}>Import a vault…</button>
+			{/if}
 			<button type="button" onclick={backUp} disabled={baseBusy}>Back up now…</button>
 			{#if !restoreConfirming && pendingRestore === ""}
 				<button type="button" onclick={() => (restoreConfirming = true)} disabled={baseBusy}>
@@ -384,6 +421,48 @@
 				</button>
 			{/if}
 		</div>
+
+		{#if importPlan !== null}
+			<div class="confirm plan">
+				<p>{summaryLine(importPlan)}</p>
+				{#if (importPlan.conflicts ?? []).length > 0}
+					<p>Left out:</p>
+					<ul>
+						{#each groupByKind(importPlan.conflicts) as group (group.kind)}
+							<li>
+								{describeKind(group.kind)}:
+								{#each group.items as c, i (c.path)}{i > 0 ? ", " : ""}<code>{c.page}</code>{/each}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if (importPlan.warnings ?? []).length > 0}
+					<p>Converted with losses:</p>
+					<ul>
+						{#each groupByKind(importPlan.warnings) as group (group.kind)}
+							<li>
+								<details>
+									<summary>{describeKind(group.kind)} ({group.count})</summary>
+									<ul>
+										{#each group.items as w, i (i)}
+											<li><code>{w.page}</code> {w.detail}</li>
+										{/each}
+									</ul>
+								</details>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<p>
+					Nothing is written until you confirm. Imported pages become topics of your own, with
+					no review to do.
+					<button type="button" onclick={applyImport} disabled={baseBusy || !canApply(importPlan)}>
+						Import {count(importPlan.pages, "page")}
+					</button>
+					<button type="button" onclick={discardImport} disabled={baseBusy}>Cancel</button>
+				</p>
+			</div>
+		{/if}
 
 		{#if restoreConfirming}
 			<p class="confirm">
@@ -412,6 +491,13 @@
 {/if}
 
 <style>
+	.plan ul {
+		margin: 0.25rem 0 0.5rem 1.25rem;
+		padding: 0;
+	}
+	.plan summary {
+		cursor: pointer;
+	}
 	label {
 		display: block;
 		margin-bottom: 0.75rem;

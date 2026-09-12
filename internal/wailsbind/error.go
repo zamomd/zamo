@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/cominddev/comind/internal/host"
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/settings"
 )
@@ -58,6 +59,11 @@ func MarshalError(err error) []byte {
 			if errors.Is(err, c.err) {
 				p.Code = c.code
 				break
+			}
+		}
+		if p.Code == "internal" {
+			if coded, ok := errors.AsType[host.Coded](err); ok {
+				p.Code = coded.Code()
 			}
 		}
 	}

@@ -24,6 +24,9 @@ import (
 	"github.com/cominddev/comind/internal/mcp"
 	"github.com/cominddev/comind/internal/modules/basebackup"
 	"github.com/cominddev/comind/internal/modules/export"
+	"github.com/cominddev/comind/internal/modules/vaultimport"
+	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
+	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
 	"github.com/cominddev/comind/internal/settings"
 	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/cominddev/comind/internal/ulid"
@@ -137,6 +140,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
+	importer := vaultimport.New(svc, svc, obsidian.Adapter{}, logseq.Adapter{})
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",
@@ -144,6 +148,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 			wailsbind.Service(bind),
 			application.NewServiceWithOptions(exporter, wailsbind.ServiceOptions()),
 			application.NewServiceWithOptions(archive, wailsbind.ServiceOptions()),
+			application.NewServiceWithOptions(importer, wailsbind.ServiceOptions()),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the
@@ -161,6 +166,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	wailsbind.SetEmitter(bind, app.Event)
 	basebackup.SetPicker(archive, dialogPicker{app})
 	export.SetPicker(exporter, dialogPicker{app})
+	vaultimport.SetPicker(importer, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Comind",

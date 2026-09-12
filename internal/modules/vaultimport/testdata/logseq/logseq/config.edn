@@ -1,0 +1,3 @@
+{:preferred-format :markdown
+ ;; :journal/page-title-format "yyyy-MM-dd"
+ :file/name-format :triple-lowbar}

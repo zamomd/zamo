@@ -50,3 +50,18 @@ type BaseArchive interface {
 	// CancelRestore drops a pending restore.
 	CancelRestore() error
 }
+
+// BatchWriter applies one write batch through the single write path: every
+// touched block gains a revision in one group, reviewed or awaiting review
+// as the batch's WriteMeta decides.
+type BatchWriter interface {
+	ApplyOps(ctx context.Context, meta knowledge.WriteMeta, ops []knowledge.Op) (knowledge.Applied, error)
+}
+
+// Coded is an error that carries a stable wire code, so the frontend can
+// switch on it without matching text. A module gives its own failures codes
+// this way; the domain's sentinels are mapped by the entry points.
+type Coded interface {
+	error
+	Code() string
+}
