@@ -74,3 +74,22 @@ func TestMarshalErrorUnknownIsInternal(t *testing.T) {
 		t.Errorf("message = %q, want %q", p.Message, "disk on fire")
 	}
 }
+
+type codedErr struct{ code string }
+
+func (e codedErr) Error() string { return "module failure" }
+func (e codedErr) Code() string  { return e.code }
+
+func TestMarshalErrorReadsAModuleCode(t *testing.T) {
+	err := fmt.Errorf("preview: %w", codedErr{"import_stale_preview"})
+	if p := unmarshalPayload(t, MarshalError(err)); p.Code != "import_stale_preview" {
+		t.Errorf("code = %q, want the module's own code", p.Code)
+	}
+}
+
+func TestMarshalErrorDomainCodeWinsOverAModuleWrapper(t *testing.T) {
+	err := fmt.Errorf("apply: %w", knowledge.ErrDuplicateTopic)
+	if p := unmarshalPayload(t, MarshalError(err)); p.Code != "duplicate_topic" {
+		t.Errorf("code = %q, want duplicate_topic", p.Code)
+	}
+}

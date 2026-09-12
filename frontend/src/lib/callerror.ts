@@ -53,6 +53,9 @@ const readable: Record<string, string> = {
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",
 	declarative: "Settings are locked by your config file (declarative mode).",
+	import_unknown_format: "That folder is neither an Obsidian vault nor a Logseq graph.",
+	import_stale_preview: "The preview is out of date. Run it again.",
+	import_nothing: "Nothing to import: every page is already in the base or cannot be named.",
 };
 
 // messageFor turns a binding error into the sentence to show the user: a mapped,
