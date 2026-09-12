@@ -40,6 +40,7 @@ type Page struct {
 	Path     string         // slash-separated path relative to the vault
 	Mode     knowledge.Mode // ModeDoc or ModeOutline
 	Doc      string         // Mode == ModeDoc: the whole converted markdown
+	Root     string         // Mode == ModeOutline: the root block's content when it is more than Name
 	Blocks   []Node         // Mode == ModeOutline: the top-level blocks
 	Warnings []Warning
 }

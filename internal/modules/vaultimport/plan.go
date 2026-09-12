@@ -134,6 +134,9 @@ func pageOps(pg Page, temp string) []knowledge.Op {
 		root.Content = docContent(pg)
 		return []knowledge.Op{root}
 	}
+	if pg.Root != "" {
+		root.Content = pg.Root
+	}
 	ops := []knowledge.Op{root}
 	var walk func(nodes []Node, parent string)
 	walk = func(nodes []Node, parent string) {

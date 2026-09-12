@@ -157,3 +157,13 @@ func TestRenderMarkdownEndsADocumentWithANewline(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownMarkerCannotCollideWithATopicFile(t *testing.T) {
+	files := RenderMarkdown([][]Block{{blk("t1", "", 0, MarkdownMarkerName)}})
+	if files[0].Name == MarkdownMarkerName || strings.HasPrefix(files[0].Name, ".") {
+		t.Fatalf("topic file %q could shadow the marker", files[0].Name)
+	}
+	if m := MarkdownMarker(); m.Name != MarkdownMarkerName || !strings.HasPrefix(m.Content, "comind markdown ") {
+		t.Fatalf("marker = %+v", m)
+	}
+}

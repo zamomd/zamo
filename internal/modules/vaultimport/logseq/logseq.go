@@ -68,14 +68,10 @@ func (a Adapter) Parse(ctx context.Context, dir string) (vaultimport.Vault, erro
 	return v, nil
 }
 
-var (
-	// property matches one property line as mldoc reads it: a key of
-	// anything but whitespace and colons, then ":: " and the value, or a
-	// bare "key::" with no value. "key::value" is text.
-	property = regexp.MustCompile(`^\s*([^\s:]+)::(?: (.*)|\s*)$`)
-	// bullet matches a list item opener: its indentation and its text.
-	bullet = regexp.MustCompile(`^([ \t]*)[-*](?: (.*))?$`)
-)
+// property matches one property line as mldoc reads it: a key of
+// anything but whitespace and colons, then ":: " and the value, or a
+// bare "key::" with no value. "key::value" is text.
+var property = regexp.MustCompile(`^\s*([^\s:]+)::(?: (.*)|\s*)$`)
 
 // page converts one file into an outline page.
 func page(cfg graphConfig, sub, file, raw string) vaultimport.Page {
@@ -85,29 +81,29 @@ func page(cfg graphConfig, sub, file, raw string) vaultimport.Page {
 		Path: sub + "/" + file,
 		Mode: knowledge.ModeOutline,
 	}
-	o := parseOutline(raw)
-	if o.preamble != "" {
+	preamble, nodes := vaultimport.ParseOutline(raw)
+	if preamble != "" {
 		kind := vaultimport.WarnProseBeforeBullets
-		if propertiesOnly(o.preamble) {
+		if propertiesOnly(preamble) {
 			kind = vaultimport.WarnProperties
 		}
-		p.Warnings = append(p.Warnings, vaultimport.Warning{Page: p.Name, Kind: kind, Detail: firstLine(o.preamble)})
-		o.nodes = append([]vaultimport.Node{{Content: o.preamble}}, o.nodes...)
+		p.Warnings = append(p.Warnings, vaultimport.Warning{Page: p.Name, Kind: kind, Detail: firstLine(preamble)})
+		nodes = append([]vaultimport.Node{{Content: preamble}}, nodes...)
 	}
-	if len(o.nodes) > 0 && propertiesOnly(o.nodes[0].Content) {
-		if title, rest := takeProperty(o.nodes[0].Content, "title"); title != "" {
+	if len(nodes) > 0 && propertiesOnly(nodes[0].Content) {
+		if title, rest := takeProperty(nodes[0].Content, "title"); title != "" {
 			p.Name = title
 			for i := range p.Warnings {
 				p.Warnings[i].Page = title
 			}
 			if strings.TrimSpace(rest) == "" {
-				o.nodes = o.nodes[1:]
+				nodes = nodes[1:]
 			} else {
-				o.nodes[0].Content = rest
+				nodes[0].Content = rest
 			}
 		}
 	}
-	p.Blocks = convert(o.nodes, p.Name, &p.Warnings, o.preamble != "")
+	p.Blocks = convert(nodes, p.Name, &p.Warnings, preamble != "")
 	return p
 }
 
@@ -123,82 +119,6 @@ func pageName(cfg graphConfig, sub, base string) string {
 	return decodeName(base, cfg.nameFormat)
 }
 
-// outline is the raw shape of a file: text above the first bullet and the
-// bullet tree.
-type outline struct {
-	preamble string
-	nodes    []vaultimport.Node
-}
-
-// parseOutline builds the tree from indentation. A tab is one level; spaces
-// are measured against the first indented bullet's width. Lines that are not
-// bullets continue the block above them with the bullet's indentation
-// removed.
-func parseOutline(raw string) outline {
-	var (
-		o        outline
-		preamble []string
-		roots    []vaultimport.Node
-		unit     int
-		lastWS   string
-	)
-	level := func(ws string) int {
-		tabs := strings.Count(ws, "\t")
-		spaces := len(ws) - tabs
-		if spaces > 0 && unit == 0 {
-			unit = spaces
-		}
-		if unit == 0 {
-			return tabs
-		}
-		return tabs + spaces/unit
-	}
-	// Nodes live in slices that reallocate as siblings arrive, so the stack
-	// holds indexes into the parent's children rather than pointers.
-	type frame struct {
-		parent *[]vaultimport.Node
-		index  int
-	}
-	var frames []frame
-	current := func() *vaultimport.Node {
-		f := frames[len(frames)-1]
-		return &(*f.parent)[f.index]
-	}
-	for line := range strings.SplitSeq(raw, "\n") {
-		m := bullet.FindStringSubmatch(line)
-		if m == nil {
-			if len(frames) == 0 {
-				preamble = append(preamble, line)
-				continue
-			}
-			text, ok := strings.CutPrefix(line, lastWS+"  ")
-			if !ok {
-				text = strings.TrimLeft(line, " \t")
-			}
-			cur := current()
-			cur.Content += "\n" + text
-			continue
-		}
-		ws, text := m[1], m[2]
-		// A bullet indented deeper than one level below its predecessor
-		// is a child of it all the same.
-		depth := min(level(ws), len(frames))
-		frames = frames[:depth]
-		var parent *[]vaultimport.Node
-		if depth == 0 {
-			parent = &roots
-		} else {
-			parent = &current().Children
-		}
-		*parent = append(*parent, vaultimport.Node{Content: text})
-		frames = append(frames, frame{parent: parent, index: len(*parent) - 1})
-		lastWS = ws
-	}
-	o.preamble = strings.Trim(strings.Join(preamble, "\n"), "\n")
-	o.nodes = roots
-	return o
-}
-
 // convert finishes every node: the id property moves to RefID, other
 // properties stay and are reported, tags become references, and block
 // references are marked for the planner. A properties-only preamble was
@@ -208,7 +128,6 @@ func convert(
 ) []vaultimport.Node {
 	for i := range nodes {
 		n := &nodes[i]
-		n.Content = strings.TrimRight(n.Content, "\n")
 		var id string
 		id, n.Content = takeProperty(n.Content, "id")
 		n.RefID = id

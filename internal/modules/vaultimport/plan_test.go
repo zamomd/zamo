@@ -165,3 +165,15 @@ func TestPlanOfAnEmptyVaultHasNothingToApply(t *testing.T) {
 		t.Errorf("plan = %+v", p)
 	}
 }
+
+func TestPlanWritesTheRootWholeWhenThePageCarriesIt(t *testing.T) {
+	pg := outlinePage("Go", n("child"))
+	pg.Root = "# Go\nsecond line of the root"
+	p := plan(Vault{Pages: []Page{pg}}, nil)
+	if p.ops[0].Content != pg.Root || p.ops[0].Mode != knowledge.ModeOutline {
+		t.Errorf("root op = %+v, want the page's Root as content", p.ops[0])
+	}
+	if p.ops[1].Parent != "p0" || p.ops[1].Content != "child" {
+		t.Errorf("child op = %+v", p.ops[1])
+	}
+}
