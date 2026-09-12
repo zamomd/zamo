@@ -29,10 +29,12 @@ fmt:
 # fail on non-Latin letters in tracked files (Cyrillic, CJK, Arabic, …), keeping the
 # repo English-only. Typographic symbols (— → ↔ …) and accented Latin are allowed, so
 # this is a language guard, not an ASCII guard; generated/template files pass naturally.
+# Tests and fixtures are exempt: the base holds knowledge in any script, and that is
+# checked with real characters, not escapes.
 english-only:
     #!/usr/bin/env bash
     set -euo pipefail
-    if git grep -I -n -P '(?=\p{L})[^\p{Latin}\x00-\x7F]' --; then
+    if git grep -I -n -P '(?=\p{L})[^\p{Latin}\x00-\x7F]' -- ':!*_test.go' ':!*.test.ts' ':!**/testdata/**'; then
         echo "error: non-Latin letters in tracked files (repo is English-only; see above)" >&2
         exit 1
     fi
