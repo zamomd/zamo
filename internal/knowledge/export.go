@@ -12,6 +12,18 @@ type ExportFile struct {
 	Content string
 }
 
+// MarkdownMarkerName is the file an export writes beside its topic files, so
+// the directory can be told apart from any other folder of markdown when it
+// comes back through import. A topic file can never take the name: leading
+// dots are trimmed from every topic filename.
+const MarkdownMarkerName = ".comind-export"
+
+// MarkdownMarker is the marker file. Its content names the format and the
+// version of its layout, for an import to check.
+func MarkdownMarker() ExportFile {
+	return ExportFile{Name: MarkdownMarkerName, Content: "comind markdown 1\n"}
+}
+
 // untitledName is the filename base for a topic whose first line yields no
 // usable name. Deduplication keeps concurrent fallbacks distinct.
 const untitledName = "Untitled"

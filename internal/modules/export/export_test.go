@@ -80,6 +80,7 @@ func TestMarkdownWritesOneFilePerTopic(t *testing.T) {
 	want := []knowledge.ExportFile{
 		{Name: "Alpha.md", Content: "- # Alpha\n  - child of alpha\n"},
 		{Name: "Beta.md", Content: "- # Beta\n"},
+		knowledge.MarkdownMarker(),
 	}
 	if !slices.Equal(files.files, want) {
 		t.Errorf("writer got files %+v, want %+v", files.files, want)
@@ -105,8 +106,8 @@ func TestMarkdownEmptyBase(t *testing.T) {
 	if err := export.New(&fakeBase{}, files).Markdown(t.Context(), "/export/here"); err != nil {
 		t.Fatalf("empty base must export cleanly, got %v", err)
 	}
-	if len(files.files) != 0 {
-		t.Errorf("handed %d files for an empty base, want 0", len(files.files))
+	if want := []knowledge.ExportFile{knowledge.MarkdownMarker()}; !slices.Equal(files.files, want) {
+		t.Errorf("handed %+v for an empty base, want the marker alone", files.files)
 	}
 }
 

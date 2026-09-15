@@ -1,4 +1,4 @@
-package main
+package vaultimport_test
 
 import (
 	"context"
@@ -16,12 +16,9 @@ import (
 	"github.com/cominddev/comind/internal/ulid"
 )
 
-type fixedPicker string
-
-func (p fixedPicker) SaveFile(_, _ string) (string, error)   { return string(p), nil }
-func (p fixedPicker) OpenFile(_ string) (string, error)      { return string(p), nil }
-func (p fixedPicker) OpenDirectory(_ string) (string, error) { return string(p), nil }
-
+// openService assembles the domain over a fresh sqlite base, as main.go
+// does, so the module is exercised against the real write path. Tests may
+// import storage; the module itself may not.
 func openService(t *testing.T) *knowledge.Service {
 	t.Helper()
 	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "comind.db"))
@@ -36,7 +33,7 @@ func openService(t *testing.T) *knowledge.Service {
 func TestImportLogseqGraphEndToEnd(t *testing.T) {
 	svc := openService(t)
 	m := vaultimport.New(svc, svc, obsidian.Adapter{}, logseq.Adapter{})
-	vaultimport.SetPicker(m, fixedPicker("internal/modules/vaultimport/testdata/logseq"))
+	vaultimport.SetPicker(m, fakePicker{answer: "testdata/logseq"})
 	ctx := context.Background()
 
 	plan, err := m.Preview(ctx)
@@ -108,7 +105,7 @@ func TestImportObsidianVaultSkipsWhatTheBaseAlreadyHas(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := vaultimport.New(svc, svc, obsidian.Adapter{}, logseq.Adapter{})
-	vaultimport.SetPicker(m, fixedPicker("internal/modules/vaultimport/testdata/obsidian"))
+	vaultimport.SetPicker(m, fakePicker{answer: "testdata/obsidian"})
 
 	plan, err := m.Preview(ctx)
 	if err != nil {

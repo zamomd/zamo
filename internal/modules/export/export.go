@@ -44,9 +44,10 @@ func (m *Module) Export(ctx context.Context) (string, error) {
 }
 
 // Markdown exports the base into dir: one markdown file per topic, block
-// nesting rendered as nested lists. All reads complete before any write, so a
-// read failure aborts with nothing written; how a mid-write failure is
-// handled is the writer's concern.
+// nesting rendered as nested lists, and the marker file that lets an import
+// recognise the directory. All reads complete before any write, so a read
+// failure aborts with nothing written; how a mid-write failure is handled is
+// the writer's concern.
 func (m *Module) Markdown(ctx context.Context, dir string) error {
 	topics, err := m.base.TopicMap(ctx)
 	if err != nil {
@@ -65,5 +66,6 @@ func (m *Module) Markdown(ctx context.Context, dir string) error {
 		subtrees = append(subtrees, sub)
 	}
 
-	return m.files.WriteFiles(ctx, dir, knowledge.RenderMarkdown(subtrees))
+	files := append(knowledge.RenderMarkdown(subtrees), knowledge.MarkdownMarker())
+	return m.files.WriteFiles(ctx, dir, files)
 }

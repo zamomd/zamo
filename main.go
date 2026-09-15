@@ -25,6 +25,7 @@ import (
 	"github.com/cominddev/comind/internal/modules/basebackup"
 	"github.com/cominddev/comind/internal/modules/export"
 	"github.com/cominddev/comind/internal/modules/vaultimport"
+	"github.com/cominddev/comind/internal/modules/vaultimport/comind"
 	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
 	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
 	"github.com/cominddev/comind/internal/settings"
@@ -140,7 +141,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
-	importer := vaultimport.New(svc, svc, obsidian.Adapter{}, logseq.Adapter{})
+	importer := vaultimport.New(svc, svc, comind.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
 	app := application.New(application.Options{
 		Name:        "Comind",
 		Description: "Living knowledge base",

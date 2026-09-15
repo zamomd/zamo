@@ -404,9 +404,10 @@
 		<h2>The base</h2>
 		<p class="hint">
 			Export writes one Markdown file per topic, readable by Obsidian and Logseq, into a
-			directory you choose; files named after topics already there are overwritten. A backup
-			holds what Markdown leaves out: stable ids, revisions, review state and references. Neither
-			carries an API key.
+			directory you choose; files named after topics already there are overwritten. Import
+			brings an Obsidian vault, a Logseq graph or a Comind export back in as topics of your own.
+			A backup holds what Markdown leaves out: stable ids, revisions, review state and
+			references. Neither carries an API key.
 		</p>
 
 		<div class="actions">
