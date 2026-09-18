@@ -41,8 +41,9 @@
 		border-radius: 0;
 		border-left: 2px solid transparent;
 		background: none;
-		width: calc(var(--unit) * 5);
-		line-height: calc(var(--row-height) * 1.2);
+		width: calc(var(--unit) * 6);
+		font-size: var(--size-title);
+		line-height: calc(var(--row-height) * 1.6);
 		color: var(--text-faint);
 		padding: 0;
 	}

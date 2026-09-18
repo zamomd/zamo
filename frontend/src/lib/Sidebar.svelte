@@ -38,7 +38,6 @@
 </script>
 
 <aside>
-	<header>Comind</header>
 	<SearchBox />
 
 	<div class="list">
@@ -156,11 +155,6 @@
 		padding: calc(var(--unit) * 2) var(--unit);
 		border-right: 1px solid var(--hairline);
 		overflow: hidden;
-	}
-	header {
-		font-size: var(--size-heading);
-		line-height: calc(var(--row-height) * 1.2);
-		padding: 0 var(--unit);
 	}
 	.list {
 		flex: 1;
