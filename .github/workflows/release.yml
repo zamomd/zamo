@@ -17,7 +17,10 @@ jobs:
   release:
     name: macOS (arm64)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      NOTARY_PROFILE: comind-notary
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,27 +48,112 @@ jobs:
             echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Stamp the bundle version into build/config.yml
+      - name: Refuse an unsigned official release
+        if: env.SIGNING != 'true' && vars.REQUIRE_SIGNING == 'true' && github.ref_type == 'tag'
+        run: |
+          echo "::error::REQUIRE_SIGNING is set but the signing secrets are missing"
+          exit 1
+
+      # The keychain is the runner's default for the rest of the job, so codesign
+      # finds the identity and notarytool finds the stored profile without flags.
+      - name: Import the Developer ID certificate and notary credentials
+        id: cert
+        if: env.SIGNING == 'true'
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          echo "$API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security default-keychain -s "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" --keychain "$keychain" \
+            --key "$RUNNER_TEMP/api-key.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER_ID"
+          rm "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/api-key.p8"
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk '/Developer ID Application/ {print $2; exit}')
+          test -n "$identity"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp the version into the build assets
         env:
           VERSION: ${{ steps.version.outputs.version }}
+        working-directory: build
         run: |
-          sed -i.bak -E 's|^  version: "[^"]*" # The application version|  version: "'"$VERSION"'" # The application version|' build/config.yml
-          rm build/config.yml.bak
-          grep -F "version: \"$VERSION\" # The application version" build/config.yml
+          wails3 update build-assets -name comind -binaryname comind -config config.yml \
+            -productversion "$VERSION" -dir .
+          grep -A1 CFBundleShortVersionString darwin/Info.plist | grep -F ">$VERSION<"
 
       - name: Package the .app bundle
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: wails3 task package VERSION="$VERSION"
 
+      - name: Sign with the hardened runtime
+        env:
+          IDENTITY: ${{ steps.cert.outputs.identity || '-' }}
+        run: |
+          set -euo pipefail
+          if [ "$SIGNING" = true ]; then
+            wails3 tool sign --input bin/comind.app --identity "$IDENTITY" \
+              --notarize --keychain-profile "$NOTARY_PROFILE"
+          else
+            wails3 tool sign --input bin/comind.app --identity - --hardened-runtime
+          fi
+          codesign --verify --deep --strict bin/comind.app
+          # The hardened runtime refuses a non-system dylib; a bundle that cannot
+          # start must not ship.
+          bin/comind.app/Contents/MacOS/comind --version
+
       - name: Zip the bundle
         env:
           VERSION: ${{ steps.version.outputs.version }}
         # ditto preserves the bundle's symlinks and metadata; a plain zip does not.
+        run: ditto -c -k --keepParent bin/comind.app "comind-${VERSION}-darwin-arm64.zip"
+
+      - name: Build the disk image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          zip="comind-${VERSION}-darwin-arm64.zip"
-          ditto -c -k --keepParent bin/comind.app "$zip"
-          shasum -a 256 "$zip" > "$zip.sha256"
+          wails3 task darwin:create:dmg
+          mv bin/comind.dmg "comind-${VERSION}-darwin-arm64.dmg"
+
+      - name: Sign, notarize and staple the disk image
+        if: env.SIGNING == 'true'
+        env:
+          IDENTITY: ${{ steps.cert.outputs.identity }}
+        run: |
+          set -euo pipefail
+          codesign --force --timestamp --sign "$IDENTITY" comind-*.dmg
+          xcrun notarytool submit comind-*.dmg --keychain-profile "$NOTARY_PROFILE" --wait
+          # stapler finds no ticket unless the submission was accepted.
+          xcrun stapler staple comind-*.dmg
+
+      - name: Verify Gatekeeper acceptance
+        if: env.SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          spctl --assess --type execute -vv bin/comind.app
+          spctl --assess --type open --context context:primary-signature -vv comind-*.dmg
+          xcrun stapler validate bin/comind.app
+          xcrun stapler validate comind-*.dmg
+
+      - name: Write checksums
+        run: |
+          for f in comind-*.zip comind-*.dmg; do
+            shasum -a 256 "$f" > "$f.sha256"
+          done
 
       - name: Generate release notes with git-cliff
         env:
@@ -81,13 +169,16 @@ jobs:
           tar -xzf git-cliff.tar.gz "git-cliff-${GIT_CLIFF_VERSION}/git-cliff"
           "./git-cliff-${GIT_CLIFF_VERSION}/git-cliff" --config cliff.toml --latest --strip all \
             -o RELEASE_NOTES.md
+          if [ "$SIGNING" != true ]; then
+            printf '\n> This build is ad-hoc signed and not notarized, so macOS blocks its first launch. Allow it under System Settings → Privacy & Security → Open Anyway.\n' >> RELEASE_NOTES.md
+          fi
           cat RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create the GitHub Release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./comind-*.zip ./comind-*.zip.sha256
+        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./comind-*.zip ./comind-*.dmg ./comind-*.sha256
 
       - name: Upload the dry-run bundle
         if: github.ref_type != 'tag'
@@ -96,5 +187,10 @@ jobs:
           name: comind-dry-run
           path: |
             comind-*.zip
-            comind-*.zip.sha256
+            comind-*.dmg
+            comind-*.sha256
           retention-days: 3
+
+      - name: Remove the signing keychain
+        if: always() && env.SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
