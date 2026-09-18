@@ -1,15 +1,16 @@
-name: security
+name: Security
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
-# Gitleaks scans history, so stacked pushes on a PR would pile up; cancel superseded
-# runs like ci.yml does.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -18,6 +19,7 @@ jobs:
   gitleaks:
     name: gitleaks secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       # This repo is private and GitHub Advanced Security is not on the plan, so the
       # official gitleaks-action would need a paid licence. Run the CLI instead, pinned
@@ -26,7 +28,7 @@ jobs:
       GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
       # fetch-depth: 0 → full history, so origin/<base> exists for the PR range scan.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -38,15 +40,27 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
       - name: Scan for secrets
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          # On a PR, scan only the commits it adds (origin/<base>..HEAD); on a push to
-          # main there is no base ref, so scan the full history. A secret added then
-          # removed inside the PR still trips this — the fix is key rotation plus a
-          # squash/rebase merge, not a follow-up commit.
-          if [ -n "${{ github.base_ref }}" ]; then
+          if [ -n "$BASE_REF" ]; then
             gitleaks git . --no-banner --redact --verbose \
-              --log-opts="origin/${{ github.base_ref }}..HEAD"
+              --log-opts="origin/${BASE_REF}..HEAD"
           else
             gitleaks git . --no-banner --redact --verbose
           fi
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-go-env
+        with:
+          cache-name: vuln
+
+      - name: just vuln
+        run: just vuln

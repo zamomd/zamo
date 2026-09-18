@@ -1,0 +1,39 @@
+name: Set up the Go environment
+description: Go from go.mod, the Wails system libraries cgo needs on Linux, and just.
+
+inputs:
+  cache-name:
+    description: >-
+      Separates the Go cache per job. Jobs build different things (race tests,
+      lint, vuln scan), and a shared key keeps only whichever job saved first.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Cache Go modules and build output
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+          ~/Library/Caches/go-build
+        key: go-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
+        restore-keys: |
+          go-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install Wails system dependencies
+      if: runner.os == 'Linux'
+      uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+      with:
+        packages: libgtk-4-dev libwebkitgtk-6.0-dev
+        version: 1
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4

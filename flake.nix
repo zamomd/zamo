@@ -32,8 +32,8 @@
               webkitgtk_6_0
             ];
 
-          # The wails3 CLI is not in nixpkgs (v3 is alpha).
-          # go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.114
+          # The wails3 CLI is not in nixpkgs. Install the version go.mod pins:
+          # go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
         };
       });
     };
