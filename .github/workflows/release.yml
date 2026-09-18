@@ -149,11 +149,9 @@ jobs:
           xcrun stapler validate bin/comind.app
           xcrun stapler validate comind-*.dmg
 
-      - name: Write checksums
-        run: |
-          for f in comind-*.zip comind-*.dmg; do
-            shasum -a 256 "$f" > "$f.sha256"
-          done
+      # After stapling, which rewrites the disk image.
+      - name: Write SHA256SUMS
+        run: shasum -a 256 comind-*.zip comind-*.dmg > SHA256SUMS
 
       - name: Generate release notes with git-cliff
         env:
@@ -178,7 +176,7 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./comind-*.zip ./comind-*.dmg ./comind-*.sha256
+        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./comind-*.zip ./comind-*.dmg ./SHA256SUMS
 
       - name: Upload the dry-run bundle
         if: github.ref_type != 'tag'
@@ -188,7 +186,7 @@ jobs:
           path: |
             comind-*.zip
             comind-*.dmg
-            comind-*.sha256
+            SHA256SUMS
           retention-days: 3
 
       - name: Remove the signing keychain
