@@ -23,9 +23,10 @@ export function Export(): $CancellablePromise<string> {
 
 /**
  * Markdown exports the base into dir: one markdown file per topic, block
- * nesting rendered as nested lists. All reads complete before any write, so a
- * read failure aborts with nothing written; how a mid-write failure is
- * handled is the writer's concern.
+ * nesting rendered as nested lists, and the marker file that lets an import
+ * recognise the directory. All reads complete before any write, so a read
+ * failure aborts with nothing written; how a mid-write failure is handled is
+ * the writer's concern.
  */
 export function Markdown(dir: string): $CancellablePromise<void> {
     return $Call.ByID(4262167094, dir);

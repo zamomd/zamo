@@ -51,17 +51,45 @@ web-check:
 web-test:
     cd frontend && bun run test
 
+# production-build the frontend into a throwaway directory, so a broken bundle
+# surfaces before a release; frontend/dist and its .gitkeep stay untouched
+web-build:
+    cd frontend && bun run build --outDir "$(mktemp -d)"
+
 # apply frontend formatting and safe fixes
 web-fmt:
     cd frontend && bun run lint:fix
+
+# regenerate the frontend bindings after changing a bound Go service
+bindings:
+    wails3 generate bindings -f '' -clean=true -ts -i
+
+# fail when the tracked bindings differ from what the Go services generate.
+# Generates into a throwaway directory, so uncommitted regenerated bindings pass.
+bindings-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    wails3 generate bindings -f '' -clean=true -ts -i -silent -d "$tmp"
+    if ! diff -r "$tmp" frontend/bindings; then
+        echo "error: frontend/bindings is stale; run 'just bindings'" >&2
+        exit 1
+    fi
 
 # regenerate CHANGELOG.md from Conventional Commits (git-cliff comes from nix develop)
 changelog:
     git-cliff -o CHANGELOG.md
 
-# everything CI checks
-check: lint web-lint web-check english-only test web-test
+# everything CI checks; CI runs the three parts below as parallel jobs
+check: check-static check-web test
+
+# checks that read the repo without running it
+check-static: lint english-only bindings-check
     go mod tidy -diff
+
+# every frontend check
+check-web: web-lint web-check web-test web-build
 
 # per-package coverage (atomic mode: the only one correct under -race)
 cover:
@@ -74,7 +102,7 @@ cover-html: cover
 
 # scan dependencies for known vulnerabilities
 vuln:
-    go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 # mutation testing (config in .gremlins.yaml); local only, not part of `check`.
 # install: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0

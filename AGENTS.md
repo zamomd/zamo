@@ -3,14 +3,15 @@
 Local-first block-based knowledge base: AI writes directly; every change is
 flagged, reversible, and reviewed by the human. One Go binary, two modes:
 `comind` (Wails v3 GUI) and `comind mcp` (stdio MCP server).
-Stack: Go 1.26, Wails v3 alpha, Svelte 5 + TS + Vite, modernc.org/sqlite.
+Stack: Go 1.26, Wails v3 beta, Svelte 5 + TS + Vite, modernc.org/sqlite.
 
 ## Commands
 
-Always finish work with the full gate — CI runs exactly this:
+Always finish work with the full gate — CI runs exactly this, split into
+three parallel jobs (`check-static`, `test`, `check-web`):
 
 ```
-just check          # lint + race tests + go mod tidy -diff
+just check          # lint + bindings drift + go mod tidy -diff, race tests, frontend
 ```
 
 - `just fmt` — format (gofumpt via golangci-lint); run after editing Go code
@@ -57,10 +58,11 @@ just check          # lint + race tests + go mod tidy -diff
 
 - `go build ./...` needs `frontend/dist` to exist; the committed
   `.gitkeep` guarantees it. Don't delete it.
-- After changing `internal/wailsbind` methods, regenerate the frontend
-  bindings: `wails3 generate bindings -f '' -clean=true -ts -i` (the
-  flags are what `build/Taskfile.yml` uses; the bare command emits `.js`
-  and deletes the tracked `.ts` bindings).
+- After changing a bound Go service — its methods, types, or godoc —
+  regenerate the frontend bindings with `just bindings`; `just check`
+  fails on stale ones. The recipe carries the flags `build/Taskfile.yml`
+  uses; the bare `wails3 generate bindings` emits `.js` and deletes the
+  tracked `.ts` bindings.
 - `confirm()`, `alert()` and `prompt()` do nothing in the Wails webview:
   v3 implements no `runJavaScriptConfirmPanelWithMessage:`, so WKUIDelegate
   treats the call as cancelled and `confirm()` always returns false. Build

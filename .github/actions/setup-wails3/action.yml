@@ -1,0 +1,26 @@
+name: Install the wails3 CLI
+description: >-
+  Installs the wails3 CLI at the wails/v3 version pinned in go.mod, so the CLI
+  and the library never drift apart. Needs Go on the PATH.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the version pinned in go.mod
+      id: version
+      shell: bash
+      run: echo "version=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the wails3 binary
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/go/bin/wails3
+        key: wails3-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.version }}
+
+    - name: Build wails3
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: go install "github.com/wailsapp/wails/v3/cmd/wails3@${VERSION}"
