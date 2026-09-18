@@ -78,6 +78,14 @@ describe("topicRows", () => {
 		expect(rows[0].children.map((c) => c.title)).toEqual(["token buckets"]);
 	});
 
+	it("names a document topic by its first line, not by the whole document", () => {
+		const doc: TreeNodeData = {
+			block: { ...block("root", ""), Mode: Mode.ModeDoc, Content: "# TCP IP\n\nTCP/IP is the protocol suite." },
+			children: [],
+		};
+		expect(topicRows([doc], null)[0].title).toBe("TCP IP");
+	});
+
 	it("expands only the selected topic", () => {
 		const rows = topicRows(forest, "go");
 		expect(rows[0].selected).toBe(true);
