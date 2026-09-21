@@ -8,7 +8,6 @@
     let
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "x86_64-linux"
         "aarch64-linux"
       ];
@@ -20,13 +19,13 @@
           packages =
             with pkgs;
             [
-              go
+              go_1_27
               golangci-lint
               just
               bun
               git-cliff
             ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
               pkg-config
               gtk4
               webkitgtk_6_0
