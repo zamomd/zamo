@@ -9,7 +9,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -104,7 +104,7 @@ func writeArchive(path, snapshot string, m Manifest) (err error) {
 	if err != nil {
 		return fmt.Errorf("write the manifest: %w", err)
 	}
-	if err := json.NewEncoder(w).Encode(m); err != nil {
+	if err := json.MarshalWrite(w, m); err != nil {
 		return fmt.Errorf("write the manifest: %w", err)
 	}
 	if err := z.Close(); err != nil {

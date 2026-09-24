@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -86,7 +86,7 @@ func verified(ctx context.Context, archive string) (Manifest, error) {
 		if err != nil {
 			return Manifest{}, fmt.Errorf("%w: %s", ErrNotAnArchive, filepath.Base(archive))
 		}
-		err = json.NewDecoder(rc).Decode(&m)
+		err = json.UnmarshalRead(rc, &m)
 		rc.Close()
 		if err != nil {
 			return Manifest{}, fmt.Errorf("%w: its manifest is unreadable", ErrNotAnArchive)

@@ -5,7 +5,8 @@ package llm
 import (
 	"bytes"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"strings"
@@ -150,7 +151,7 @@ func firstJSONObject(raw []byte) (treeNode, bool) {
 			continue
 		}
 		var node treeNode
-		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&node) != nil {
+		if json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[i:])), &node) != nil {
 			continue
 		}
 		if strings.TrimSpace(node.Content) == "" && len(node.Children) == 0 {

@@ -2,7 +2,8 @@ package llm
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strconv"
@@ -135,7 +136,7 @@ func firstJSONArray(raw []byte) ([]editOp, bool) {
 			continue
 		}
 		var edits []editOp
-		if json.NewDecoder(bytes.NewReader(raw[i:])).Decode(&edits) != nil {
+		if json.UnmarshalDecode(jsontext.NewDecoder(bytes.NewReader(raw[i:])), &edits) != nil {
 			continue
 		}
 		if slices.ContainsFunc(edits, editOp.valid) {

@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -179,7 +179,7 @@ func buildArchive(t *testing.T, path string, m backup.Manifest, database []byte)
 	if err != nil {
 		t.Fatalf("write the manifest entry: %v", err)
 	}
-	if err := json.NewEncoder(w).Encode(m); err != nil {
+	if err := json.MarshalWrite(w, m); err != nil {
 		t.Fatalf("encode the manifest: %v", err)
 	}
 	if err := z.Close(); err != nil {

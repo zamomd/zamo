@@ -5,7 +5,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -452,7 +452,9 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if op.Origin != "" {
 		stamp["origin"] = op.Origin
 	}
-	payload, err := json.Marshal(stamp)
+	// Deterministic keeps the stored key order stable: v2 iterates maps in
+	// random order, and metadata is at-rest text a person may diff.
+	payload, err := json.Marshal(stamp, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
 	}

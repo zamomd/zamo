@@ -2,7 +2,7 @@ package wailsbind
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 
 	"github.com/cominddev/comind/internal/host"
