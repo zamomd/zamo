@@ -8,17 +8,15 @@ import (
 
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/settings"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func unmarshalPayload(t *testing.T, raw []byte) ErrorPayload {
 	t.Helper()
-	if raw == nil {
-		t.Fatal("MarshalError returned nil")
-	}
+	require.NotNil(t, raw, "MarshalError returned nil")
 	var p ErrorPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
-		t.Fatalf("MarshalError returned invalid JSON %q: %v", raw, err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &p), "MarshalError returned invalid JSON %q", raw)
 	return p
 }
 
@@ -47,12 +45,8 @@ func TestMarshalErrorCodes(t *testing.T) {
 		t.Run(c.code, func(t *testing.T) {
 			wrapped := fmt.Errorf("apply ops: %w", c.err)
 			p := unmarshalPayload(t, MarshalError(wrapped))
-			if p.Code != c.code {
-				t.Errorf("code = %q, want %q", p.Code, c.code)
-			}
-			if p.Message != wrapped.Error() {
-				t.Errorf("message = %q, want %q", p.Message, wrapped.Error())
-			}
+			assert.Equal(t, c.code, p.Code)
+			assert.Equal(t, wrapped.Error(), p.Message)
 		})
 	}
 }
@@ -60,19 +54,13 @@ func TestMarshalErrorCodes(t *testing.T) {
 func TestMarshalErrorCancelledWinsOverProviderFailure(t *testing.T) {
 	err := fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, context.Canceled)
 	p := unmarshalPayload(t, MarshalError(err))
-	if p.Code != "cancelled" {
-		t.Errorf("code = %q, want cancelled", p.Code)
-	}
+	assert.Equal(t, "cancelled", p.Code)
 }
 
 func TestMarshalErrorUnknownIsInternal(t *testing.T) {
 	p := unmarshalPayload(t, MarshalError(fmt.Errorf("disk on fire")))
-	if p.Code != "internal" {
-		t.Errorf("code = %q, want %q", p.Code, "internal")
-	}
-	if p.Message != "disk on fire" {
-		t.Errorf("message = %q, want %q", p.Message, "disk on fire")
-	}
+	assert.Equal(t, "internal", p.Code)
+	assert.Equal(t, "disk on fire", p.Message)
 }
 
 type codedErr struct{ code string }
@@ -82,14 +70,10 @@ func (e codedErr) Code() string  { return e.code }
 
 func TestMarshalErrorReadsAModuleCode(t *testing.T) {
 	err := fmt.Errorf("preview: %w", codedErr{"import_stale_preview"})
-	if p := unmarshalPayload(t, MarshalError(err)); p.Code != "import_stale_preview" {
-		t.Errorf("code = %q, want the module's own code", p.Code)
-	}
+	assert.Equal(t, "import_stale_preview", unmarshalPayload(t, MarshalError(err)).Code)
 }
 
 func TestMarshalErrorDomainCodeWinsOverAModuleWrapper(t *testing.T) {
 	err := fmt.Errorf("apply: %w", knowledge.ErrDuplicateTopic)
-	if p := unmarshalPayload(t, MarshalError(err)); p.Code != "duplicate_topic" {
-		t.Errorf("code = %q, want duplicate_topic", p.Code)
-	}
+	assert.Equal(t, "duplicate_topic", unmarshalPayload(t, MarshalError(err)).Code)
 }

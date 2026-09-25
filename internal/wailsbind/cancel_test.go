@@ -11,6 +11,8 @@ import (
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/cominddev/comind/internal/ulid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // hangingLLM behaves like a provider that never answers: every generation
@@ -44,9 +46,7 @@ func (h hangingLLM) Ping(ctx context.Context) error { return h.wait(ctx) }
 
 func TestCancelGenerationInterruptsARunningExpansion(t *testing.T) {
 	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "comind.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer db.Close()
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 	llm := hangingLLM{started: make(chan struct{})}
@@ -60,20 +60,14 @@ func TestCancelGenerationInterruptsARunningExpansion(t *testing.T) {
 	}()
 
 	<-llm.started
-	if n := app.CancelGeneration(t.Context()); n != 1 {
-		t.Fatalf("CancelGeneration = %d, want 1", n)
-	}
+	require.Equal(t, 1, app.CancelGeneration(t.Context()))
 
 	select {
 	case err := <-result:
-		if p := unmarshalPayload(t, MarshalError(err)); p.Code != "cancelled" {
-			t.Fatalf("error crossed as %q (%v), want cancelled", p.Code, err)
-		}
+		require.Equal(t, "cancelled", unmarshalPayload(t, MarshalError(err)).Code, "error: %v", err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("the expansion did not return after cancellation")
+		require.FailNow(t, "the expansion did not return after cancellation")
 	}
 
-	if n := app.CancelGeneration(t.Context()); n != 0 {
-		t.Fatalf("job still registered after it returned: CancelGeneration = %d", n)
-	}
+	assert.Zero(t, app.CancelGeneration(t.Context()), "job still registered after it returned")
 }

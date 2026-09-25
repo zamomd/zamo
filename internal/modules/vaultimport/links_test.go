@@ -1,8 +1,10 @@
 package vaultimport
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRewriteWikilinksDropsAliasAndAnchor(t *testing.T) {
@@ -23,24 +25,19 @@ func TestRewriteWikilinksDropsAliasAndAnchor(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, warns := RewriteWikilinks(c.in)
-		if got != c.want {
-			t.Errorf("RewriteWikilinks(%q) = %q, want %q", c.in, got, c.want)
-		}
+		assert.Equal(t, c.want, got, "RewriteWikilinks(%q)", c.in)
 		var kinds []string
 		for _, w := range warns {
 			kinds = append(kinds, w.Kind)
 		}
-		if !reflect.DeepEqual(kinds, c.kinds) {
-			t.Errorf("RewriteWikilinks(%q) warnings = %v, want %v", c.in, kinds, c.kinds)
-		}
+		assert.Equal(t, c.kinds, kinds, "RewriteWikilinks(%q) warnings", c.in)
 	}
 }
 
 func TestRewriteWikilinksKeepsTheOriginalInDetail(t *testing.T) {
 	_, warns := RewriteWikilinks("x [[Go#Contexts|ctx]] y")
-	if len(warns) == 0 || warns[0].Detail != "[[Go#Contexts|ctx]]" {
-		t.Fatalf("warnings = %+v, want the original link as detail", warns)
-	}
+	require.NotEmpty(t, warns)
+	require.Equal(t, "[[Go#Contexts|ctx]]", warns[0].Detail)
 }
 
 func TestRewriteTags(t *testing.T) {
@@ -66,9 +63,7 @@ func TestRewriteTags(t *testing.T) {
 		{"#тег", "[[тег]]"},
 	}
 	for _, c := range cases {
-		if got := RewriteTags(c.in); got != c.want {
-			t.Errorf("RewriteTags(%q) = %q, want %q", c.in, got, c.want)
-		}
+		assert.Equal(t, c.want, RewriteTags(c.in), "RewriteTags(%q)", c.in)
 	}
 }
 
@@ -93,8 +88,6 @@ func TestRewriteBlockRefs(t *testing.T) {
 		{"unterminated ((abc", "unterminated ((abc"},
 	}
 	for _, c := range cases {
-		if got := RewriteBlockRefs(c.in, upper); got != c.want {
-			t.Errorf("RewriteBlockRefs(%q) = %q, want %q", c.in, got, c.want)
-		}
+		assert.Equal(t, c.want, RewriteBlockRefs(c.in, upper), "RewriteBlockRefs(%q)", c.in)
 	}
 }

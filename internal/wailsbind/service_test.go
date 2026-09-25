@@ -6,22 +6,18 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServiceOptionsMarshalErrorsWithCode(t *testing.T) {
 	marshal := ServiceOptions().MarshalError
-	if marshal == nil {
-		t.Fatal("MarshalError is nil, so the binding engine falls back to its default marshaler")
-	}
+	require.NotNil(t, marshal, "MarshalError is nil, so the binding engine falls back to its default marshaler")
 
 	err := fmt.Errorf("%w: dial tcp: connection refused", knowledge.ErrLLMUnavailable)
 
 	var payload ErrorPayload
 	raw := marshal(err)
-	if unmarshalErr := json.Unmarshal(raw, &payload); unmarshalErr != nil {
-		t.Fatalf("marshalled %s, which is not an ErrorPayload: %v", raw, unmarshalErr)
-	}
-	if payload.Code != "llm_unavailable" {
-		t.Errorf("code = %q, want %q", payload.Code, "llm_unavailable")
-	}
+	require.NoError(t, json.Unmarshal(raw, &payload), "marshalled %s, which is not an ErrorPayload", raw)
+	assert.Equal(t, "llm_unavailable", payload.Code)
 }

@@ -14,6 +14,8 @@ import (
 
 	"github.com/cominddev/comind/internal/backup"
 	"github.com/cominddev/comind/internal/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateCarriesTheDatabaseAndAManifest(t *testing.T) {
@@ -21,39 +23,23 @@ func TestCreateCarriesTheDatabaseAndAManifest(t *testing.T) {
 	db := liveBase(ctx, t)
 	dest := filepath.Join(t.TempDir(), "base.comind-backup")
 
-	if err := backup.Create(ctx, db, dest, "v0.1.0"); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	require.NoError(t, backup.Create(ctx, db, dest, "v0.1.0"))
 
 	m, dbBytes := readArchive(t, dest)
-	if m.Schema != 1 {
-		t.Errorf("manifest schema = %d, want the live PRAGMA user_version 1", m.Schema)
-	}
-	if m.App != "v0.1.0" {
-		t.Errorf("manifest app version = %q, want v0.1.0", m.App)
-	}
-	if m.CreatedAt.IsZero() {
-		t.Error("manifest CreatedAt is zero, want the moment the archive was written")
-	}
+	assert.Equal(t, 1, m.Schema, "want the live PRAGMA user_version")
+	assert.Equal(t, "v0.1.0", m.App)
+	assert.False(t, m.CreatedAt.IsZero(), "manifest CreatedAt is zero, want the moment the archive was written")
 	sum := sha256.Sum256(dbBytes)
-	if got := hex.EncodeToString(sum[:]); got != m.SHA256 {
-		t.Errorf("manifest sha256 = %q, want %q — the checksum must cover the stored database", m.SHA256, got)
-	}
+	assert.Equal(t, hex.EncodeToString(sum[:]), m.SHA256, "the checksum must cover the stored database")
 
 	restored := filepath.Join(t.TempDir(), "restored.db")
 	writeFile(t, restored, dbBytes)
 	reopened, err := sqlite.Open(ctx, restored)
-	if err != nil {
-		t.Fatalf("open the database out of the archive: %v", err)
-	}
+	require.NoError(t, err, "open the database out of the archive")
 	defer reopened.Close()
 	var content string
-	if err := reopened.QueryRowContext(ctx, `SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content); err != nil {
-		t.Fatalf("read the block back: %v", err)
-	}
-	if content != "a claim" {
-		t.Errorf("content = %q, want %q", content, "a claim")
-	}
+	require.NoError(t, reopened.QueryRowContext(ctx, `SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content))
+	assert.Equal(t, "a claim", content)
 }
 
 // liveBase opens a database the way the application does and leaves it open,
@@ -62,24 +48,19 @@ func TestCreateCarriesTheDatabaseAndAManifest(t *testing.T) {
 func liveBase(ctx context.Context, t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "live.db"))
-	if err != nil {
-		t.Fatalf("open the live base: %v", err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.ExecContext(ctx,
+	_, err = db.ExecContext(ctx,
 		`INSERT INTO blocks (id, parent_id, position, content, created_at, updated_at)
-		 VALUES ('b1', NULL, 1, 'a claim', '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')`); err != nil {
-		t.Fatalf("seed the live base: %v", err)
-	}
+		 VALUES ('b1', NULL, 1, 'a claim', '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')`)
+	require.NoError(t, err, "seed the live base")
 	return db
 }
 
 func readArchive(t *testing.T, path string) (backup.Manifest, []byte) {
 	t.Helper()
 	r, err := zip.OpenReader(path)
-	if err != nil {
-		t.Fatalf("open the archive: %v", err)
-	}
+	require.NoError(t, err)
 	defer r.Close()
 
 	var m backup.Manifest
@@ -88,36 +69,26 @@ func readArchive(t *testing.T, path string) (backup.Manifest, []byte) {
 		b := readEntry(t, f)
 		switch f.Name {
 		case "manifest.json":
-			if err := json.Unmarshal(b, &m); err != nil {
-				t.Fatalf("decode the manifest: %v", err)
-			}
+			require.NoError(t, json.Unmarshal(b, &m), "decode the manifest")
 		case "comind.db":
 			dbBytes = b
 		}
 	}
-	if dbBytes == nil {
-		t.Fatal("the archive carries no comind.db entry")
-	}
+	require.NotNil(t, dbBytes, "the archive carries no comind.db entry")
 	return m, dbBytes
 }
 
 func readEntry(t *testing.T, f *zip.File) []byte {
 	t.Helper()
 	rc, err := f.Open()
-	if err != nil {
-		t.Fatalf("open %s: %v", f.Name, err)
-	}
+	require.NoError(t, err, f.Name)
 	defer rc.Close()
 	b, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read %s: %v", f.Name, err)
-	}
+	require.NoError(t, err, f.Name)
 	return b
 }
 
 func writeFile(t *testing.T, path string, b []byte) {
 	t.Helper()
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	require.NoError(t, os.WriteFile(path, b, 0o600))
 }

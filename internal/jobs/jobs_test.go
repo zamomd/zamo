@@ -2,11 +2,12 @@ package jobs_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/cominddev/comind/internal/jobs"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newRegistry issues the IDs a, b, c… and a clock that advances one second
@@ -27,14 +28,13 @@ func TestStartListsTheJobUntilDone(t *testing.T) {
 	r := newRegistry(t.Context())
 
 	_, done := r.Start(t.Context(), jobs.KindGeneration)
-	if got := r.Running(); len(got) != 1 || got[0].ID != "a" || got[0].Kind != jobs.KindGeneration {
-		t.Fatalf("Running() = %+v, want one generation job with ID a", got)
-	}
+	got := r.Running()
+	require.Len(t, got, 1)
+	require.Equal(t, "a", got[0].ID)
+	require.Equal(t, jobs.KindGeneration, got[0].Kind)
 
 	done()
-	if got := r.Running(); len(got) != 0 {
-		t.Fatalf("Running() after done = %+v, want none", got)
-	}
+	require.Empty(t, r.Running())
 }
 
 func TestCancelEndsTheJobContext(t *testing.T) {
@@ -42,15 +42,9 @@ func TestCancelEndsTheJobContext(t *testing.T) {
 	ctx, done := r.Start(t.Context(), jobs.KindGeneration)
 	defer done()
 
-	if !r.Cancel("a") {
-		t.Fatal("Cancel(a) = false, want true for a running job")
-	}
-	if !errors.Is(ctx.Err(), context.Canceled) {
-		t.Fatalf("ctx.Err() = %v, want Canceled", ctx.Err())
-	}
-	if r.Cancel("zzz") {
-		t.Fatal("Cancel of an unknown ID = true, want false")
-	}
+	require.True(t, r.Cancel("a"), "Cancel of a running job")
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.False(t, r.Cancel("zzz"), "Cancel of an unknown ID")
 }
 
 func TestCancelKindOnlyTouchesThatKind(t *testing.T) {
@@ -60,15 +54,9 @@ func TestCancelKindOnlyTouchesThatKind(t *testing.T) {
 	other, doneOther := r.Start(t.Context(), jobs.Kind("export"))
 	defer doneOther()
 
-	if n := r.CancelKind(jobs.KindGeneration); n != 1 {
-		t.Fatalf("CancelKind = %d, want 1", n)
-	}
-	if gen.Err() == nil {
-		t.Fatal("generation context still alive after CancelKind")
-	}
-	if other.Err() != nil {
-		t.Fatalf("export context ended: %v", other.Err())
-	}
+	require.Equal(t, 1, r.CancelKind(jobs.KindGeneration))
+	require.Error(t, gen.Err(), "generation context still alive after CancelKind")
+	require.NoError(t, other.Err(), "export context ended")
 }
 
 func TestRootShutdownCancelsEveryJob(t *testing.T) {
@@ -82,7 +70,7 @@ func TestRootShutdownCancelsEveryJob(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		t.Fatal("job context did not end with the root context")
+		require.FailNow(t, "job context did not end with the root context")
 	}
 }
 
@@ -94,9 +82,7 @@ func TestParentCancellationEndsTheJob(t *testing.T) {
 
 	cancel()
 
-	if ctx.Err() == nil {
-		t.Fatal("job context outlived its parent")
-	}
+	require.Error(t, ctx.Err(), "job context outlived its parent")
 }
 
 func TestRunningIsOldestFirst(t *testing.T) {
@@ -107,7 +93,7 @@ func TestRunningIsOldestFirst(t *testing.T) {
 	defer done2()
 
 	got := r.Running()
-	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
-		t.Fatalf("Running() = %+v, want a then b", got)
-	}
+	require.Len(t, got, 2)
+	assert.Equal(t, "a", got[0].ID)
+	assert.Equal(t, "b", got[1].ID)
 }

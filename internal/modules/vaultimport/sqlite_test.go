@@ -14,6 +14,8 @@ import (
 	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
 	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/cominddev/comind/internal/ulid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // openService assembles the domain over a fresh sqlite base, as main.go
@@ -22,9 +24,7 @@ import (
 func openService(t *testing.T) *knowledge.Service {
 	t.Helper()
 	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "comind.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 	return knowledge.NewService(llm.NewHolder(nil), sqlite.NewRepo(db, time.Now, newID), newID)
@@ -37,80 +37,56 @@ func TestImportLogseqGraphEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	plan, err := m.Preview(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Pages != 8 || len(plan.Conflicts) != 0 {
-		t.Fatalf("plan = %+v", plan)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 8, plan.Pages)
+	require.Empty(t, plan.Conflicts)
 	res, err := m.Apply(ctx, plan.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Pages != 8 {
-		t.Errorf("result = %+v", res)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 8, res.Pages)
 
 	topics, err := svc.TopicMap(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	byName := map[string]knowledge.Block{}
 	for _, b := range topics {
 		if b.IsTopic() {
 			byName[knowledge.TopicName(b.Content)] = b
 		}
 	}
-	if len(byName) != 8 {
-		t.Fatalf("topics = %v, want 8", byName)
-	}
+	require.Len(t, byName, 8)
 
 	sub, err := svc.GetSubtree(ctx, byName["Go"].ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var contexts knowledge.Block
 	for _, b := range sub {
 		if strings.HasPrefix(b.Content, "Contexts") {
 			contexts = b
 		}
-		if b.Unreviewed {
-			t.Errorf("block %q awaits review; an import is born reviewed", b.Content)
-		}
+		assert.False(t, b.Unreviewed, "block %q awaits review; an import is born reviewed", b.Content)
 	}
-	if contexts.ID == "" || contexts.ParentID == byName["Go"].ID || contexts.ParentID == "" {
-		t.Fatalf("Contexts block = %+v, want a grandchild of the Go root", contexts)
-	}
+	require.NotEmpty(t, contexts.ID, "want a Contexts block")
+	require.NotEmpty(t, contexts.ParentID, "want a grandchild of the Go root")
+	require.NotEqual(t, byName["Go"].ID, contexts.ParentID, "want a grandchild of the Go root")
 
 	back, err := svc.Backlinks(ctx, contexts.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(back) != 1 || back[0].TopicID != byName["Refs"].ID {
-		t.Fatalf("backlinks to Contexts = %+v, want one from the Refs page", back)
-	}
-	if !strings.Contains(back[0].Block.Content, "(("+string(contexts.ID)+"|Contexts))") {
-		t.Errorf("Refs content = %q, want a resolved block reference", back[0].Block.Content)
-	}
+	require.NoError(t, err)
+	require.Len(t, back, 1)
+	require.Equal(t, byName["Refs"].ID, back[0].TopicID, "want the backlink from the Refs page")
+	assert.Contains(t, back[0].Block.Content, "(("+string(contexts.ID)+"|Contexts))", "want a resolved block reference")
 
-	if _, err := m.Apply(ctx, plan.Token); err == nil {
-		t.Error("a second apply of a spent preview must fail")
-	}
+	_, err = m.Apply(ctx, plan.Token)
+	assert.Error(t, err, "a second apply of a spent preview must fail")
 }
 
 func TestImportObsidianVaultSkipsWhatTheBaseAlreadyHas(t *testing.T) {
 	svc := openService(t)
 	ctx := context.Background()
-	if _, err := svc.CreateTopic(ctx, "Notes", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err := svc.CreateTopic(ctx, "Notes", "")
+	require.NoError(t, err)
 	m := vaultimport.New(svc, svc, obsidian.Adapter{}, logseq.Adapter{})
 	vaultimport.SetPicker(m, fakePicker{answer: "testdata/obsidian"})
 
 	plan, err := m.Preview(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	kinds := map[string]string{}
 	for _, c := range plan.Conflicts {
 		kinds[c.Page] = c.Kind
@@ -120,31 +96,20 @@ func TestImportObsidianVaultSkipsWhatTheBaseAlreadyHas(t *testing.T) {
 		"Go":           vaultimport.ConflictDuplicate, // archive/go.md comes first by path
 		"Weird [name]": vaultimport.ConflictUnnamed,
 	}
-	if len(kinds) != len(want) {
-		t.Fatalf("conflicts = %v, want %v", kinds, want)
-	}
+	require.Len(t, kinds, len(want), "conflicts = %v, want %v", kinds, want)
 	for page, kind := range want {
-		if kinds[page] != kind {
-			t.Errorf("conflict for %q = %q, want %q", page, kinds[page], kind)
-		}
+		assert.Equal(t, kind, kinds[page], "conflict for %q", page)
 	}
-	if plan.Pages != 2 {
-		t.Errorf("Pages = %d, want Home and go", plan.Pages)
-	}
-	if _, err := m.Apply(ctx, plan.Token); err != nil {
-		t.Fatal(err)
-	}
+	assert.Equal(t, 2, plan.Pages, "want Home and go")
+	_, err = m.Apply(ctx, plan.Token)
+	require.NoError(t, err)
 	topics, err := svc.TopicMap(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	n := 0
 	for _, b := range topics {
 		if b.IsTopic() {
 			n++
 		}
 	}
-	if n != 3 {
-		t.Errorf("topics = %d, want Notes plus the two imported", n)
-	}
+	assert.Equal(t, 3, n, "want Notes plus the two imported")
 }

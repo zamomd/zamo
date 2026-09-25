@@ -1,6 +1,10 @@
 package logseq
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestJournalDate(t *testing.T) {
 	cases := []struct {
@@ -17,12 +21,11 @@ func TestJournalDate(t *testing.T) {
 	}
 	for _, c := range cases {
 		d, ok := journalDate(c.file, c.format)
-		if ok != c.ok {
-			t.Errorf("journalDate(%q, %q) ok = %v, want %v", c.file, c.format, ok, c.ok)
+		if !assert.Equal(t, c.ok, ok, "journalDate(%q, %q) ok", c.file, c.format) {
 			continue
 		}
-		if ok && d.Format("2006-01-02") != c.want {
-			t.Errorf("journalDate(%q, %q) = %s, want %s", c.file, c.format, d.Format("2006-01-02"), c.want)
+		if ok {
+			assert.Equal(t, c.want, d.Format("2006-01-02"), "journalDate(%q, %q)", c.file, c.format)
 		}
 	}
 }
@@ -39,18 +42,12 @@ func TestFormatDate(t *testing.T) {
 		{"do MMM yy", "5th Jan 24"},
 	}
 	for _, c := range cases {
-		if got := formatDate(d, c.pattern); got != c.want {
-			t.Errorf("formatDate(%q) = %q, want %q", c.pattern, got, c.want)
-		}
+		assert.Equal(t, c.want, formatDate(d, c.pattern), "formatDate(%q)", c.pattern)
 	}
 	d, _ = journalDate("2024_03_22", "yyyy_MM_dd")
-	if got := formatDate(d, "do"); got != "22nd" {
-		t.Errorf("22 → %q", got)
-	}
+	assert.Equal(t, "22nd", formatDate(d, "do"))
 	d, _ = journalDate("2024_03_13", "yyyy_MM_dd")
-	if got := formatDate(d, "do"); got != "13th" {
-		t.Errorf("13 → %q", got)
-	}
+	assert.Equal(t, "13th", formatDate(d, "do"))
 }
 
 func TestReadConfig(t *testing.T) {
@@ -73,9 +70,7 @@ func TestReadConfig(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := parseConfig(c.edn); got != c.want {
-			t.Errorf("%s: parseConfig = %+v, want %+v", c.name, got, c.want)
-		}
+		assert.Equal(t, c.want, parseConfig(c.edn), c.name)
 	}
 }
 
@@ -95,8 +90,6 @@ func TestPageNameByFormat(t *testing.T) {
 		{"lang___go", nameLegacy, "lang___go"},
 	}
 	for _, c := range cases {
-		if got := decodeName(c.base, c.format); got != c.want {
-			t.Errorf("decodeName(%q, %v) = %q, want %q", c.base, c.format, got, c.want)
-		}
+		assert.Equal(t, c.want, decodeName(c.base, c.format), "decodeName(%q, %v)", c.base, c.format)
 	}
 }

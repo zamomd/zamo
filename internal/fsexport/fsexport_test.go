@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriterWritesEachFileToDisk(t *testing.T) {
@@ -15,17 +17,11 @@ func TestWriterWritesEachFileToDisk(t *testing.T) {
 		{Name: "alpha.md", Content: "- # Alpha\n"},
 		{Name: "beta.md", Content: "- # Beta\n"},
 	}
-	if err := (Writer{}).WriteFiles(t.Context(), dir, files); err != nil {
-		t.Fatalf("WriteFiles: %v", err)
-	}
+	require.NoError(t, (Writer{}).WriteFiles(t.Context(), dir, files))
 	for _, f := range files {
 		got, err := os.ReadFile(filepath.Join(dir, f.Name))
-		if err != nil {
-			t.Fatalf("read %s: %v", f.Name, err)
-		}
-		if string(got) != f.Content {
-			t.Errorf("%s = %q, want %q", f.Name, got, f.Content)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, f.Content, string(got), f.Name)
 	}
 }
 
@@ -34,18 +30,13 @@ func TestWriterHonoursCancellation(t *testing.T) {
 	cancel()
 	dir := t.TempDir()
 	err := (Writer{}).WriteFiles(ctx, dir, []knowledge.ExportFile{{Name: "a.md", Content: "x"}})
-	if err == nil {
-		t.Fatal("WriteFiles on a cancelled context returned nil, want the cancellation error")
-	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-		t.Errorf("wrote %d files under a cancelled context, want 0", len(entries))
-	}
+	require.Error(t, err)
+	entries, _ := os.ReadDir(dir)
+	assert.Empty(t, entries, "wrote files under a cancelled context")
 }
 
 func TestWriterSurfacesWriteError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
 	err := (Writer{}).WriteFiles(t.Context(), dir, []knowledge.ExportFile{{Name: "a.md", Content: "x"}})
-	if err == nil {
-		t.Fatal("WriteFiles into a missing directory returned nil, want the write error")
-	}
+	require.Error(t, err)
 }

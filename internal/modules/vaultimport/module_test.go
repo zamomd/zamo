@@ -7,6 +7,8 @@ import (
 
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/modules/vaultimport"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeBase struct {
@@ -76,106 +78,79 @@ func newModule(t *testing.T, dir string, writer *fakeWriter, adapters ...vaultim
 func TestPreviewCancelledReturnsNoPlan(t *testing.T) {
 	m := newModule(t, "", &fakeWriter{}, fakeAdapter{detect: true})
 	p, err := m.Preview(t.Context())
-	if err != nil || p.Token != "" {
-		t.Fatalf("Preview = %+v, %v; want an empty plan and no error", p, err)
-	}
+	require.NoError(t, err)
+	require.Empty(t, p.Token)
 }
 
 func TestPreviewRefusesADirectoryNoAdapterKnows(t *testing.T) {
 	m := newModule(t, "/vault", &fakeWriter{}, fakeAdapter{detect: false})
-	if _, err := m.Preview(t.Context()); !errors.Is(err, vaultimport.ErrUnknownFormat) {
-		t.Fatalf("Preview error = %v, want ErrUnknownFormat", err)
-	}
+	_, err := m.Preview(t.Context())
+	require.ErrorIs(t, err, vaultimport.ErrUnknownFormat)
 }
 
 func TestPreviewThenApplyWritesOneOwnerBatch(t *testing.T) {
 	w := &fakeWriter{}
 	m := newModule(t, "/vault", w, fakeAdapter{format: "Obsidian vault", detect: true, vault: twoPages()})
 	p, err := m.Preview(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Token == "" || p.Dir != "/vault" || p.Pages != 2 || p.Links != 1 {
-		t.Fatalf("plan = %+v", p)
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, p.Token)
+	require.Equal(t, "/vault", p.Dir)
+	require.Equal(t, 2, p.Pages)
+	require.Equal(t, 1, p.Links)
 	res, err := m.Apply(t.Context(), p.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.GroupID != "G1" || res.Pages != 2 || res.Blocks != 2 {
-		t.Errorf("result = %+v", res)
-	}
-	if w.calls != 1 || len(w.ops) != 2 {
-		t.Fatalf("writer got %d calls with %d ops, want one call with two ops", w.calls, len(w.ops))
-	}
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.ID("G1"), res.GroupID)
+	assert.Equal(t, 2, res.Pages)
+	assert.Equal(t, 2, res.Blocks)
+	require.Equal(t, 1, w.calls, "writer calls")
+	require.Len(t, w.ops, 2)
 	want := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: "import", Title: "Import Obsidian vault: 2 pages"}
-	if w.meta != want {
-		t.Errorf("meta = %+v, want %+v", w.meta, want)
-	}
-	if !w.meta.BornReviewed() {
-		t.Error("an import must be born reviewed")
-	}
-	if _, err := m.Apply(t.Context(), p.Token); !errors.Is(err, vaultimport.ErrStalePreview) {
-		t.Errorf("second Apply error = %v, want ErrStalePreview: the slot is spent", err)
-	}
+	assert.Equal(t, want, w.meta)
+	assert.True(t, w.meta.BornReviewed(), "an import must be born reviewed")
+	_, err = m.Apply(t.Context(), p.Token)
+	assert.ErrorIs(t, err, vaultimport.ErrStalePreview, "second Apply: the slot is spent")
 }
 
 func TestApplyRefusesAStaleToken(t *testing.T) {
 	w := &fakeWriter{}
 	m := newModule(t, "/vault", w, fakeAdapter{format: "Obsidian vault", detect: true, vault: twoPages()})
 	p, _ := m.Preview(t.Context())
-	if _, err := m.Apply(t.Context(), "nope"); !errors.Is(err, vaultimport.ErrStalePreview) {
-		t.Fatalf("Apply error = %v, want ErrStalePreview", err)
-	}
-	if w.calls != 0 {
-		t.Fatal("a stale token must write nothing")
-	}
-	if _, err := m.Apply(t.Context(), p.Token); err != nil {
-		t.Fatalf("the slot must survive a stale apply: %v", err)
-	}
+	_, err := m.Apply(t.Context(), "nope")
+	require.ErrorIs(t, err, vaultimport.ErrStalePreview)
+	require.Zero(t, w.calls, "a stale token must write nothing")
+	_, err = m.Apply(t.Context(), p.Token)
+	require.NoError(t, err, "the slot must survive a stale apply")
 }
 
 func TestDiscardDropsThePlan(t *testing.T) {
 	w := &fakeWriter{}
 	m := newModule(t, "/vault", w, fakeAdapter{format: "Obsidian vault", detect: true, vault: twoPages()})
 	p, _ := m.Preview(t.Context())
-	if err := m.Discard(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Apply(t.Context(), p.Token); !errors.Is(err, vaultimport.ErrStalePreview) {
-		t.Fatalf("Apply after Discard = %v, want ErrStalePreview", err)
-	}
-	if w.calls != 0 {
-		t.Fatal("nothing may be written after a discard")
-	}
+	require.NoError(t, m.Discard(t.Context()))
+	_, err := m.Apply(t.Context(), p.Token)
+	require.ErrorIs(t, err, vaultimport.ErrStalePreview, "Apply after Discard")
+	require.Zero(t, w.calls, "nothing may be written after a discard")
 }
 
 func TestApplyKeepsThePlanWhenTheBaseChangedMeanwhile(t *testing.T) {
 	w := &fakeWriter{err: knowledge.ErrDuplicateTopic}
 	m := newModule(t, "/vault", w, fakeAdapter{format: "Obsidian vault", detect: true, vault: twoPages()})
 	p, _ := m.Preview(t.Context())
-	if _, err := m.Apply(t.Context(), p.Token); !errors.Is(err, knowledge.ErrDuplicateTopic) {
-		t.Fatalf("Apply error = %v, want ErrDuplicateTopic wrapped", err)
-	}
+	_, err := m.Apply(t.Context(), p.Token)
+	require.ErrorIs(t, err, knowledge.ErrDuplicateTopic)
 	w.err = nil
-	if _, err := m.Apply(t.Context(), p.Token); err != nil {
-		t.Fatalf("the plan must survive a refused write: %v", err)
-	}
+	_, err = m.Apply(t.Context(), p.Token)
+	require.NoError(t, err, "the plan must survive a refused write")
 }
 
 func TestApplyRefusesAnEmptyPlan(t *testing.T) {
 	w := &fakeWriter{}
 	m := newModule(t, "/vault", w, fakeAdapter{format: "Obsidian vault", detect: true})
 	p, err := m.Preview(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Apply(t.Context(), p.Token); !errors.Is(err, vaultimport.ErrNothingToImport) {
-		t.Fatalf("Apply error = %v, want ErrNothingToImport", err)
-	}
-	if w.calls != 0 {
-		t.Fatal("an empty plan must write nothing")
-	}
+	require.NoError(t, err)
+	_, err = m.Apply(t.Context(), p.Token)
+	require.ErrorIs(t, err, vaultimport.ErrNothingToImport)
+	require.Zero(t, w.calls, "an empty plan must write nothing")
 }
 
 func TestPreviewSkipsPagesAlreadyInTheBase(t *testing.T) {
@@ -183,23 +158,19 @@ func TestPreviewSkipsPagesAlreadyInTheBase(t *testing.T) {
 		fakeAdapter{format: "Obsidian vault", detect: true, vault: twoPages()})
 	vaultimport.SetPicker(m, fakePicker{answer: "/vault"})
 	p, err := m.Preview(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Pages != 1 || len(p.Conflicts) != 1 || p.Conflicts[0].Kind != vaultimport.ConflictExists {
-		t.Fatalf("plan = %+v, want Go skipped as existing", p)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 1, p.Pages)
+	require.Len(t, p.Conflicts, 1)
+	require.Equal(t, vaultimport.ConflictExists, p.Conflicts[0].Kind, "want Go skipped as existing")
 }
 
 func TestPreviewReportsAdapterAndBaseFailures(t *testing.T) {
 	boom := errors.New("boom")
 	m := newModule(t, "/vault", &fakeWriter{}, fakeAdapter{detect: true, err: boom})
-	if _, err := m.Preview(t.Context()); !errors.Is(err, boom) {
-		t.Errorf("adapter failure: Preview error = %v", err)
-	}
+	_, err := m.Preview(t.Context())
+	require.ErrorIs(t, err, boom, "adapter failure")
 	m = vaultimport.New(&fakeBase{err: boom}, &fakeWriter{}, fakeAdapter{detect: true})
 	vaultimport.SetPicker(m, fakePicker{answer: "/vault"})
-	if _, err := m.Preview(t.Context()); !errors.Is(err, boom) {
-		t.Errorf("base failure: Preview error = %v", err)
-	}
+	_, err = m.Preview(t.Context())
+	assert.ErrorIs(t, err, boom, "base failure")
 }

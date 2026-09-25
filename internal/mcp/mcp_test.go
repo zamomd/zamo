@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
@@ -69,15 +70,11 @@ func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 	ctx := t.Context()
 	st, ct := mcpsdk.NewInMemoryTransports()
 	ss, err := srv.mcpServer().Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
+	require.NoError(t, err, "server connect")
 	t.Cleanup(func() { _ = ss.Close() })
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "v0"}, nil)
 	cs, err := client.Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
+	require.NoError(t, err, "client connect")
 	t.Cleanup(func() { _ = cs.Close() })
 	return cs
 }
@@ -87,9 +84,8 @@ func TestHandshakeReportsInjectedVersion(t *testing.T) {
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	got := cs.InitializeResult().ServerInfo
-	if got.Name != serverName || got.Version != testVersion {
-		t.Errorf("handshake identity = %s %s, want %s %s", got.Name, got.Version, serverName, testVersion)
-	}
+	assert.Equal(t, serverName, got.Name)
+	assert.Equal(t, testVersion, got.Version)
 }
 
 func TestWriteBlocksAppliesImmediately(t *testing.T) {
@@ -109,41 +105,23 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
-	}
-	if fake.writeCalls != 1 {
-		t.Fatalf("ApplyOps called %d times, want 1", fake.writeCalls)
-	}
-	if fake.writeMeta.Author != knowledge.AuthorAI {
-		t.Errorf("Author = %q, want ai", fake.writeMeta.Author)
-	}
-	if fake.writeMeta.Source != knowledge.SourceMCP {
-		t.Errorf("Source = %q, want mcp", fake.writeMeta.Source)
-	}
-	if fake.writeMeta.Title != "Contexts in Go" {
-		t.Errorf("Title = %q, want the given title", fake.writeMeta.Title)
-	}
-	if len(fake.writeOps) != 2 || fake.writeOps[0].Kind != knowledge.OpAdd || fake.writeOps[0].TempID != "t1" {
-		t.Errorf("ops not forwarded intact: %+v", fake.writeOps)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "write_blocks reported a tool error: %+v", res.Content)
+	require.Equal(t, 1, fake.writeCalls, "ApplyOps calls")
+	assert.Equal(t, knowledge.AuthorAI, fake.writeMeta.Author)
+	assert.Equal(t, knowledge.SourceMCP, fake.writeMeta.Source)
+	assert.Equal(t, "Contexts in Go", fake.writeMeta.Title)
+	require.Len(t, fake.writeOps, 2)
+	assert.Equal(t, knowledge.OpAdd, fake.writeOps[0].Kind)
+	assert.Equal(t, "t1", fake.writeOps[0].TempID)
 	for _, op := range fake.writeOps {
-		if op.Origin != "mcp" {
-			t.Errorf("Origin = %q, want mcp on every op", op.Origin)
-		}
+		assert.Equal(t, "mcp", op.Origin, "on every op")
 	}
 	var out writeOutput
 	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode output: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &out))
 	want := writeOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
-	if diff := cmp.Diff(want, out); diff != "" {
-		t.Errorf("output mismatch (-want +got):\n%s", diff)
-	}
+	assert.Equal(t, want, out)
 }
 
 func TestWriteStampsOriginServerSide(t *testing.T) {
@@ -162,21 +140,11 @@ func TestWriteStampsOriginServerSide(t *testing.T) {
 			}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
-	}
-	if len(fake.writeOps) != 1 {
-		t.Fatalf("ops not forwarded: %+v", fake.writeOps)
-	}
-	if got := fake.writeOps[0].Origin; got != "mcp" {
-		t.Errorf("Origin = %q, want the server's fixed mcp marker (client cannot forge provenance)", got)
-	}
-	if got := fake.writeOps[0].Rationale; got != "the topic lacks a root" {
-		t.Errorf("Rationale = %q, want the client's rationale preserved", got)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "write_blocks reported a tool error: %+v", res.Content)
+	require.Len(t, fake.writeOps, 1)
+	assert.Equal(t, "mcp", fake.writeOps[0].Origin, "client cannot forge provenance")
+	assert.Equal(t, "the topic lacks a root", fake.writeOps[0].Rationale)
 }
 
 func TestWriteRejectsForgedOrigin(t *testing.T) {
@@ -190,15 +158,9 @@ func TestWriteRejectsForgedOrigin(t *testing.T) {
 			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "origin": "gui_edit"}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if !res.IsError {
-		t.Fatal("a client-supplied origin must be rejected as a tool error")
-	}
-	if fake.writeOps != nil {
-		t.Errorf("no write must be applied on a rejected call, got ops %+v", fake.writeOps)
-	}
+	require.NoError(t, err)
+	require.True(t, res.IsError, "a client-supplied origin must be rejected as a tool error")
+	assert.Nil(t, fake.writeOps, "no write must be applied on a rejected call")
 }
 
 func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
@@ -214,18 +176,10 @@ func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("write_blocks reported a tool error: %+v", res.Content)
-	}
-	if len(fake.writeOps) != 1 {
-		t.Fatalf("ops not forwarded: %+v", fake.writeOps)
-	}
-	if got := fake.writeOps[0].Mode; got != knowledge.ModeDoc {
-		t.Errorf("Mode = %q, want %q", got, knowledge.ModeDoc)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "write_blocks reported a tool error: %+v", res.Content)
+	require.Len(t, fake.writeOps, 1)
+	assert.Equal(t, knowledge.ModeDoc, fake.writeOps[0].Mode)
 }
 
 func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
@@ -241,16 +195,9 @@ func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if !res.IsError {
-		t.Fatal("write_blocks accepted a child under a document")
-	}
-	text := contentText(t, res)
-	if !strings.Contains(text, "edit its root content instead of adding children") {
-		t.Errorf("error text = %q, want it to name the write that would work", text)
-	}
+	require.NoError(t, err)
+	require.True(t, res.IsError, "write_blocks accepted a child under a document")
+	assert.Contains(t, contentText(t, res), "edit its root content instead of adding children")
 }
 
 func TestWriteBlocksReportsNoStructuredContentOnFailure(t *testing.T) {
@@ -264,16 +211,10 @@ func TestWriteBlocksReportsNoStructuredContentOnFailure(t *testing.T) {
 			"ops":   []map[string]any{{"op": "add", "temp_id": "t1", "content": "x"}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if !res.IsError {
-		t.Fatal("write_blocks must report IsError on a capability failure")
-	}
-	if res.StructuredContent != nil {
-		t.Errorf("StructuredContent = %#v, want nil on a failed write "+
-			"(a client that reads it before IsError must not see a fake empty success)", res.StructuredContent)
-	}
+	require.NoError(t, err)
+	require.True(t, res.IsError, "write_blocks must report IsError on a capability failure")
+	assert.Nil(t, res.StructuredContent,
+		"a client that reads it before IsError must not see a fake empty success")
 }
 
 func TestGetSubtreeReportsTheMode(t *testing.T) {
@@ -286,21 +227,13 @@ func TestGetSubtreeReportsTheMode(t *testing.T) {
 		Name:      "get_subtree",
 		Arguments: map[string]any{"root": "01ROOT"},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("get_subtree reported a tool error: %+v", res.Content)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "get_subtree reported a tool error: %+v", res.Content)
 	var out blocksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode output: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &out))
 	want := blocksOutput{Blocks: []blockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
-	if diff := cmp.Diff(want, out); diff != "" {
-		t.Errorf("output mismatch (-want +got):\n%s", diff)
-	}
+	assert.Equal(t, want, out)
 }
 
 func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
@@ -314,46 +247,30 @@ func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
 		Name:      "get_subtree",
 		Arguments: map[string]any{"root": "01ROOT"},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
+	require.NoError(t, err)
 	raw, _ := json.Marshal(res.StructuredContent)
-	if strings.Count(string(raw), `"mode"`) != 1 {
-		t.Errorf("result = %s, want the mode reported for the root alone", raw)
-	}
+	assert.Equal(t, 1, strings.Count(string(raw), `"mode"`), "result = %s, want the mode reported for the root alone", raw)
 }
 
 func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
-	if err != nil {
-		t.Fatalf("CallTool %s: %v", name, err)
-	}
-	if res.IsError {
-		t.Fatalf("%s reported a tool error: %+v", name, res.Content)
-	}
+	require.NoError(t, err, name)
+	require.False(t, res.IsError, "%s reported a tool error: %+v", name, res.Content)
 	var out blocksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode %s output: %v", name, err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &out), "decode %s output", name)
 	return out
 }
 
 func callSearch(t *testing.T, cs *mcpsdk.ClientSession, args map[string]any) searchOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "search", Arguments: args})
-	if err != nil {
-		t.Fatalf("CallTool search: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("search reported a tool error: %+v", res.Content)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "search reported a tool error: %+v", res.Content)
 	var out searchOutput
 	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode search output: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(raw, &out))
 	return out
 }
 
@@ -377,13 +294,11 @@ func TestSearchTool(t *testing.T) {
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callSearch(t, cs, map[string]any{"query": "context"})
-	if fake.searchQuery != "context" {
-		t.Errorf("query forwarded = %q, want context", fake.searchQuery)
-	}
-	if len(out.Hits) != 1 || out.Hits[0].ID != "01A" || out.Hits[0].Content != "context deadlines" ||
-		out.Hits[0].Snippet != "…context deadlines…" {
-		t.Errorf("search result = %+v, want the block and snippet from the base", out.Hits)
-	}
+	assert.Equal(t, "context", fake.searchQuery)
+	require.Len(t, out.Hits, 1)
+	assert.Equal(t, "01A", out.Hits[0].ID)
+	assert.Equal(t, "context deadlines", out.Hits[0].Content)
+	assert.Equal(t, "…context deadlines…", out.Hits[0].Snippet)
 }
 
 func TestGetSubtreeTool(t *testing.T) {
@@ -394,12 +309,9 @@ func TestGetSubtreeTool(t *testing.T) {
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
-	if fake.subtreeRoot != "01ROOT" {
-		t.Errorf("root forwarded = %q, want 01ROOT", fake.subtreeRoot)
-	}
-	if len(out.Blocks) != 2 || out.Blocks[1].Parent != "01ROOT" {
-		t.Errorf("subtree result = %+v, want the two blocks with parent linkage", out.Blocks)
-	}
+	assert.Equal(t, knowledge.ID("01ROOT"), fake.subtreeRoot)
+	require.Len(t, out.Blocks, 2)
+	assert.Equal(t, "01ROOT", out.Blocks[1].Parent)
 }
 
 func TestTopicMapTool(t *testing.T) {
@@ -407,9 +319,8 @@ func TestTopicMapTool(t *testing.T) {
 	cs := connect(t, NewServer(fake, fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "topic_map", map[string]any{})
-	if len(out.Blocks) != 1 || out.Blocks[0].ID != "01T" {
-		t.Errorf("topic_map result = %+v, want the topic block", out.Blocks)
-	}
+	require.Len(t, out.Blocks, 1)
+	assert.Equal(t, "01T", out.Blocks[0].ID)
 }
 
 func TestBacklinksTool(t *testing.T) {
@@ -429,33 +340,18 @@ func TestBacklinksTool(t *testing.T) {
 		Name:      "get_backlinks",
 		Arguments: map[string]any{"id": "01JT4X9K2M8P0QRSTVWXYZ2340"},
 	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("get_backlinks reported a tool error: %+v", res.Content)
-	}
-	if fake.backlinksID != "01JT4X9K2M8P0QRSTVWXYZ2340" {
-		t.Errorf("id forwarded = %q, want the requested id", fake.backlinksID)
-	}
+	require.NoError(t, err)
+	require.False(t, res.IsError, "get_backlinks reported a tool error: %+v", res.Content)
+	assert.Equal(t, knowledge.ID("01JT4X9K2M8P0QRSTVWXYZ2340"), fake.backlinksID)
 	var out backlinksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("decode get_backlinks output: %v", err)
-	}
-	if len(out.Backlinks) != 1 {
-		t.Fatalf("backlinks = %+v, want exactly one", out.Backlinks)
-	}
+	require.NoError(t, json.Unmarshal(raw, &out))
+	require.Len(t, out.Backlinks, 1)
 	got := out.Backlinks[0]
-	if got.ID != "01JT4X9K2M8P0QRSTVWXYZ2345" {
-		t.Errorf("referencing block id = %q, want 01JT4X9K2M8P0QRSTVWXYZ2345", got.ID)
-	}
-	if !strings.Contains(got.Content, "contexts") {
-		t.Errorf("content = %q, want the referencing block's own content", got.Content)
-	}
-	if got.TopicID != "01JT4X9K2M8P0QRSTVWXYZ2346" || got.TopicTitle != "Go" {
-		t.Errorf("topic = %+v, want the topic the referencing block lives under", got)
-	}
+	assert.Equal(t, "01JT4X9K2M8P0QRSTVWXYZ2345", got.ID)
+	assert.Contains(t, got.Content, "contexts", "want the referencing block's own content")
+	assert.Equal(t, "01JT4X9K2M8P0QRSTVWXYZ2346", got.TopicID)
+	assert.Equal(t, "Go", got.TopicTitle)
 }
 
 func TestToolSurface(t *testing.T) {
@@ -464,22 +360,14 @@ func TestToolSurface(t *testing.T) {
 
 	got := map[string]bool{}
 	for tool, err := range cs.Tools(t.Context(), nil) {
-		if err != nil {
-			t.Fatalf("list tools: %v", err)
-		}
-		if tool.Description == "" {
-			t.Errorf("tool %q has no description", tool.Name)
-		}
+		require.NoError(t, err, "list tools")
+		assert.NotEmpty(t, tool.Description, "tool %q has no description", tool.Name)
 		got[tool.Name] = true
 	}
 	want := []string{"write_blocks", "search", "get_subtree", "topic_map", "get_backlinks"}
-	if len(got) != len(want) {
-		t.Errorf("tools = %v, want exactly %v (no extra write tools)", got, want)
-	}
+	assert.Len(t, got, len(want), "tools = %v, want exactly %v (no extra write tools)", got, want)
 	for _, name := range want {
-		if !got[name] {
-			t.Errorf("missing tool %q", name)
-		}
+		assert.True(t, got[name], "missing tool %q", name)
 	}
 }
 
@@ -494,15 +382,12 @@ func TestReadToolsNeverWrite(t *testing.T) {
 	callSearch(t, cs, map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	callBlocks(t, cs, "topic_map", map[string]any{})
-	if _, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
+	_, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "get_backlinks", Arguments: map[string]any{"id": "01T"},
-	}); err != nil {
-		t.Fatalf("CallTool get_backlinks: %v", err)
-	}
+	})
+	require.NoError(t, err)
 
-	if fake.writeCalls != 0 {
-		t.Errorf("read tools called ApplyOps %d times, want 0", fake.writeCalls)
-	}
+	assert.Zero(t, fake.writeCalls, "read tools called ApplyOps")
 }
 
 func TestToolSurfacesDomainError(t *testing.T) {
@@ -524,12 +409,8 @@ func TestToolSurfacesDomainError(t *testing.T) {
 		t.Run(tc.tool, func(t *testing.T) {
 			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake, testVersion))
 			res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tc.tool, Arguments: tc.args})
-			if err != nil {
-				t.Fatalf("unexpected transport error: %v", err)
-			}
-			if !res.IsError {
-				t.Errorf("%s must report IsError on a capability failure", tc.tool)
-			}
+			require.NoError(t, err, "unexpected transport error")
+			assert.True(t, res.IsError, "%s must report IsError on a capability failure", tc.tool)
 		})
 	}
 }

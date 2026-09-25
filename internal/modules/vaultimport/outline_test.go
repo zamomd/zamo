@@ -1,8 +1,9 @@
 package vaultimport
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseOutlineBuildsATreeFromIndentation(t *testing.T) {
@@ -56,11 +57,7 @@ func TestParseOutlineBuildsATreeFromIndentation(t *testing.T) {
 	}
 	for _, c := range cases {
 		preamble, got := ParseOutline(c.raw)
-		if preamble != c.preamble {
-			t.Errorf("%s: preamble = %q, want %q", c.name, preamble, c.preamble)
-		}
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: nodes = %#v\nwant %#v", c.name, got, c.want)
-		}
+		assert.Equal(t, c.preamble, preamble, c.name)
+		assert.Equal(t, c.want, got, c.name)
 	}
 }

@@ -4,7 +4,6 @@ go 1.27
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/google/go-cmp v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/stretchr/testify v1.12.1
 	github.com/wailsapp/wails/v3 v3.0.0-beta.24

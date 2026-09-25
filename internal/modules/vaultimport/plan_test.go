@@ -1,8 +1,10 @@
 package vaultimport
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cominddev/comind/internal/knowledge"
 )
@@ -57,15 +59,9 @@ func TestPlanSkipsPagesItCannotName(t *testing.T) {
 		"Inbox":        ConflictExists,
 		"go":           ConflictDuplicate,
 	}
-	if got := conflictKinds(p); !reflect.DeepEqual(got, want) {
-		t.Errorf("conflicts = %v, want %v", got, want)
-	}
-	if p.Pages != 2 {
-		t.Errorf("Pages = %d, want 2 (Go and Fine)", p.Pages)
-	}
-	if len(p.ops) != 2 {
-		t.Errorf("ops = %d, want one root per imported page", len(p.ops))
-	}
+	assert.Equal(t, want, conflictKinds(p))
+	assert.Equal(t, 2, p.Pages, "Go and Fine")
+	assert.Len(t, p.ops, 2, "want one root per imported page")
 }
 
 func TestPlanBuildsAnOutlineWithChainedAnchors(t *testing.T) {
@@ -81,12 +77,8 @@ func TestPlanBuildsAnOutlineWithChainedAnchors(t *testing.T) {
 		{Kind: knowledge.OpAdd, TempID: "p0.0.1", Parent: "p0.0", After: "p0.0.0", Content: "child b"},
 		{Kind: knowledge.OpAdd, TempID: "p0.1", Parent: "p0", After: "p0.0", Content: "second"},
 	}
-	if !reflect.DeepEqual(p.ops, want) {
-		t.Errorf("ops = %#v\nwant %#v", p.ops, want)
-	}
-	if p.Blocks != 5 {
-		t.Errorf("Blocks = %d, want 5", p.Blocks)
-	}
+	assert.Equal(t, want, p.ops)
+	assert.Equal(t, 5, p.Blocks)
 }
 
 func TestPlanBuildsADocumentBehindItsName(t *testing.T) {
@@ -104,9 +96,7 @@ func TestPlanBuildsADocumentBehindItsName(t *testing.T) {
 		{Kind: knowledge.OpAdd, TempID: "p1", Content: "# Home\n\nWelcome.", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpAdd, TempID: "p2", Content: "Empty", Mode: knowledge.ModeDoc},
 	}
-	if !reflect.DeepEqual(p.ops, want) {
-		t.Errorf("ops = %#v\nwant %#v", p.ops, want)
-	}
+	assert.Equal(t, want, p.ops)
 }
 
 func TestPlanReportsBrokenLinksAndCountsResolvedOnes(t *testing.T) {
@@ -116,15 +106,10 @@ func TestPlanReportsBrokenLinksAndCountsResolvedOnes(t *testing.T) {
 		docPage("Inbox", "skipped but its topic exists"),
 	}}
 	p := plan(v, existing("Inbox"))
-	if got := warnKinds(p); !reflect.DeepEqual(got, []string{WarnBrokenLink}) {
-		t.Errorf("warnings = %v, want one broken-link (deduplicated by key)", p.Warnings)
-	}
-	if p.Warnings[0].Page != "A" || p.Warnings[0].Detail != "[[Nowhere]]" {
-		t.Errorf("warning = %+v, want page A about [[Nowhere]]", p.Warnings[0])
-	}
-	if p.Links != 3 {
-		t.Errorf("Links = %d, want 3 (A→B, A→Inbox, B→A)", p.Links)
-	}
+	require.Equal(t, []string{WarnBrokenLink}, warnKinds(p), "want one broken-link (deduplicated by key)")
+	assert.Equal(t, "A", p.Warnings[0].Page)
+	assert.Equal(t, "[[Nowhere]]", p.Warnings[0].Detail)
+	assert.Equal(t, 3, p.Links, "A→B, A→Inbox, B→A")
 }
 
 func TestPlanResolvesBlockReferencesToTempIDs(t *testing.T) {
@@ -135,45 +120,32 @@ func TestPlanResolvesBlockReferencesToTempIDs(t *testing.T) {
 		outlinePage("Refs", n("see ((ref:64f1-0001)) and ((ref:dead|gone))")),
 	}}
 	p := plan(v, nil)
-	got := p.ops[len(p.ops)-1].Content
-	if want := "see ((p0.0.0|Contexts)) and ((dead|gone))"; got != want {
-		t.Errorf("content = %q, want %q", got, want)
-	}
-	if kinds := warnKinds(p); !reflect.DeepEqual(kinds, []string{WarnBrokenBlockRef}) {
-		t.Errorf("warnings = %v, want one broken-block-ref", p.Warnings)
-	}
-	if p.Links != 1 {
-		t.Errorf("Links = %d, want 1", p.Links)
-	}
+	assert.Equal(t, "see ((p0.0.0|Contexts)) and ((dead|gone))", p.ops[len(p.ops)-1].Content)
+	assert.Equal(t, []string{WarnBrokenBlockRef}, warnKinds(p))
+	assert.Equal(t, 1, p.Links)
 }
 
 func TestPlanCarriesAdapterWarnings(t *testing.T) {
 	pg := docPage("A", "x")
 	pg.Warnings = []Warning{{Page: "A", Kind: WarnFrontmatter}}
 	p := plan(Vault{Format: "Obsidian vault", Pages: []Page{pg}}, nil)
-	if got := warnKinds(p); !reflect.DeepEqual(got, []string{WarnFrontmatter}) {
-		t.Errorf("warnings = %v", got)
-	}
-	if p.Format != "Obsidian vault" {
-		t.Errorf("Format = %q", p.Format)
-	}
+	assert.Equal(t, []string{WarnFrontmatter}, warnKinds(p))
+	assert.Equal(t, "Obsidian vault", p.Format)
 }
 
 func TestPlanOfAnEmptyVaultHasNothingToApply(t *testing.T) {
 	p := plan(Vault{}, nil)
-	if len(p.ops) != 0 || p.Pages != 0 || len(p.Conflicts) != 0 {
-		t.Errorf("plan = %+v", p)
-	}
+	assert.Empty(t, p.ops)
+	assert.Zero(t, p.Pages)
+	assert.Empty(t, p.Conflicts)
 }
 
 func TestPlanWritesTheRootWholeWhenThePageCarriesIt(t *testing.T) {
 	pg := outlinePage("Go", n("child"))
 	pg.Root = "# Go\nsecond line of the root"
 	p := plan(Vault{Pages: []Page{pg}}, nil)
-	if p.ops[0].Content != pg.Root || p.ops[0].Mode != knowledge.ModeOutline {
-		t.Errorf("root op = %+v, want the page's Root as content", p.ops[0])
-	}
-	if p.ops[1].Parent != "p0" || p.ops[1].Content != "child" {
-		t.Errorf("child op = %+v", p.ops[1])
-	}
+	assert.Equal(t, pg.Root, p.ops[0].Content, "root op")
+	assert.Equal(t, knowledge.ModeOutline, p.ops[0].Mode, "root op")
+	assert.Equal(t, "p0", p.ops[1].Parent, "child op")
+	assert.Equal(t, "child", p.ops[1].Content, "child op")
 }

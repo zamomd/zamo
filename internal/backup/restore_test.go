@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/cominddev/comind/internal/backup"
 	"github.com/cominddev/comind/internal/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRestoreReplacesTheBaseAndKeepsTheOldOne(t *testing.T) {
@@ -26,19 +27,11 @@ func TestRestoreReplacesTheBaseAndKeepsTheOldOne(t *testing.T) {
 	seed(ctx, t, dbPath, "the live claim")
 
 	safety, err := backup.Restore(ctx, archive, dbPath)
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
+	require.NoError(t, err)
 
-	if got := readClaim(ctx, t, dbPath); got != "the archived claim" {
-		t.Errorf("restored base holds %q, want the archived content", got)
-	}
-	if safety == "" {
-		t.Fatal("Restore reported no safety copy, want the previous base kept")
-	}
-	if got := readClaim(ctx, t, safety); got != "the live claim" {
-		t.Errorf("safety copy holds %q, want what the base held before the restore", got)
-	}
+	assert.Equal(t, "the archived claim", readClaim(ctx, t, dbPath), "restored base")
+	require.NotEmpty(t, safety, "Restore reported no safety copy, want the previous base kept")
+	assert.Equal(t, "the live claim", readClaim(ctx, t, safety), "safety copy")
 }
 
 // TestRestoreClearsTheWriteAheadLog pins the failure that silently corrupts a
@@ -56,24 +49,16 @@ func TestRestoreClearsTheWriteAheadLog(t *testing.T) {
 
 	// A live base under WAL, left with its sidecars in place.
 	db, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open the live base: %v", err)
-	}
+	require.NoError(t, err)
 	insert(ctx, t, db, "b2", "a claim only the log knows")
-	if err := db.Close(); err != nil {
-		t.Fatalf("close the live base: %v", err)
-	}
-	if err := os.WriteFile(dbPath+"-wal", []byte("stale log"), 0o600); err != nil {
-		t.Fatalf("plant a stale log: %v", err)
-	}
+	require.NoError(t, db.Close())
+	require.NoError(t, os.WriteFile(dbPath+"-wal", []byte("stale log"), 0o600))
 
-	if _, err := backup.Restore(ctx, archive, dbPath); err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
+	_, err = backup.Restore(ctx, archive, dbPath)
+	require.NoError(t, err)
 	for _, sidecar := range []string{dbPath + "-wal", dbPath + "-shm"} {
-		if _, err := os.Stat(sidecar); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s survived the restore, want it cleared", filepath.Base(sidecar))
-		}
+		_, err := os.Stat(sidecar)
+		assert.ErrorIs(t, err, os.ErrNotExist, "%s survived the restore", filepath.Base(sidecar))
 	}
 }
 
@@ -135,12 +120,9 @@ func TestRestoreRefusesAnUnusableArchive(t *testing.T) {
 			archive := filepath.Join(dir, "broken.comind-backup")
 			tc.build(t, archive)
 
-			if _, err := backup.Restore(ctx, archive, dbPath); !errors.Is(err, tc.wantErr) {
-				t.Fatalf("error = %v, want %v", err, tc.wantErr)
-			}
-			if got := readClaim(ctx, t, dbPath); got != "the live claim" {
-				t.Errorf("the live base reads %q — a refused restore must not touch it", got)
-			}
+			_, err := backup.Restore(ctx, archive, dbPath)
+			require.ErrorIs(t, err, tc.wantErr)
+			assert.Equal(t, "the live claim", readClaim(ctx, t, dbPath), "a refused restore must not touch the live base")
 		})
 	}
 }
@@ -161,76 +143,54 @@ func goodManifest() backup.Manifest {
 func buildArchive(t *testing.T, path string, m backup.Manifest, database []byte) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create the archive: %v", err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
 	z := zip.NewWriter(f)
 	if database != nil {
 		w, err := z.Create("comind.db")
-		if err != nil {
-			t.Fatalf("write the database entry: %v", err)
-		}
-		if _, err := w.Write(database); err != nil {
-			t.Fatalf("write the database entry: %v", err)
-		}
+		require.NoError(t, err)
+		_, err = w.Write(database)
+		require.NoError(t, err)
 	}
 	w, err := z.Create("manifest.json")
-	if err != nil {
-		t.Fatalf("write the manifest entry: %v", err)
-	}
-	if err := json.MarshalWrite(w, m); err != nil {
-		t.Fatalf("encode the manifest: %v", err)
-	}
-	if err := z.Close(); err != nil {
-		t.Fatalf("finish the archive: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, json.MarshalWrite(w, m))
+	require.NoError(t, z.Close())
 }
 
 func seed(ctx context.Context, t *testing.T, dbPath, content string) {
 	t.Helper()
 	db, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open %s: %v", dbPath, err)
-	}
+	require.NoError(t, err)
 	defer db.Close()
-	if _, err := db.ExecContext(ctx, `DELETE FROM blocks`); err != nil {
-		t.Fatalf("clear the base: %v", err)
-	}
+	_, err = db.ExecContext(ctx, `DELETE FROM blocks`)
+	require.NoError(t, err)
 	insert(ctx, t, db, "b1", content)
 }
 
 func insert(ctx context.Context, t *testing.T, db *sql.DB, id, content string) {
 	t.Helper()
-	if _, err := db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO blocks (id, parent_id, position, content, created_at, updated_at)
-		 VALUES (?, NULL, 1, ?, '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')`, id, content); err != nil {
-		t.Fatalf("insert %s: %v", id, err)
-	}
+		 VALUES (?, NULL, 1, ?, '2026-08-12T00:00:00Z', '2026-08-12T00:00:00Z')`, id, content)
+	require.NoError(t, err, "insert %s", id)
 }
 
 func createFrom(ctx context.Context, t *testing.T, dbPath, dest string) {
 	t.Helper()
 	db, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open the base to archive: %v", err)
-	}
+	require.NoError(t, err)
 	defer db.Close()
-	if err := backup.Create(ctx, db, dest, "v0.1.0"); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	require.NoError(t, backup.Create(ctx, db, dest, "v0.1.0"))
 }
 
 func readClaim(ctx context.Context, t *testing.T, dbPath string) string {
 	t.Helper()
 	db, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("open %s: %v", dbPath, err)
-	}
+	require.NoError(t, err)
 	defer db.Close()
 	var content string
-	if err := db.QueryRowContext(ctx, `SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content); err != nil {
-		t.Fatalf("read the claim from %s: %v", dbPath, err)
-	}
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT content FROM blocks WHERE id = 'b1'`).Scan(&content),
+		"read the claim from %s", dbPath)
 	return content
 }

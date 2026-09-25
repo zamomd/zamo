@@ -1,12 +1,12 @@
 package backup_test
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cominddev/comind/internal/backup"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A restore cannot replace the database while this process — or the MCP
@@ -21,12 +21,9 @@ func TestStageRefusesABadArchiveImmediately(t *testing.T) {
 	junk := filepath.Join(dir, "junk.comind-backup")
 	writeFile(t, junk, []byte("not a zip"))
 
-	if err := backup.Stage(ctx, junk, dbPath); !errors.Is(err, backup.ErrNotAnArchive) {
-		t.Fatalf("error = %v, want ErrNotAnArchive — a bad archive must be refused while the user is watching", err)
-	}
-	if backup.StagedRestore(dbPath) != "" {
-		t.Error("a refused archive was staged anyway")
-	}
+	require.ErrorIs(t, backup.Stage(ctx, junk, dbPath), backup.ErrNotAnArchive,
+		"a bad archive must be refused while the user is watching")
+	assert.Empty(t, backup.StagedRestore(dbPath), "a refused archive was staged anyway")
 }
 
 func TestApplyStagedReplacesTheBaseAtStartup(t *testing.T) {
@@ -39,30 +36,16 @@ func TestApplyStagedReplacesTheBaseAtStartup(t *testing.T) {
 	createFrom(ctx, t, dbPath, archive)
 	seed(ctx, t, dbPath, "the live claim")
 
-	if err := backup.Stage(ctx, archive, dbPath); err != nil {
-		t.Fatalf("Stage: %v", err)
-	}
+	require.NoError(t, backup.Stage(ctx, archive, dbPath))
 	// Staging alone must not touch the base: the app is still running on it.
-	if got := readClaim(ctx, t, dbPath); got != "the live claim" {
-		t.Fatalf("base reads %q after staging, want it untouched until startup", got)
-	}
-	if backup.StagedRestore(dbPath) != archive {
-		t.Errorf("StagedRestore = %q, want %q", backup.StagedRestore(dbPath), archive)
-	}
+	require.Equal(t, "the live claim", readClaim(ctx, t, dbPath), "base after staging")
+	assert.Equal(t, archive, backup.StagedRestore(dbPath))
 
 	safety, err := backup.ApplyStaged(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("ApplyStaged: %v", err)
-	}
-	if got := readClaim(ctx, t, dbPath); got != "the archived claim" {
-		t.Errorf("base reads %q after ApplyStaged, want the archived content", got)
-	}
-	if got := readClaim(ctx, t, safety); got != "the live claim" {
-		t.Errorf("safety copy reads %q, want what the base held before", got)
-	}
-	if backup.StagedRestore(dbPath) != "" {
-		t.Error("the marker survived the restore, so the next startup would repeat it")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "the archived claim", readClaim(ctx, t, dbPath), "base after ApplyStaged")
+	assert.Equal(t, "the live claim", readClaim(ctx, t, safety), "safety copy")
+	assert.Empty(t, backup.StagedRestore(dbPath), "the marker survived the restore, so the next startup would repeat it")
 }
 
 func TestApplyStagedIsANoOpWithoutAMarker(t *testing.T) {
@@ -71,15 +54,9 @@ func TestApplyStagedIsANoOpWithoutAMarker(t *testing.T) {
 	seed(ctx, t, dbPath, "the live claim")
 
 	safety, err := backup.ApplyStaged(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("ApplyStaged on an ordinary startup: %v", err)
-	}
-	if safety != "" {
-		t.Errorf("safety = %q, want nothing kept when there was nothing to apply", safety)
-	}
-	if got := readClaim(ctx, t, dbPath); got != "the live claim" {
-		t.Errorf("base reads %q, want it untouched", got)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, safety, "nothing kept when there was nothing to apply")
+	assert.Equal(t, "the live claim", readClaim(ctx, t, dbPath))
 }
 
 // TestApplyStagedRefusesAnArchiveGoneBad covers the gap between staging and
@@ -94,21 +71,14 @@ func TestApplyStagedRefusesAnArchiveGoneBad(t *testing.T) {
 	archive := filepath.Join(dir, "base.comind-backup")
 	createFrom(ctx, t, dbPath, archive)
 	seed(ctx, t, dbPath, "the live claim")
-	if err := backup.Stage(ctx, archive, dbPath); err != nil {
-		t.Fatalf("Stage: %v", err)
-	}
+	require.NoError(t, backup.Stage(ctx, archive, dbPath))
 
 	writeFile(t, archive, []byte("truncated between staging and startup"))
 
-	if _, err := backup.ApplyStaged(ctx, dbPath); !errors.Is(err, backup.ErrNotAnArchive) {
-		t.Fatalf("error = %v, want ErrNotAnArchive", err)
-	}
-	if got := readClaim(ctx, t, dbPath); got != "the live claim" {
-		t.Errorf("base reads %q — a refused restore must leave it alone", got)
-	}
-	if backup.StagedRestore(dbPath) != "" {
-		t.Error("the marker survived, so every later startup would fail the same way")
-	}
+	_, err := backup.ApplyStaged(ctx, dbPath)
+	require.ErrorIs(t, err, backup.ErrNotAnArchive)
+	assert.Equal(t, "the live claim", readClaim(ctx, t, dbPath), "a refused restore must leave the base alone")
+	assert.Empty(t, backup.StagedRestore(dbPath), "the marker survived, so every later startup would fail the same way")
 }
 
 func TestStageIsUndoable(t *testing.T) {
@@ -119,16 +89,8 @@ func TestStageIsUndoable(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "base.comind-backup")
 	createFrom(ctx, t, dbPath, archive)
 
-	if err := backup.Stage(ctx, archive, dbPath); err != nil {
-		t.Fatalf("Stage: %v", err)
-	}
-	if err := backup.CancelStaged(dbPath); err != nil {
-		t.Fatalf("CancelStaged: %v", err)
-	}
-	if backup.StagedRestore(dbPath) != "" {
-		t.Error("the marker survived CancelStaged")
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		t.Errorf("the live base is gone after cancelling: %v", err)
-	}
+	require.NoError(t, backup.Stage(ctx, archive, dbPath))
+	require.NoError(t, backup.CancelStaged(dbPath))
+	assert.Empty(t, backup.StagedRestore(dbPath), "the marker survived CancelStaged")
+	assert.FileExists(t, dbPath, "the live base is gone after cancelling")
 }

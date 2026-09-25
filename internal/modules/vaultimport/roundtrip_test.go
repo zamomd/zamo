@@ -11,6 +11,8 @@ import (
 	"github.com/cominddev/comind/internal/modules/vaultimport/comind"
 	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
 	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // shape is a topic as content and structure only: what a round trip through
@@ -41,18 +43,14 @@ func shapes(t *testing.T, svc *knowledge.Service) map[string]shape {
 	t.Helper()
 	ctx := context.Background()
 	topics, err := svc.TopicMap(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := map[string]shape{}
 	for _, b := range topics {
 		if !b.IsTopic() {
 			continue
 		}
 		sub, err := svc.GetSubtree(ctx, b.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		out[knowledge.TopicName(b.Content)] = shapeOf(sub)
 	}
 	return out
@@ -77,52 +75,27 @@ func TestExportThenImportKeepsEveryTopic(t *testing.T) {
 		{Kind: knowledge.OpAdd, TempID: "e", Content: "Empty outline", Mode: knowledge.ModeOutline},
 		{Kind: knowledge.OpAdd, TempID: "f", Content: "Bare doc", Mode: knowledge.ModeDoc},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	dir := t.TempDir()
-	if err := export.New(src, fsexport.Writer{}).Markdown(ctx, dir); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, export.New(src, fsexport.Writer{}).Markdown(ctx, dir))
 
 	dst := openService(t)
 	m := vaultimport.New(dst, dst, comind.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
 	vaultimport.SetPicker(m, fakePicker{answer: dir})
 	plan, err := m.Preview(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Format != "Comind export" || len(plan.Conflicts) != 0 || plan.Pages != 4 {
-		t.Fatalf("plan = %+v", plan)
-	}
-	if _, err := m.Apply(ctx, plan.Token); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "Comind export", plan.Format)
+	require.Empty(t, plan.Conflicts)
+	require.Equal(t, 4, plan.Pages)
+	_, err = m.Apply(ctx, plan.Token)
+	require.NoError(t, err)
 
 	before, after := shapes(t, src), shapes(t, dst)
-	if len(after) != len(before) {
-		t.Fatalf("topics after = %v, before = %v", after, before)
-	}
+	require.Len(t, after, len(before), "topics after = %v, before = %v", after, before)
 	for name, want := range before {
-		got, ok := after[name]
-		if !ok {
-			t.Errorf("topic %q did not come back", name)
+		if !assert.Contains(t, after, name, "topic did not come back") {
 			continue
 		}
-		if !sameShape(got, want) {
-			t.Errorf("topic %q came back as\n%+v\nwant\n%+v", name, got, want)
-		}
+		assert.Equal(t, want, after[name], "topic %q", name)
 	}
-}
-
-func sameShape(a, b shape) bool {
-	if a.mode != b.mode || a.content != b.content || len(a.children) != len(b.children) {
-		return false
-	}
-	for i := range a.children {
-		if !sameShape(a.children[i], b.children[i]) {
-			return false
-		}
-	}
-	return true
 }

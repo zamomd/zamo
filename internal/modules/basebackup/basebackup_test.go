@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/modules/basebackup"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeArchive struct {
@@ -54,15 +56,9 @@ func TestBackupWritesWhereTheUserChose(t *testing.T) {
 	basebackup.SetPicker(m, fakePicker{answer: "/tmp/chosen.comind-backup"})
 
 	got, err := m.Backup(t.Context())
-	if err != nil {
-		t.Fatalf("Backup: %v", err)
-	}
-	if got != "/tmp/chosen.comind-backup" {
-		t.Errorf("reported %q, want the chosen path", got)
-	}
-	if archive.backedUpTo != "/tmp/chosen.comind-backup" {
-		t.Errorf("wrote to %q, want the chosen path", archive.backedUpTo)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/chosen.comind-backup", got, "reported path")
+	assert.Equal(t, "/tmp/chosen.comind-backup", archive.backedUpTo, "written path")
 }
 
 // A cancelled dialog is not a failure: the frontend distinguishes the two by
@@ -74,12 +70,9 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 		basebackup.SetPicker(m, fakePicker{answer: ""})
 
 		got, err := m.Backup(t.Context())
-		if err != nil || got != "" {
-			t.Fatalf("Backup = %q, %v; want an empty path and no error", got, err)
-		}
-		if archive.backedUpTo != "" {
-			t.Errorf("wrote to %q after the dialog was cancelled", archive.backedUpTo)
-		}
+		require.NoError(t, err)
+		require.Empty(t, got)
+		assert.Empty(t, archive.backedUpTo, "wrote after the dialog was cancelled")
 	})
 
 	t.Run("restore", func(t *testing.T) {
@@ -88,12 +81,9 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 		basebackup.SetPicker(m, fakePicker{answer: ""})
 
 		got, err := m.Restore(t.Context())
-		if err != nil || got != "" {
-			t.Fatalf("Restore = %q, %v; want an empty path and no error", got, err)
-		}
-		if archive.staged != "" {
-			t.Errorf("staged %q after the dialog was cancelled", archive.staged)
-		}
+		require.NoError(t, err)
+		require.Empty(t, got)
+		assert.Empty(t, archive.staged, "staged after the dialog was cancelled")
 	})
 }
 
@@ -103,12 +93,9 @@ func TestRestoreStagesTheChosenArchive(t *testing.T) {
 	basebackup.SetPicker(m, fakePicker{answer: "/tmp/base.comind-backup"})
 
 	got, err := m.Restore(t.Context())
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-	if got != "/tmp/base.comind-backup" || archive.staged != got {
-		t.Errorf("reported %q and staged %q, want both to be the chosen archive", got, archive.staged)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/base.comind-backup", got, "reported archive")
+	assert.Equal(t, "/tmp/base.comind-backup", archive.staged, "staged archive")
 }
 
 // A refused archive must reach the frontend as an error rather than as a
@@ -118,9 +105,8 @@ func TestRestoreReportsARefusedArchive(t *testing.T) {
 	m := basebackup.New(&fakeArchive{err: refused})
 	basebackup.SetPicker(m, fakePicker{answer: "/tmp/junk"})
 
-	if _, err := m.Restore(t.Context()); !errors.Is(err, refused) {
-		t.Fatalf("error = %v, want the refusal passed through", err)
-	}
+	_, err := m.Restore(t.Context())
+	require.ErrorIs(t, err, refused)
 }
 
 func TestPendingAndCancelPassThrough(t *testing.T) {
@@ -128,13 +114,8 @@ func TestPendingAndCancelPassThrough(t *testing.T) {
 	m := basebackup.New(archive)
 
 	got, err := m.PendingRestore(t.Context())
-	if err != nil || got != "/tmp/base.comind-backup" {
-		t.Fatalf("PendingRestore = %q, %v", got, err)
-	}
-	if err := m.CancelRestore(t.Context()); err != nil {
-		t.Fatalf("CancelRestore: %v", err)
-	}
-	if !archive.cancelled {
-		t.Error("CancelRestore did not reach the archive")
-	}
+	require.NoError(t, err)
+	require.Equal(t, "/tmp/base.comind-backup", got)
+	require.NoError(t, m.CancelRestore(t.Context()))
+	assert.True(t, archive.cancelled, "CancelRestore did not reach the archive")
 }
