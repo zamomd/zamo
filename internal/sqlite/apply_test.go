@@ -9,15 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/cominddev/comind/internal/knowledge"
 )
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
 	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	seq := 0
 	return NewRepo(db, func() time.Time { return time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC) },
@@ -45,9 +46,7 @@ func blockRow(t *testing.T, repo *Repo, id string) (parent string, position int,
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, "", false
 	}
-	if err != nil {
-		t.Fatalf("read block %s: %v", id, err)
-	}
+	require.NoError(t, err, "read block %s", id)
 	return parent, position, content, true
 }
 
@@ -67,31 +66,23 @@ func revisionsOf(t *testing.T, repo *Repo, blockID string) []revRow {
 	rows, err := repo.db.QueryContext(t.Context(),
 		`SELECT seq, content, COALESCE(parent_id, ''), position, deleted, author, reviewed, COALESCE(group_id, '')
 		 FROM block_revisions WHERE block_id = ? ORDER BY seq`, blockID)
-	if err != nil {
-		t.Fatalf("query revisions of %s: %v", blockID, err)
-	}
+	require.NoError(t, err, "query revisions of %s", blockID)
 	defer rows.Close()
 	var out []revRow
 	for rows.Next() {
 		var r revRow
-		if err := rows.Scan(&r.seq, &r.content, &r.parent, &r.position,
-			&r.deleted, &r.author, &r.reviewed, &r.group); err != nil {
-			t.Fatalf("scan revision of %s: %v", blockID, err)
-		}
+		require.NoError(t, rows.Scan(&r.seq, &r.content, &r.parent, &r.position,
+			&r.deleted, &r.author, &r.reviewed, &r.group), "scan revision of %s", blockID)
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate revisions of %s: %v", blockID, err)
-	}
+	require.NoError(t, rows.Err(), "iterate revisions of %s", blockID)
 	return out
 }
 
 func countRows(t *testing.T, repo *Repo, table string) int {
 	t.Helper()
 	var n int
-	if err := repo.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&n); err != nil {
-		t.Fatalf("count %s: %v", table, err)
-	}
+	require.NoError(t, repo.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&n), "count %s", table)
 	return n
 }
 
@@ -103,167 +94,125 @@ func TestApplyOpsAddWritesRevisionAndProjection(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "b-root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "b-child", Parent: "b-root", Content: "child"},
 	}
-	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("Add root+child"), ops); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("Add root+child"), ops))
 
-	if parent, pos, content, ok := blockRow(t, repo, "b-root"); !ok || parent != "" || pos != 0 || content != "root" {
-		t.Errorf("b-root = parent=%q pos=%d content=%q ok=%v, want ''/0/root/true", parent, pos, content, ok)
-	}
-	parent, pos, content, ok := blockRow(t, repo, "b-child")
-	if !ok || parent != "b-root" || pos != 0 || content != "child" {
-		t.Errorf("b-child = parent=%q pos=%d content=%q ok=%v, want b-root/0/child/true", parent, pos, content, ok)
-	}
+	parent, pos, content, ok := blockRow(t, repo, "b-root")
+	assert.True(t, ok, "b-root missing")
+	assert.Empty(t, parent, "b-root parent")
+	assert.Zero(t, pos, "b-root position")
+	assert.Equal(t, "root", content)
+	parent, pos, content, ok = blockRow(t, repo, "b-child")
+	assert.True(t, ok, "b-child missing")
+	assert.Equal(t, "b-root", parent)
+	assert.Zero(t, pos, "b-child position")
+	assert.Equal(t, "child", content)
 
 	for _, id := range []string{"b-root", "b-child"} {
 		revs := revisionsOf(t, repo, id)
-		if len(revs) != 1 {
-			t.Fatalf("revisions of %s = %+v, want exactly one", id, revs)
-		}
-		if revs[0].seq != 1 || revs[0].reviewed || revs[0].group != "grp-1" {
-			t.Errorf("revision of %s = %+v, want seq=1 reviewed=false group=grp-1", id, revs[0])
-		}
+		require.Len(t, revs, 1, "revisions of %s", id)
+		assert.Equal(t, 1, revs[0].seq, "revision of %s", id)
+		assert.False(t, revs[0].reviewed, "revision of %s", id)
+		assert.Equal(t, "grp-1", revs[0].group, "revision of %s", id)
 	}
 
 	var title string
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT title FROM revision_groups WHERE id = 'grp-1'`).Scan(&title); err != nil {
-		t.Fatalf("read revision_groups: %v", err)
-	}
-	if title != "Add root+child" {
-		t.Errorf("revision_groups title = %q, want %q", title, "Add root+child")
-	}
+	require.NoError(t, repo.db.QueryRowContext(ctx,
+		`SELECT title FROM revision_groups WHERE id = 'grp-1'`).Scan(&title))
+	assert.Equal(t, "Add root+child", title)
 }
 
 func TestApplyOpsEditAppendsRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("add"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
-	}); err != nil {
-		t.Fatalf("ApplyOps add: %v", err)
-	}
-	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("edit"), []knowledge.Op{
+	}))
+	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
-	}); err != nil {
-		t.Fatalf("ApplyOps edit: %v", err)
-	}
+	}))
 
-	if _, _, content, ok := blockRow(t, repo, "b1"); !ok || content != "v2" {
-		t.Errorf("b1 content = %q (ok=%v), want v2", content, ok)
-	}
+	_, _, content, ok := blockRow(t, repo, "b1")
+	assert.True(t, ok, "b1 missing")
+	assert.Equal(t, "v2", content)
 
 	revs := revisionsOf(t, repo, "b1")
-	if len(revs) != 2 {
-		t.Fatalf("revisions of b1 = %+v, want two", revs)
-	}
-	if revs[0].seq != 1 || revs[1].seq != 2 {
-		t.Errorf("revision seqs = %d, %d, want 1, 2", revs[0].seq, revs[1].seq)
-	}
-	if revs[1].parent != revs[0].parent || revs[1].position != revs[0].position {
-		t.Errorf("seq 2 parent/position = %q/%d, want unchanged from seq 1 (%q/%d)",
-			revs[1].parent, revs[1].position, revs[0].parent, revs[0].position)
-	}
-	if revs[1].content != "v2" {
-		t.Errorf("seq 2 content = %q, want v2", revs[1].content)
-	}
+	require.Len(t, revs, 2)
+	assert.Equal(t, 1, revs[0].seq)
+	assert.Equal(t, 2, revs[1].seq)
+	assert.Equal(t, revs[0].parent, revs[1].parent, "seq 2 parent changed")
+	assert.Equal(t, revs[0].position, revs[1].position, "seq 2 position changed")
+	assert.Equal(t, "v2", revs[1].content)
 }
 
 func TestApplyOpsMoveKeepsContent(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 		{Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root", Content: "Mid"},
 		{Kind: knowledge.OpAdd, BlockID: "leaf", Parent: "mid", Content: "Leaf"},
 		{Kind: knowledge.OpAdd, BlockID: "other", Content: "Other"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	}))
 
-	if err := repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "other", Parent: "root"},
-	}); err != nil {
-		t.Fatalf("legit move: %v", err)
-	}
+	}))
 	parent, pos, content, ok := blockRow(t, repo, "other")
-	if !ok || parent != "root" || pos != positionStride || content != "Other" {
-		t.Errorf("other after move = parent=%q pos=%d content=%q ok=%v, want root/%d/Other/true",
-			parent, pos, content, ok, positionStride)
-	}
+	assert.True(t, ok, "other missing after move")
+	assert.Equal(t, "root", parent)
+	assert.Equal(t, positionStride, pos)
+	assert.Equal(t, "Other", content)
 	revs := revisionsOf(t, repo, "other")
-	if len(revs) != 2 || revs[1].content != "Other" || revs[1].parent != "root" || revs[1].position != positionStride {
-		t.Errorf("other revisions = %+v, want a second entry content=Other parent=root position=%d", revs, positionStride)
-	}
+	require.Len(t, revs, 2)
+	assert.Equal(t, "Other", revs[1].content)
+	assert.Equal(t, "root", revs[1].parent)
+	assert.Equal(t, positionStride, revs[1].position)
 
 	err := repo.ApplyOps(ctx, "grp-3", aiMeta("cycle"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "root", Parent: "leaf"},
 	})
-	if !errors.Is(err, knowledge.ErrCycle) {
-		t.Fatalf("move into own subtree: got %v, want ErrCycle", err)
-	}
-	if parent, _, _, _ := blockRow(t, repo, "root"); parent != "" {
-		t.Errorf("root reparented despite the cycle: parent=%q", parent)
-	}
-	if revs := revisionsOf(t, repo, "root"); len(revs) != 1 {
-		t.Errorf("root gained a revision despite the rejected cycle move: %+v", revs)
-	}
+	require.ErrorIs(t, err, knowledge.ErrCycle, "move into own subtree")
+	parent, _, _, _ = blockRow(t, repo, "root")
+	assert.Empty(t, parent, "root reparented despite the cycle")
+	assert.Len(t, revisionsOf(t, repo, "root"), 1, "root gained a revision despite the rejected cycle move")
 	var groups int
-	if err := repo.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM revision_groups WHERE id = 'grp-3'`).Scan(&groups); err != nil {
-		t.Fatalf("count grp-3: %v", err)
-	}
-	if groups != 0 {
-		t.Errorf("grp-3 revision_groups row survived the rolled-back cycle move")
-	}
+	require.NoError(t, repo.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM revision_groups WHERE id = 'grp-3'`).Scan(&groups))
+	assert.Zero(t, groups, "grp-3 revision_groups row survived the rolled-back cycle move")
 }
 
 func TestApplyOpsDeleteTombstonesSubtree(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	if err := repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root text"},
 		{Kind: knowledge.OpAdd, BlockID: "a", Parent: "root", Content: "A text"},
 		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "a", Content: "B text"},
-	}); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	}))
 
-	if err := repo.ApplyOps(ctx, "grp-del", aiMeta("delete"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "root"},
-	}); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	}))
 
 	for _, id := range []string{"root", "a", "b"} {
-		if _, _, _, ok := blockRow(t, repo, id); ok {
-			t.Errorf("%s still present in blocks after delete", id)
-		}
+		_, _, _, ok := blockRow(t, repo, id)
+		assert.False(t, ok, "%s still present in blocks after delete", id)
 		revs := revisionsOf(t, repo, id)
-		if len(revs) == 0 {
-			t.Fatalf("%s has no revisions after delete", id)
-		}
+		require.NotEmpty(t, revs, "%s has no revisions after delete", id)
 		head := revs[len(revs)-1]
-		if !head.deleted || head.group != "grp-del" {
-			t.Errorf("%s head revision = %+v, want deleted=true group=grp-del", id, head)
-		}
+		assert.True(t, head.deleted, "%s head revision not deleted", id)
+		assert.Equal(t, "grp-del", head.group, "%s head revision", id)
 	}
 	rootRevs := revisionsOf(t, repo, "root")
-	if got := rootRevs[len(rootRevs)-1].content; got != "Root text" {
-		t.Errorf("root tombstone content = %q, want %q", got, "Root text")
-	}
+	assert.Equal(t, "Root text", rootRevs[len(rootRevs)-1].content, "root tombstone content")
 
 	for _, q := range []string{"Root", "text"} {
 		hits, err := repo.Search(ctx, q)
-		if err != nil {
-			t.Fatalf("Search(%q): %v", q, err)
-		}
-		if len(hits) != 0 {
-			t.Errorf("Search(%q) after delete = %v, want empty", q, hits)
-		}
+		require.NoError(t, err, "Search(%q)", q)
+		assert.Empty(t, hits, "Search(%q) after delete", q)
 	}
 }
 
@@ -272,16 +221,13 @@ func TestApplyOpsOwnerRevisionsBornReviewed(t *testing.T) {
 	ctx := t.Context()
 
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "owner edit"}
-	if err := repo.ApplyOps(ctx, "grp-1", meta, []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(ctx, "grp-1", meta, []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "owner-written"},
-	}); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	}))
 
 	revs := revisionsOf(t, repo, "b1")
-	if len(revs) != 1 || !revs[0].reviewed {
-		t.Errorf("owner revision = %+v, want reviewed=true", revs)
-	}
+	require.Len(t, revs, 1)
+	assert.True(t, revs[0].reviewed, "owner revision not reviewed")
 }
 
 func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
@@ -291,9 +237,7 @@ func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
 	err := repo.ApplyOps(ctx, "grp-1", aiMeta("edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "x"},
 	})
-	if !errors.Is(err, knowledge.ErrNotFound) {
-		t.Fatalf("edit of unknown block: got %v, want ErrNotFound", err)
-	}
+	require.ErrorIs(t, err, knowledge.ErrNotFound)
 }
 
 func TestApplyAddCarriesMode(t *testing.T) {
@@ -302,60 +246,34 @@ func TestApplyAddCarriesMode(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "doc-1", Content: "# Go Contexts\n\nBody.", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpAdd, BlockID: "out-1", Content: "Go Idioms"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("two topics"), ops); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("two topics"), ops))
 
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"doc-1", "out-1"})
-	if err != nil {
-		t.Fatalf("get blocks: %v", err)
-	}
-	if got := blocks["doc-1"].Mode; got != knowledge.ModeDoc {
-		t.Errorf("doc-1 mode = %q, want %q", got, knowledge.ModeDoc)
-	}
-	if got := blocks["out-1"].Mode; got != knowledge.ModeOutline {
-		t.Errorf("out-1 mode = %q, want %q", got, knowledge.ModeOutline)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.ModeDoc, blocks["doc-1"].Mode, "doc-1 mode")
+	assert.Equal(t, knowledge.ModeOutline, blocks["out-1"].Mode, "out-1 mode")
 
 	revs, err := repo.ListRevisions(t.Context(), "doc-1")
-	if err != nil {
-		t.Fatalf("list revisions: %v", err)
-	}
-	if got := revs[0].Mode; got != knowledge.ModeDoc {
-		t.Errorf("revision mode = %q, want %q", got, knowledge.ModeDoc)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.ModeDoc, revs[0].Mode, "revision mode")
 }
 
 func TestApplyEditKeepsModeUnlessAsked(t *testing.T) {
 	repo := testRepo(t)
 	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc}}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), add); err != nil {
-		t.Fatalf("apply add: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), add))
 
 	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Doc\n\nMore."}}
-	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit); err != nil {
-		t.Fatalf("apply edit: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit))
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := blocks["t1"].Mode; got != knowledge.ModeDoc {
-		t.Fatalf("after a plain edit mode = %q, want %q", got, knowledge.ModeDoc)
-	}
+	require.NoError(t, err)
+	require.Equal(t, knowledge.ModeDoc, blocks["t1"].Mode, "after a plain edit")
 
 	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Doc", Mode: knowledge.ModeOutline}}
-	if err := repo.ApplyOps(t.Context(), "g3", aiMeta("convert"), convert); err != nil {
-		t.Fatalf("apply convert: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g3", aiMeta("convert"), convert))
 	blocks, err = repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
-		t.Errorf("after an edit asking for outline mode = %q, want %q", got, knowledge.ModeOutline)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.ModeOutline, blocks["t1"].Mode, "after an edit asking for outline")
 }
 
 func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
@@ -364,18 +282,13 @@ func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
-		t.Fatalf("apply build: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
 	err := repo.ApplyOps(t.Context(), "g2", aiMeta("bad"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed", Mode: knowledge.ModeDoc},
 	})
-	if !errors.Is(err, knowledge.ErrInvalidOps) {
-		t.Fatalf("ApplyOps = %v, want ErrInvalidOps", err)
-	}
-	if _, _, content, _ := blockRow(t, repo, "c1"); content != "child" {
-		t.Errorf("the refused edit landed anyway: content = %q", content)
-	}
+	require.ErrorIs(t, err, knowledge.ErrInvalidOps)
+	_, _, content, _ := blockRow(t, repo, "c1")
+	assert.Equal(t, "child", content, "the refused edit landed anyway")
 }
 
 func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
@@ -384,20 +297,12 @@ func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "host", Content: "Host"},
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), ops); err != nil {
-		t.Fatalf("apply add: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), ops))
 	move := []knowledge.Op{{Kind: knowledge.OpMove, BlockID: "t1", Parent: "host"}}
-	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("move"), move); err != nil {
-		t.Fatalf("apply move: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("move"), move))
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := blocks["t1"].Mode; got != knowledge.ModeOutline {
-		t.Errorf("moved under a parent mode = %q, want %q", got, knowledge.ModeOutline)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.ModeOutline, blocks["t1"].Mode, "moved under a parent")
 }
 
 func TestApplyOpsAtomic(t *testing.T) {
@@ -408,19 +313,11 @@ func TestApplyOpsAtomic(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "new", Content: "half-applied"},
 		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "never lands"},
 	})
-	if !errors.Is(err, knowledge.ErrNotFound) {
-		t.Fatalf("batch with a stale op: got %v, want ErrNotFound", err)
-	}
+	require.ErrorIs(t, err, knowledge.ErrNotFound, "batch with a stale op")
 
-	if n := countRows(t, repo, "blocks"); n != 0 {
-		t.Errorf("blocks has %d rows after a rolled-back apply, want 0", n)
-	}
-	if n := countRows(t, repo, "block_revisions"); n != 0 {
-		t.Errorf("block_revisions has %d rows after a rolled-back apply, want 0", n)
-	}
-	if n := countRows(t, repo, "revision_groups"); n != 0 {
-		t.Errorf("revision_groups has %d rows after a rolled-back apply, want 0", n)
-	}
+	assert.Zero(t, countRows(t, repo, "blocks"), "blocks rows after a rolled-back apply")
+	assert.Zero(t, countRows(t, repo, "block_revisions"), "block_revisions rows after a rolled-back apply")
+	assert.Zero(t, countRows(t, repo, "revision_groups"), "revision_groups rows after a rolled-back apply")
 }
 
 func TestApplyRefusesAChildUnderADocument(t *testing.T) {
@@ -430,12 +327,9 @@ func TestApplyRefusesAChildUnderADocument(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
 	err := repo.ApplyOps(t.Context(), "g1", aiMeta("bad"), ops)
-	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
-		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
-	}
-	if _, _, _, ok := blockRow(t, repo, "t1"); ok {
-		t.Error("the refused batch left a block behind")
-	}
+	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren)
+	_, _, _, ok := blockRow(t, repo, "t1")
+	assert.False(t, ok, "the refused batch left a block behind")
 }
 
 func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
@@ -444,18 +338,12 @@ func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
-		t.Fatalf("apply build: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
 	err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeDoc},
 	})
-	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
-		t.Fatalf("ApplyOps = %v, want ErrDocumentHasChildren", err)
-	}
-	if got := modeOf(t, repo, "t1"); got != knowledge.ModeOutline {
-		t.Errorf("after the refused batch mode = %q, want %q", got, knowledge.ModeOutline)
-	}
+	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren)
+	assert.Equal(t, knowledge.ModeOutline, modeOf(t, repo, "t1"), "after the refused batch")
 }
 
 func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
@@ -464,16 +352,12 @@ func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
-		t.Fatalf("apply build: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
-		t.Fatalf("apply convert: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
 }
 
 func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
@@ -482,16 +366,12 @@ func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
-		t.Fatalf("apply build: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
 	}
-	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert); err != nil {
-		t.Fatalf("apply convert: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
 }
 
 func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
@@ -500,25 +380,17 @@ func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build); err != nil {
-		t.Fatalf("apply build: %v", err)
-	}
-	if _, err := repo.db.ExecContext(t.Context(),
-		`UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1"); err != nil {
-		t.Fatalf("plant the inconsistency: %v", err)
-	}
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
+	_, err := repo.db.ExecContext(t.Context(), `UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1")
+	require.NoError(t, err, "plant the inconsistency")
 
-	if err := repo.ApplyOps(t.Context(), "g2", aiMeta("elsewhere"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("elsewhere"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
-	}); err != nil {
-		t.Fatalf("write touching neither block: %v", err)
-	}
-	err := repo.ApplyOps(t.Context(), "g3", aiMeta("touch the child"), []knowledge.Op{
+	}))
+	err = repo.ApplyOps(t.Context(), "g3", aiMeta("touch the child"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed"},
 	})
-	if !errors.Is(err, knowledge.ErrDocumentHasChildren) {
-		t.Fatalf("write touching the child = %v, want ErrDocumentHasChildren", err)
-	}
+	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren, "write touching the child")
 }
 
 // convertedTopic builds an outline topic with one child through the service and
@@ -528,18 +400,13 @@ func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
 func convertedTopic(t *testing.T, svc *knowledge.Service) (knowledge.ID, knowledge.ID) {
 	t.Helper()
 	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
-	if err != nil {
-		t.Fatalf("create topic: %v", err)
-	}
-	if _, err := svc.ApplyOps(t.Context(), ownerMeta("fill"), []knowledge.Op{
+	require.NoError(t, err)
+	_, err = svc.ApplyOps(t.Context(), ownerMeta("fill"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First."},
-	}); err != nil {
-		t.Fatalf("fill: %v", err)
-	}
+	})
+	require.NoError(t, err, "fill")
 	applied, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc)
-	if err != nil {
-		t.Fatalf("to doc: %v", err)
-	}
+	require.NoError(t, err)
 	return topicID, applied.GroupID
 }
 
@@ -549,26 +416,14 @@ func TestConversionWaitsForReviewAsOneUnit(t *testing.T) {
 	topicID, groupID := convertedTopic(t, svc)
 
 	pending, err := svc.Unreviewed(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending.Blocks) != 2 {
-		t.Fatalf("%d blocks awaiting review, want the root and its child", len(pending.Blocks))
-	}
+	require.NoError(t, err)
+	require.Len(t, pending.Blocks, 2, "want the root and its child awaiting review")
 	for _, b := range pending.Blocks {
-		if b.GroupID != groupID {
-			t.Errorf("block %s waits in group %s, want the conversion's %s", b.Head.BlockID, b.GroupID, groupID)
-		}
-		if !b.Atomic {
-			t.Errorf("block %s is decidable on its own, so the conversion is not one unit", b.Head.BlockID)
-		}
-		if b.Head.Author != knowledge.AuthorOwner {
-			t.Errorf("block %s is authored by %q, want %q", b.Head.BlockID, b.Head.Author, knowledge.AuthorOwner)
-		}
+		assert.Equal(t, groupID, b.GroupID, "block %s should wait in the conversion's group", b.Head.BlockID)
+		assert.True(t, b.Atomic, "block %s is decidable on its own, so the conversion is not one unit", b.Head.BlockID)
+		assert.Equal(t, knowledge.AuthorOwner, b.Head.Author, "block %s author", b.Head.BlockID)
 	}
-	if err := svc.RejectBlock(t.Context(), topicID); !errors.Is(err, knowledge.ErrAtomicGroup) {
-		t.Errorf("rejecting the root alone = %v, want ErrAtomicGroup", err)
-	}
+	assert.ErrorIs(t, svc.RejectBlock(t.Context(), topicID), knowledge.ErrAtomicGroup, "rejecting the root alone")
 }
 
 func TestConversionIsRevertedWholeByItsGroup(t *testing.T) {
@@ -577,29 +432,15 @@ func TestConversionIsRevertedWholeByItsGroup(t *testing.T) {
 	topicID, groupID := convertedTopic(t, svc)
 
 	// UndoGroup is what the Changes screen's "Reject batch" calls.
-	if err := svc.UndoGroup(t.Context(), groupID); err != nil {
-		t.Fatalf("UndoGroup: %v", err)
-	}
+	require.NoError(t, svc.UndoGroup(t.Context(), groupID))
 	sub, err := svc.GetSubtree(t.Context(), topicID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sub) != 2 {
-		t.Fatalf("the reverted topic has %d blocks, want the root and its child", len(sub))
-	}
-	if sub[0].Mode != knowledge.ModeOutline {
-		t.Errorf("root mode = %q, want %q", sub[0].Mode, knowledge.ModeOutline)
-	}
-	if sub[1].Content != "First." {
-		t.Errorf("child content = %q, want %q", sub[1].Content, "First.")
-	}
+	require.NoError(t, err)
+	require.Len(t, sub, 2, "want the root and its child")
+	assert.Equal(t, knowledge.ModeOutline, sub[0].Mode, "root mode")
+	assert.Equal(t, "First.", sub[1].Content, "child content")
 	pending, err := svc.Unreviewed(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending.Blocks) != 0 {
-		t.Errorf("%d blocks still awaiting review after the revert, want none", len(pending.Blocks))
-	}
+	require.NoError(t, err)
+	assert.Empty(t, pending.Blocks, "blocks still awaiting review after the revert")
 }
 
 func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
@@ -607,54 +448,34 @@ func TestAnEditOverAConversionClosesItsWholeBatchRevert(t *testing.T) {
 	svc := testService(repo)
 	topicID, groupID := convertedTopic(t, svc)
 
-	if err := svc.EditBlockContent(t.Context(), topicID, "Go Contexts\n\nTyped."); err != nil {
-		t.Fatalf("type into the document: %v", err)
-	}
+	require.NoError(t, svc.EditBlockContent(t.Context(), topicID, "Go Contexts\n\nTyped."))
 
-	if err := svc.UndoGroup(t.Context(), groupID); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
-		t.Errorf("UndoGroup = %v, want ErrGroupWrittenOver", err)
-	}
-	if err := svc.RejectPage(t.Context(), topicID); !errors.Is(err, knowledge.ErrInvalidRollback) {
-		t.Errorf("RejectPage = %v, want ErrInvalidRollback", err)
-	}
+	require.ErrorIs(t, svc.UndoGroup(t.Context(), groupID), knowledge.ErrGroupWrittenOver)
+	require.ErrorIs(t, svc.RejectPage(t.Context(), topicID), knowledge.ErrInvalidRollback)
 
 	pending, err := svc.Unreviewed(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var seen bool
 	for _, b := range pending.Blocks {
 		if b.Head.BlockID != topicID {
 			continue
 		}
 		seen = true
-		if b.Head.GroupID == b.GroupID {
-			t.Errorf("head group %s equals the pending group, so nothing tells the GUI the batch was written over",
-				b.Head.GroupID)
-		}
+		assert.NotEqual(t, b.GroupID, b.Head.GroupID,
+			"head group equals the pending group, so nothing tells the GUI the batch was written over")
 	}
-	if !seen {
-		t.Error("the root left the review queue, so the conversion is no longer pending at all")
-	}
+	assert.True(t, seen, "the root left the review queue, so the conversion is no longer pending at all")
 }
 
 func TestOwnerEditsStayOutOfTheReviewQueue(t *testing.T) {
 	repo := testRepo(t)
 	svc := testService(repo)
 	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
-	if err != nil {
-		t.Fatalf("create topic: %v", err)
-	}
-	if err := svc.EditBlockContent(t.Context(), topicID, "Go Contexts, revisited"); err != nil {
-		t.Fatalf("edit: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, svc.EditBlockContent(t.Context(), topicID, "Go Contexts, revisited"))
 	pending, err := svc.Unreviewed(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending.Blocks) != 0 {
-		t.Errorf("%d blocks awaiting review, want none: ordinary typing is not reviewed", len(pending.Blocks))
-	}
+	require.NoError(t, err)
+	assert.Empty(t, pending.Blocks, "ordinary typing is not reviewed")
 }
 
 func TestConversionRoundTripThroughStorage(t *testing.T) {
@@ -662,40 +483,25 @@ func TestConversionRoundTripThroughStorage(t *testing.T) {
 	svc := testService(repo)
 
 	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
-	if err != nil {
-		t.Fatalf("create topic: %v", err)
-	}
-	if _, err := svc.ApplyOps(t.Context(), aiMeta("fill"), []knowledge.Op{
+	require.NoError(t, err)
+	_, err = svc.ApplyOps(t.Context(), aiMeta("fill"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, TempID: "a", Parent: string(topicID), Content: "First.\nStill first."},
 		{Kind: knowledge.OpAdd, TempID: "b", Parent: "a", Content: "Nested."},
-	}); err != nil {
-		t.Fatalf("fill: %v", err)
-	}
+	})
+	require.NoError(t, err, "fill")
 	before, err := svc.GetSubtree(t.Context(), topicID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc); err != nil {
-		t.Fatalf("to doc: %v", err)
-	}
-	if _, err := svc.SetTopicMode(t.Context(), topicID, knowledge.ModeOutline); err != nil {
-		t.Fatalf("back to outline: %v", err)
-	}
+	_, err = svc.SetTopicMode(t.Context(), topicID, knowledge.ModeDoc)
+	require.NoError(t, err, "to doc")
+	_, err = svc.SetTopicMode(t.Context(), topicID, knowledge.ModeOutline)
+	require.NoError(t, err, "back to outline")
 	after, err := svc.GetSubtree(t.Context(), topicID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(after) != len(before) {
-		t.Fatalf("round trip left %d blocks, want %d", len(after), len(before))
-	}
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "blocks after the round trip")
 	for i := range before {
-		if before[i].Content != after[i].Content {
-			t.Errorf("block %d content = %q, want %q", i, after[i].Content, before[i].Content)
-		}
-		if got, want := parentIndex(after, i), parentIndex(before, i); got != want {
-			t.Errorf("block %d hangs from block %d, want block %d", i, got, want)
-		}
+		assert.Equal(t, before[i].Content, after[i].Content, "block %d content", i)
+		assert.Equal(t, parentIndex(before, i), parentIndex(after, i), "block %d parent index", i)
 	}
 }
 

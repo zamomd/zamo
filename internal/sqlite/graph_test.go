@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,9 +24,7 @@ func TestGetTopicGraphCountsBlocks(t *testing.T) {
 		{ID: "a", Title: "Topic A", Blocks: 4},
 		{ID: "b", Title: "Topic B", Blocks: 1},
 	}
-	if diff := cmp.Diff(want, got.Topics); diff != "" {
-		t.Errorf("topics mismatch (-want +got):\n%s", diff)
-	}
+	assert.Equal(t, want, got.Topics)
 }
 
 func TestTopicEdgesFromTopicReferences(t *testing.T) {
@@ -39,9 +37,7 @@ func TestTopicEdgesFromTopicReferences(t *testing.T) {
 	g, err := repo.GetTopicGraph(t.Context())
 	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if diff := cmp.Diff(want, g.Edges); diff != "" {
-		t.Errorf("edges mismatch (-want +got):\n%s", diff)
-	}
+	assert.Equal(t, want, g.Edges)
 }
 
 func TestTopicEdgesFromBlockReferences(t *testing.T) {
@@ -61,9 +57,7 @@ func TestTopicEdgesFromBlockReferences(t *testing.T) {
 	g, err := repo.GetTopicGraph(t.Context())
 	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if diff := cmp.Diff(want, g.Edges); diff != "" {
-		t.Errorf("edges mismatch (-want +got):\n%s", diff)
-	}
+	assert.Equal(t, want, g.Edges)
 }
 
 func TestTopicEdgesDropSelfLoops(t *testing.T) {
@@ -81,9 +75,7 @@ func TestTopicEdgesDropSelfLoops(t *testing.T) {
 	))
 	g, err := repo.GetTopicGraph(t.Context())
 	require.NoError(t, err)
-	if len(g.Edges) != 0 {
-		t.Errorf("edges = %v, want none", g.Edges)
-	}
+	assert.Empty(t, g.Edges)
 }
 
 func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
@@ -96,9 +88,7 @@ func TestTopicEdgesNoneBetweenUnconnectedTopics(t *testing.T) {
 	))
 	g, err := repo.GetTopicGraph(t.Context())
 	require.NoError(t, err)
-	if len(g.Edges) != 0 {
-		t.Errorf("edges = %v, want none: two populated topics with no references between them", g.Edges)
-	}
+	assert.Empty(t, g.Edges, "two populated topics with no references between them")
 }
 
 func TestTopicEdgesCollapseMultiplicityAndDirection(t *testing.T) {
@@ -113,9 +103,7 @@ func TestTopicEdgesCollapseMultiplicityAndDirection(t *testing.T) {
 	g, err := repo.GetTopicGraph(t.Context())
 	require.NoError(t, err)
 	want := []knowledge.TopicEdge{{From: "01RUST", To: "01ZIG"}}
-	if diff := cmp.Diff(want, g.Edges); diff != "" {
-		t.Errorf("edges mismatch (-want +got), references both ways must collapse to one edge:\n%s", diff)
-	}
+	assert.Equal(t, want, g.Edges, "references both ways must collapse to one edge")
 }
 
 func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
@@ -129,9 +117,7 @@ func TestGetTopicGraphOrdersDeterministically(t *testing.T) {
 	got, err := r(db).GetTopicGraph(ctx)
 	require.NoError(t, err)
 	ids := []knowledge.ID{got.Topics[0].ID, got.Topics[1].ID, got.Topics[2].ID}
-	if ids[0] != "a" || ids[1] != "b" || ids[2] != "c" {
-		t.Errorf("topic order = %v, want a b c", ids)
-	}
+	assert.Equal(t, []knowledge.ID{"a", "b", "c"}, ids)
 }
 
 func TestPruneDanglingEdges(t *testing.T) {
@@ -161,9 +147,7 @@ func TestPruneDanglingEdges(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := pruneDanglingEdges(topics, tc.edges)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("pruneDanglingEdges mismatch (-want +got):\n%s", diff)
-			}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -174,7 +158,6 @@ func TestGetTopicGraphEmptyBase(t *testing.T) {
 
 	got, err := r(db).GetTopicGraph(ctx)
 	require.NoError(t, err)
-	if len(got.Topics) != 0 || len(got.Edges) != 0 {
-		t.Errorf("graph = %+v, want empty", got)
-	}
+	assert.Empty(t, got.Topics)
+	assert.Empty(t, got.Edges)
 }

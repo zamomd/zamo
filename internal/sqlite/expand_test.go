@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type treeLLM struct{ tree []knowledge.Op }
@@ -32,9 +34,7 @@ func (l *treeLLM) Ping(context.Context) error { return nil }
 func topicRootsOf(t *testing.T, repo *Repo) []knowledge.Block {
 	t.Helper()
 	blocks, err := repo.GetTopics(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return slices.DeleteFunc(blocks, func(b knowledge.Block) bool { return b.ParentID != "" })
 }
 
@@ -55,34 +55,20 @@ func TestExpandOutlineGrowsTheTopicItWasGiven(t *testing.T) {
 	}})
 
 	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", knowledge.ModeOutline)
-	if err != nil {
-		t.Fatalf("create topic: %v", err)
-	}
-	if _, err := svc.ExpandTopicByID(t.Context(), topicID, ""); err != nil {
-		t.Fatalf("expand: %v", err)
-	}
+	require.NoError(t, err, "create topic")
+	_, err = svc.ExpandTopicByID(t.Context(), topicID, "")
+	require.NoError(t, err, "expand")
 
 	roots := topicRootsOf(t, repo)
-	if len(roots) != 1 || roots[0].ID != topicID {
-		t.Fatalf("topic roots = %+v, want only the one that was expanded (%s)", roots, topicID)
-	}
-	if roots[0].Content != "Go Contexts" {
-		t.Errorf("topic content = %q, want it untouched", roots[0].Content)
-	}
+	require.Len(t, roots, 1, "want only the topic that was expanded")
+	require.Equal(t, topicID, roots[0].ID)
+	assert.Equal(t, "Go Contexts", roots[0].Content, "topic content must stay untouched")
 
 	sub, err := repo.GetSubtree(t.Context(), topicID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sub) != 3 {
-		t.Fatalf("subtree has %d blocks, want the root and the two generated ones", len(sub))
-	}
-	if sub[1].ParentID != topicID {
-		t.Errorf("%q hangs from %s, want the topic root %s", sub[1].Content, sub[1].ParentID, topicID)
-	}
-	if sub[2].ParentID != sub[1].ID {
-		t.Errorf("%q hangs from %s, want %s", sub[2].Content, sub[2].ParentID, sub[1].ID)
-	}
+	require.NoError(t, err)
+	require.Len(t, sub, 3, "want the root and the two generated blocks")
+	assert.Equal(t, topicID, sub[1].ParentID, "%q must hang from the topic root", sub[1].Content)
+	assert.Equal(t, sub[1].ID, sub[2].ParentID, "%q parent", sub[2].Content)
 }
 
 func TestExpandOutlineMakesNoSecondTopic(t *testing.T) {
@@ -93,22 +79,15 @@ func TestExpandOutlineMakesNoSecondTopic(t *testing.T) {
 	}})
 
 	topicID, err := svc.CreateTopic(t.Context(), "Go Contexts", knowledge.ModeOutline)
-	if err != nil {
-		t.Fatalf("create topic: %v", err)
-	}
-	if _, err := svc.ExpandTopicByID(t.Context(), topicID, ""); err != nil {
-		t.Fatalf("expand: %v", err)
-	}
+	require.NoError(t, err, "create topic")
+	_, err = svc.ExpandTopicByID(t.Context(), topicID, "")
+	require.NoError(t, err, "expand")
 
 	roots := topicRootsOf(t, repo)
-	if len(roots) != 1 || roots[0].ID != topicID {
-		t.Fatalf("topic roots = %+v, want only %s", roots, topicID)
-	}
+	require.Len(t, roots, 1)
+	require.Equal(t, topicID, roots[0].ID)
 	sub, err := repo.GetSubtree(t.Context(), topicID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sub) != 2 || sub[1].Content != "Cancellation propagates." {
-		t.Fatalf("subtree = %+v, want the generated child under the topic", sub)
-	}
+	require.NoError(t, err)
+	require.Len(t, sub, 2)
+	require.Equal(t, "Cancellation propagates.", sub[1].Content, "want the generated child under the topic")
 }

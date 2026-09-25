@@ -2,11 +2,12 @@ package sqlite
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // renameService wires the domain to the real repository, so a rename runs the
@@ -21,16 +22,15 @@ func renameService(repo *Repo) *knowledge.Service {
 func headGroup(t *testing.T, repo *Repo, id string) string {
 	t.Helper()
 	var group string
-	if err := repo.db.QueryRowContext(t.Context(),
-		`SELECT group_id FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&group); err != nil {
-		t.Fatalf("read head revision of %s: %v", id, err)
-	}
+	require.NoError(t, repo.db.QueryRowContext(t.Context(),
+		`SELECT group_id FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&group),
+		"read head revision of %s", id)
 	return group
 }
 
 func renameBase(t *testing.T, repo *Repo) {
 	t.Helper()
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01LOCAL", Content: "Local-first"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{
@@ -41,9 +41,7 @@ func renameBase(t *testing.T, repo *Repo) {
 			Kind: knowledge.OpAdd, BlockID: "01OTHER", Parent: "01ZIG",
 			Content: "Nothing to see here.",
 		},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	), "setup")
 }
 
 func TestBlocksReferencingTopic(t *testing.T) {
@@ -51,26 +49,16 @@ func TestBlocksReferencingTopic(t *testing.T) {
 	renameBase(t, repo)
 
 	got, err := repo.BlocksReferencingTopic(t.Context(), "local-first")
-	if err != nil {
-		t.Fatalf("BlocksReferencingTopic: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "01NOTE" {
-		t.Fatalf("got %v, want exactly the one referencing block 01NOTE", got)
-	}
-	if got[0].Content != "We use [[Local-first]] and [[local-first]] daily." {
-		t.Errorf("content = %q, want the block's full text to rewrite", got[0].Content)
-	}
-	if got[0].ParentID != "01ZIG" {
-		t.Errorf("parent = %q, want the block fully hydrated", got[0].ParentID)
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, knowledge.ID("01NOTE"), got[0].ID)
+	assert.Equal(t, "We use [[Local-first]] and [[local-first]] daily.", got[0].Content,
+		"want the block's full text to rewrite")
+	assert.Equal(t, knowledge.ID("01ZIG"), got[0].ParentID, "want the block fully hydrated")
 
 	none, err := repo.BlocksReferencingTopic(t.Context(), "nothing here")
-	if err != nil {
-		t.Fatalf("BlocksReferencingTopic: %v", err)
-	}
-	if len(none) != 0 {
-		t.Errorf("got %d blocks for an unknown topic, want 0", len(none))
-	}
+	require.NoError(t, err)
+	assert.Empty(t, none, "unknown topic")
 }
 
 func TestRenameTopicRewritesReferencesInOneGroup(t *testing.T) {
@@ -78,27 +66,18 @@ func TestRenameTopicRewritesReferencesInOneGroup(t *testing.T) {
 	renameBase(t, repo)
 	svc := renameService(repo)
 
-	if err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first"); err != nil {
-		t.Fatalf("rename: %v", err)
-	}
+	require.NoError(t, svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first"))
 
-	want := "We use [[Offline-first]] and [[Offline-first]] daily."
-	if _, _, content, ok := blockRow(t, repo, "01NOTE"); !ok || content != want {
-		t.Errorf("referencing block = %q (present %v), want %q", content, ok, want)
-	}
-	if got, want := titleKeyOf(t, repo, "01LOCAL"), "offline-first"; got != want {
-		t.Errorf("title_key = %q, want %q", got, want)
-	}
-	if got := headGroup(t, repo, "01LOCAL"); got != headGroup(t, repo, "01NOTE") {
-		t.Errorf("root and rewritten block landed in different groups (%q), want one reviewable group", got)
-	}
+	_, _, content, ok := blockRow(t, repo, "01NOTE")
+	assert.True(t, ok)
+	assert.Equal(t, "We use [[Offline-first]] and [[Offline-first]] daily.", content, "referencing block")
+	assert.Equal(t, "offline-first", titleKeyOf(t, repo, "01LOCAL"))
+	assert.Equal(t, headGroup(t, repo, "01NOTE"), headGroup(t, repo, "01LOCAL"),
+		"root and rewritten block landed in different groups, want one reviewable group")
 	links, err := repo.GetBacklinks(t.Context(), "01LOCAL")
-	if err != nil {
-		t.Fatalf("GetBacklinks: %v", err)
-	}
-	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
-		t.Errorf("backlinks = %v, want the rewritten reference still resolving to the topic", links)
-	}
+	require.NoError(t, err)
+	require.Len(t, links, 1, "want the rewritten reference still resolving to the topic")
+	assert.Equal(t, knowledge.ID("01NOTE"), links[0].Block.ID)
 }
 
 // concurrentRenameRepo lands one write between the moment a rename reads the
@@ -114,9 +93,8 @@ func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key s
 	if err != nil {
 		return nil, err
 	}
-	if err := r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent write"), []knowledge.Op{r.op}); err != nil {
-		r.t.Fatalf("concurrent write: %v", err)
-	}
+	require.NoError(r.t, r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent write"), []knowledge.Op{r.op}),
+		"concurrent write")
 	return blocks, nil
 }
 
@@ -130,15 +108,12 @@ func TestRenameRefusesANewConcurrentReference(t *testing.T) {
 	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
-	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
-		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
-	}
-	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
-		t.Errorf("topic content = %q, want the rename rolled back", content)
-	}
-	if _, _, content, ok := blockRow(t, repo, "01NEW"); !ok || content != "A new [[Local-first]] reference." {
-		t.Errorf("new source = %q (present %v), want the concurrent reference preserved", content, ok)
-	}
+	require.ErrorIs(t, err, knowledge.ErrConcurrentWrite)
+	_, _, content, _ := blockRow(t, repo, "01LOCAL")
+	assert.Equal(t, "Local-first", content, "want the rename rolled back")
+	_, _, content, ok := blockRow(t, repo, "01NEW")
+	assert.True(t, ok)
+	assert.Equal(t, "A new [[Local-first]] reference.", content, "want the concurrent reference preserved")
 }
 
 func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
@@ -150,15 +125,11 @@ func TestRenameRefusesToOverwriteAConcurrentEdit(t *testing.T) {
 	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
-	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
-		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
-	}
-	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
-		t.Errorf("topic content = %q, want the rename rolled back", content)
-	}
-	if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != "A concurrent [[Local-first]] edit." {
-		t.Errorf("source content = %q, want the concurrent edit preserved", content)
-	}
+	require.ErrorIs(t, err, knowledge.ErrConcurrentWrite)
+	_, _, content, _ := blockRow(t, repo, "01LOCAL")
+	assert.Equal(t, "Local-first", content, "want the rename rolled back")
+	_, _, content, _ = blockRow(t, repo, "01NOTE")
+	assert.Equal(t, "A concurrent [[Local-first]] edit.", content, "want the concurrent edit preserved")
 }
 
 // A guarded block that is gone was written over just as surely as one holding
@@ -174,12 +145,9 @@ func TestRenameReportsAConcurrentlyDeletedBlockAsAConcurrentWrite(t *testing.T) 
 	svc := knowledge.NewService(nil, concurrent, func() knowledge.ID { return "rename" })
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
-	if !errors.Is(err, knowledge.ErrConcurrentWrite) {
-		t.Fatalf("rename error = %v, want ErrConcurrentWrite", err)
-	}
-	if _, _, _, ok := blockRow(t, repo, "01LOCAL"); ok {
-		t.Error("the topic is back, want the concurrent delete preserved")
-	}
+	require.ErrorIs(t, err, knowledge.ErrConcurrentWrite)
+	_, _, _, ok := blockRow(t, repo, "01LOCAL")
+	assert.False(t, ok, "the topic is back, want the concurrent delete preserved")
 }
 
 // An AI rename arrives as a plain edit op through ApplyOps, the path
@@ -191,28 +159,21 @@ func TestAIRenameKeepsReferencesResolving(t *testing.T) {
 	svc := renameService(repo)
 
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename the topic"}
-	if _, err := svc.ApplyOps(t.Context(), meta,
-		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"}}); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	_, err := svc.ApplyOps(t.Context(), meta,
+		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"}})
+	require.NoError(t, err)
 
-	want := "We use [[Offline-first]] and [[Offline-first]] daily."
-	if _, _, content, ok := blockRow(t, repo, "01NOTE"); !ok || content != want {
-		t.Errorf("referencing block = %q (present %v), want %q", content, ok, want)
-	}
+	_, _, content, ok := blockRow(t, repo, "01NOTE")
+	assert.True(t, ok)
+	assert.Equal(t, "We use [[Offline-first]] and [[Offline-first]] daily.", content, "referencing block")
 	links, err := repo.GetBacklinks(t.Context(), "01LOCAL")
-	if err != nil {
-		t.Fatalf("GetBacklinks: %v", err)
-	}
-	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
-		t.Errorf("backlinks = %v, want the reference still resolving after an AI rename", links)
-	}
-	if got := headGroup(t, repo, "01LOCAL"); got != headGroup(t, repo, "01NOTE") {
-		t.Errorf("root and rewritten block landed in different groups (%q), want one reviewable group", got)
-	}
-	if reviewed := reviewedHead(t, repo, "01NOTE"); reviewed {
-		t.Error("the rewrite is already reviewed, want an AI batch awaiting the owner's decision")
-	}
+	require.NoError(t, err)
+	require.Len(t, links, 1, "want the reference still resolving after an AI rename")
+	assert.Equal(t, knowledge.ID("01NOTE"), links[0].Block.ID)
+	assert.Equal(t, headGroup(t, repo, "01NOTE"), headGroup(t, repo, "01LOCAL"),
+		"root and rewritten block landed in different groups, want one reviewable group")
+	assert.False(t, reviewedHead(t, repo, "01NOTE"),
+		"the rewrite is already reviewed, want an AI batch awaiting the owner's decision")
 }
 
 // "Rename a topic and move a block referencing it" arrives as one batch from
@@ -225,31 +186,22 @@ func TestRenameRewritesABlockTheBatchOnlyMoves(t *testing.T) {
 	svc := renameService(repo)
 
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename and move"}
-	if _, err := svc.ApplyOps(t.Context(), meta, []knowledge.Op{
+	_, err := svc.ApplyOps(t.Context(), meta, []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"},
 		{Kind: knowledge.OpMove, BlockID: "01NOTE", Parent: "01OTHER"},
-	}); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	})
+	require.NoError(t, err)
 
 	parent, _, content, ok := blockRow(t, repo, "01NOTE")
-	want := "We use [[Offline-first]] and [[Offline-first]] daily."
-	if !ok || content != want {
-		t.Errorf("moved block = %q (present %v), want %q", content, ok, want)
-	}
-	if parent != "01OTHER" {
-		t.Errorf("parent = %q, want the move applied too", parent)
-	}
+	assert.True(t, ok)
+	assert.Equal(t, "We use [[Offline-first]] and [[Offline-first]] daily.", content, "moved block")
+	assert.Equal(t, "01OTHER", parent, "want the move applied too")
 	links, err := repo.GetBacklinks(t.Context(), "01LOCAL")
-	if err != nil {
-		t.Fatalf("GetBacklinks: %v", err)
-	}
-	if len(links) != 1 || links[0].Block.ID != "01NOTE" {
-		t.Errorf("backlinks = %v, want the reference still resolving after the batch", links)
-	}
-	if got := headGroup(t, repo, "01LOCAL"); got != headGroup(t, repo, "01NOTE") {
-		t.Errorf("rename and rewrite landed in different groups (%q), want one reviewable group", got)
-	}
+	require.NoError(t, err)
+	require.Len(t, links, 1, "want the reference still resolving after the batch")
+	assert.Equal(t, knowledge.ID("01NOTE"), links[0].Block.ID)
+	assert.Equal(t, headGroup(t, repo, "01NOTE"), headGroup(t, repo, "01LOCAL"),
+		"rename and rewrite landed in different groups, want one reviewable group")
 }
 
 // The point of CreateTopic: the reference the user clicked must resolve
@@ -261,29 +213,19 @@ func TestCreateTopicResolvesTheReferenceThatAskedForIt(t *testing.T) {
 	svc := renameService(repo)
 
 	id, err := svc.CreateTopic(t.Context(), "Nothing to see here", "")
-	if err != nil {
-		t.Fatalf("CreateTopic: %v", err)
-	}
-	if got, want := titleKeyOf(t, repo, id), "nothing to see here"; got != want {
-		t.Fatalf("title_key = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "nothing to see here", titleKeyOf(t, repo, id))
 
 	// 01OTHER's text is a plain sentence, so a reference to it resolves only
 	// once a topic of that exact name exists.
-	if err := svc.EditBlockContent(t.Context(), "01OTHER", "See [[Nothing to see here]]."); err != nil {
-		t.Fatalf("EditBlockContent: %v", err)
-	}
+	require.NoError(t, svc.EditBlockContent(t.Context(), "01OTHER", "See [[Nothing to see here]]."))
 	links, err := repo.GetBacklinks(t.Context(), id)
-	if err != nil {
-		t.Fatalf("GetBacklinks: %v", err)
-	}
-	if len(links) != 1 || links[0].Block.ID != "01OTHER" {
-		t.Errorf("backlinks = %v, want the reference resolving to the created topic", links)
-	}
+	require.NoError(t, err)
+	require.Len(t, links, 1, "want the reference resolving to the created topic")
+	assert.Equal(t, knowledge.ID("01OTHER"), links[0].Block.ID)
 
-	if _, err := svc.CreateTopic(t.Context(), "nothing to SEE here", ""); !errors.Is(err, knowledge.ErrDuplicateTopic) {
-		t.Errorf("second CreateTopic = %v, want ErrDuplicateTopic", err)
-	}
+	_, err = svc.CreateTopic(t.Context(), "nothing to SEE here", "")
+	assert.ErrorIs(t, err, knowledge.ErrDuplicateTopic, "second CreateTopic")
 }
 
 // aiRename renames 01LOCAL through the AI path and returns the revision group
@@ -293,9 +235,7 @@ func aiRename(t *testing.T, repo *Repo) knowledge.ID {
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename the topic"}
 	applied, err := renameService(repo).ApplyOps(t.Context(), meta,
 		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01LOCAL", Content: "Offline-first"}})
-	if err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	require.NoError(t, err)
 	return applied.GroupID
 }
 
@@ -327,16 +267,12 @@ func TestHalfARenameCannotBeReviewed(t *testing.T) {
 			renameBase(t, repo)
 			aiRename(t, repo)
 
-			if err := tc.do(repo); !errors.Is(err, knowledge.ErrAtomicGroup) {
-				t.Fatalf("got %v, want ErrAtomicGroup", err)
-			}
-			if reviewedHead(t, repo, "01LOCAL") || reviewedHead(t, repo, "01NOTE") {
-				t.Error("the refused decision reviewed something anyway")
-			}
-			want := "We use [[Offline-first]] and [[Offline-first]] daily."
-			if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != want {
-				t.Errorf("referencing block = %q, want %q: the refusal must write nothing", content, want)
-			}
+			require.ErrorIs(t, tc.do(repo), knowledge.ErrAtomicGroup)
+			assert.False(t, reviewedHead(t, repo, "01LOCAL"), "the refused decision reviewed the root anyway")
+			assert.False(t, reviewedHead(t, repo, "01NOTE"), "the refused decision reviewed the reference anyway")
+			_, _, content, _ := blockRow(t, repo, "01NOTE")
+			assert.Equal(t, "We use [[Offline-first]] and [[Offline-first]] daily.", content,
+				"the refusal must write nothing")
 		})
 	}
 }
@@ -346,10 +282,9 @@ func TestHalfARenameCannotBeReviewed(t *testing.T) {
 func headRevisionID(t *testing.T, repo *Repo, id string) knowledge.ID {
 	t.Helper()
 	var rev string
-	if err := repo.db.QueryRowContext(t.Context(),
-		`SELECT id FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&rev); err != nil {
-		t.Fatalf("read head revision of %s: %v", id, err)
-	}
+	require.NoError(t, repo.db.QueryRowContext(t.Context(),
+		`SELECT id FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&rev),
+		"read head revision of %s", id)
 	return knowledge.ID(rev)
 }
 
@@ -365,19 +300,13 @@ func TestRevertingHalfARenameFromHistoryIsRefused(t *testing.T) {
 	revisions := countRows(t, repo, "block_revisions")
 
 	err := repo.DeleteRevision(t.Context(), "01LOCAL", headRevisionID(t, repo, "01LOCAL"))
-	if !errors.Is(err, knowledge.ErrAtomicGroup) {
-		t.Fatalf("DeleteRevision = %v, want ErrAtomicGroup", err)
-	}
-	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Offline-first" {
-		t.Errorf("root = %q, want the refusal to have written nothing", content)
-	}
-	if got := countRows(t, repo, "block_revisions"); got != revisions {
-		t.Errorf("block_revisions = %d, want %d: the refusal must delete nothing", got, revisions)
-	}
+	require.ErrorIs(t, err, knowledge.ErrAtomicGroup)
+	_, _, content, _ := blockRow(t, repo, "01LOCAL")
+	assert.Equal(t, "Offline-first", content, "want the refusal to have written nothing")
+	assert.Equal(t, revisions, countRows(t, repo, "block_revisions"), "the refusal must delete nothing")
 	// The group is still whole, so the review controls still cover it.
-	if err := repo.RejectBlock(t.Context(), "01NOTE"); !errors.Is(err, knowledge.ErrAtomicGroup) {
-		t.Errorf("RejectBlock after the refusal = %v, want the group still atomic", err)
-	}
+	assert.ErrorIs(t, repo.RejectBlock(t.Context(), "01NOTE"), knowledge.ErrAtomicGroup,
+		"RejectBlock after the refusal")
 }
 
 // The rule is about the review queue, not about history: once the batch has
@@ -386,16 +315,11 @@ func TestHistoryEditingSurvivesAReviewedRename(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
 	group := aiRename(t, repo)
-	if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
-		t.Fatalf("MarkGroupReviewed: %v", err)
-	}
+	require.NoError(t, repo.MarkGroupReviewed(t.Context(), group))
 
-	if err := repo.DeleteRevision(t.Context(), "01LOCAL", headRevisionID(t, repo, "01LOCAL")); err != nil {
-		t.Fatalf("DeleteRevision: %v", err)
-	}
-	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
-		t.Errorf("root = %q, want the reviewed rename revertible from history", content)
-	}
+	require.NoError(t, repo.DeleteRevision(t.Context(), "01LOCAL", headRevisionID(t, repo, "01LOCAL")))
+	_, _, content, _ := blockRow(t, repo, "01LOCAL")
+	assert.Equal(t, "Local-first", content, "want the reviewed rename revertible from history")
 }
 
 func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
@@ -404,12 +328,9 @@ func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
 		renameBase(t, repo)
 		group := aiRename(t, repo)
 
-		if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
-			t.Fatalf("MarkGroupReviewed: %v", err)
-		}
-		if !reviewedHead(t, repo, "01LOCAL") || !reviewedHead(t, repo, "01NOTE") {
-			t.Error("the batch left something unreviewed")
-		}
+		require.NoError(t, repo.MarkGroupReviewed(t.Context(), group))
+		assert.True(t, reviewedHead(t, repo, "01LOCAL"), "the batch left the root unreviewed")
+		assert.True(t, reviewedHead(t, repo, "01NOTE"), "the batch left the reference unreviewed")
 	})
 
 	t.Run("reject the batch", func(t *testing.T) {
@@ -417,16 +338,11 @@ func TestAWholeRenameIsAcceptedAndRejected(t *testing.T) {
 		renameBase(t, repo)
 		group := aiRename(t, repo)
 
-		if err := repo.UndoGroup(t.Context(), group); err != nil {
-			t.Fatalf("UndoGroup: %v", err)
-		}
-		if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
-			t.Errorf("root = %q, want the rename rolled back", content)
-		}
-		want := "We use [[Local-first]] and [[local-first]] daily."
-		if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != want {
-			t.Errorf("referencing block = %q, want %q", content, want)
-		}
+		require.NoError(t, repo.UndoGroup(t.Context(), group))
+		_, _, content, _ := blockRow(t, repo, "01LOCAL")
+		assert.Equal(t, "Local-first", content, "want the rename rolled back")
+		_, _, content, _ = blockRow(t, repo, "01NOTE")
+		assert.Equal(t, "We use [[Local-first]] and [[local-first]] daily.", content, "referencing block")
 	})
 }
 
@@ -440,63 +356,44 @@ func TestARenameWrittenOverSaysWhyItCannotBeRejected(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
 	group := aiRename(t, repo)
-	if err := ownerOps(t, repo, "01G3",
-		knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by hand."}); err != nil {
-		t.Fatalf("owner edit: %v", err)
-	}
+	require.NoError(t, ownerOps(t, repo, "01G3",
+		knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by hand."}), "owner edit")
 
-	if err := repo.RejectBlock(t.Context(), "01LOCAL"); !errors.Is(err, knowledge.ErrAtomicGroup) {
-		t.Errorf("RejectBlock = %v, want ErrAtomicGroup", err)
-	}
-	if err := repo.UndoGroup(t.Context(), group); !errors.Is(err, knowledge.ErrGroupWrittenOver) {
-		t.Errorf("UndoGroup = %v, want ErrGroupWrittenOver", err)
-	}
-	if err := repo.MarkGroupReviewed(t.Context(), group); err != nil {
-		t.Fatalf("accepting the batch is the route the message names: %v", err)
-	}
+	require.ErrorIs(t, repo.RejectBlock(t.Context(), "01LOCAL"), knowledge.ErrAtomicGroup, "RejectBlock")
+	require.ErrorIs(t, repo.UndoGroup(t.Context(), group), knowledge.ErrGroupWrittenOver, "UndoGroup")
+	require.NoError(t, repo.MarkGroupReviewed(t.Context(), group), "accepting the batch is the route the message names")
 }
 
 // A page that happens to hold the whole group splits nothing, so it goes
 // through: the rule is about leaving half a group behind, not about pages.
 func TestAPageHoldingAWholeRenameIsAccepted(t *testing.T) {
 	repo := testRepo(t)
-	if err := ownerOps(t, repo, "01G1",
+	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG", Content: "About [[Zig]] itself."},
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	), "setup")
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "rename"}
-	if _, err := renameService(repo).ApplyOps(t.Context(), meta,
-		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01ZIG", Content: "Ziglang"}}); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	_, err := renameService(repo).ApplyOps(t.Context(), meta,
+		[]knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "01ZIG", Content: "Ziglang"}})
+	require.NoError(t, err)
 
-	if err := repo.MarkPageReviewed(t.Context(), "01ZIG"); err != nil {
-		t.Fatalf("MarkPageReviewed: %v", err)
-	}
-	if !reviewedHead(t, repo, "01ZIG") || !reviewedHead(t, repo, "01NOTE") {
-		t.Error("the page left something unreviewed")
-	}
+	require.NoError(t, repo.MarkPageReviewed(t.Context(), "01ZIG"))
+	assert.True(t, reviewedHead(t, repo, "01ZIG"), "the page left the root unreviewed")
+	assert.True(t, reviewedHead(t, repo, "01NOTE"), "the page left the reference unreviewed")
 }
 
 // The rule must not spread to batches that are merely large.
 func TestAnOrdinaryBatchIsStillReviewedPerBlock(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
-	if err := repo.ApplyOps(t.Context(), "01G2", aiMeta("two edits"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("two edits"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by the AI."},
 		{Kind: knowledge.OpEdit, BlockID: "01OTHER", Content: "Also rewritten."},
-	}); err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
+	}))
 
-	if err := repo.MarkBlockReviewed(t.Context(), "01NOTE"); err != nil {
-		t.Fatalf("MarkBlockReviewed: %v", err)
-	}
-	if !reviewedHead(t, repo, "01NOTE") || reviewedHead(t, repo, "01OTHER") {
-		t.Error("a plain batch should be reviewable one block at a time")
-	}
+	require.NoError(t, repo.MarkBlockReviewed(t.Context(), "01NOTE"))
+	assert.True(t, reviewedHead(t, repo, "01NOTE"), "the accepted block")
+	assert.False(t, reviewedHead(t, repo, "01OTHER"), "a plain batch should be reviewable one block at a time")
 }
 
 // The Changes screen decides which controls to offer from this flag.
@@ -506,16 +403,11 @@ func TestUnreviewedReportsARenameGroupAsAtomic(t *testing.T) {
 	aiRename(t, repo)
 
 	changes, err := repo.ListUnreviewed(t.Context())
-	if err != nil {
-		t.Fatalf("ListUnreviewed: %v", err)
-	}
-	if len(changes.Blocks) != 2 {
-		t.Fatalf("blocks = %+v, want the root and the rewritten reference", changes.Blocks)
-	}
+	require.NoError(t, err)
+	require.Len(t, changes.Blocks, 2, "want the root and the rewritten reference")
 	for _, b := range changes.Blocks {
-		if !b.Atomic {
-			t.Errorf("block %s is not marked atomic, so the screen would offer per-block buttons", b.Head.BlockID)
-		}
+		assert.True(t, b.Atomic,
+			"block %s is not marked atomic, so the screen would offer per-block buttons", b.Head.BlockID)
 	}
 }
 
@@ -523,50 +415,33 @@ func TestUnreviewedReportsARenameGroupAsAtomic(t *testing.T) {
 func reviewedHead(t *testing.T, repo *Repo, id string) bool {
 	t.Helper()
 	var reviewed bool
-	if err := repo.db.QueryRowContext(t.Context(),
-		`SELECT reviewed FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&reviewed); err != nil {
-		t.Fatalf("read head revision of %s: %v", id, err)
-	}
+	require.NoError(t, repo.db.QueryRowContext(t.Context(),
+		`SELECT reviewed FROM block_revisions WHERE block_id = ? ORDER BY seq DESC LIMIT 1`, id).Scan(&reviewed),
+		"read head revision of %s", id)
 	return reviewed
 }
 
 func TestRenameOntoATakenNameWritesNothing(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
-	if err := ownerOps(t, repo, "01G2",
+	require.NoError(t, ownerOps(t, repo, "01G2",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01OFFLINE", Content: "Offline-first"},
-	); err != nil {
-		t.Fatalf("setup rival topic: %v", err)
-	}
+	), "setup rival topic")
 	revisions, groups := countRows(t, repo, "block_revisions"), countRows(t, repo, "revision_groups")
 	svc := renameService(repo)
 
 	err := svc.EditBlockContent(t.Context(), "01LOCAL", "Offline-first")
-	if !errors.Is(err, knowledge.ErrDuplicateTopic) {
-		t.Fatalf("rename onto a taken name: got %v, want ErrDuplicateTopic", err)
-	}
+	require.ErrorIs(t, err, knowledge.ErrDuplicateTopic)
 
-	if _, _, content, _ := blockRow(t, repo, "01LOCAL"); content != "Local-first" {
-		t.Errorf("root content = %q, want the rejected rename rolled back", content)
-	}
-	if got, want := titleKeyOf(t, repo, "01LOCAL"), "local-first"; got != want {
-		t.Errorf("title_key = %q, want %q", got, want)
-	}
-	want := "We use [[Local-first]] and [[local-first]] daily."
-	if _, _, content, _ := blockRow(t, repo, "01NOTE"); content != want {
-		t.Errorf("referencing block = %q, want the rewrite rolled back too", content)
-	}
-	if got := countRows(t, repo, "block_revisions"); got != revisions {
-		t.Errorf("block_revisions = %d, want %d: the failed batch left revisions behind", got, revisions)
-	}
-	if got := countRows(t, repo, "revision_groups"); got != groups {
-		t.Errorf("revision_groups = %d, want %d: the failed batch left its group behind", got, groups)
-	}
+	_, _, content, _ := blockRow(t, repo, "01LOCAL")
+	assert.Equal(t, "Local-first", content, "want the rejected rename rolled back")
+	assert.Equal(t, "local-first", titleKeyOf(t, repo, "01LOCAL"))
+	_, _, content, _ = blockRow(t, repo, "01NOTE")
+	assert.Equal(t, "We use [[Local-first]] and [[local-first]] daily.", content, "want the rewrite rolled back too")
+	assert.Equal(t, revisions, countRows(t, repo, "block_revisions"), "the failed batch left revisions behind")
+	assert.Equal(t, groups, countRows(t, repo, "revision_groups"), "the failed batch left its group behind")
 	refs, err := repo.BlocksReferencingTopic(t.Context(), "local-first")
-	if err != nil {
-		t.Fatalf("BlocksReferencingTopic: %v", err)
-	}
-	if len(refs) != 1 || refs[0].ID != "01NOTE" {
-		t.Errorf("refs index = %v, want the old reference untouched", refs)
-	}
+	require.NoError(t, err)
+	require.Len(t, refs, 1, "want the old reference untouched")
+	assert.Equal(t, knowledge.ID("01NOTE"), refs[0].ID)
 }

@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,14 +10,14 @@ import (
 	"time"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -34,9 +33,7 @@ func insertBlock(ctx context.Context, t *testing.T, db *sql.DB, id, parent strin
 		INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
 		VALUES (?, ?, ?, ?, '{}', ?, ?)`,
 		id, parentArg, pos, content, now, now)
-	if err != nil {
-		t.Fatalf("insert block %s: %v", id, err)
-	}
+	require.NoError(t, err, "insert block %s", id)
 }
 
 func ids(blocks []knowledge.Block) []knowledge.ID {
@@ -67,20 +64,13 @@ func TestGetSubtree(t *testing.T) {
 	insertBlock(ctx, t, db, "other-child", "other", 0, "Other child")
 
 	got, err := r(db).GetSubtree(ctx, "root")
-	if err != nil {
-		t.Fatalf("GetSubtree: %v", err)
-	}
+	require.NoError(t, err)
 
 	want := []knowledge.ID{"root", "a", "a1", "b"}
-	if g := ids(got); !equalIDs(g, want) {
-		t.Fatalf("GetSubtree order = %v, want %v", g, want)
-	}
-	if got[0].Content != "Root" {
-		t.Fatalf("root content = %q, want Root", got[0].Content)
-	}
-	if got[1].ParentID != "root" || got[1].Position != 0 {
-		t.Fatalf("block a parent/pos = %q/%d, want root/0", got[1].ParentID, got[1].Position)
-	}
+	require.Equal(t, want, ids(got))
+	require.Equal(t, "Root", got[0].Content)
+	require.Equal(t, knowledge.ID("root"), got[1].ParentID)
+	require.Equal(t, 0, got[1].Position)
 }
 
 func TestGetSubtreeLeaf(t *testing.T) {
@@ -90,12 +80,8 @@ func TestGetSubtreeLeaf(t *testing.T) {
 	insertBlock(ctx, t, db, "leaf", "root", 0, "Leaf")
 
 	got, err := r(db).GetSubtree(ctx, "leaf")
-	if err != nil {
-		t.Fatalf("GetSubtree: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "leaf" {
-		t.Fatalf("subtree of a leaf = %v, want [leaf]", ids(got))
-	}
+	require.NoError(t, err)
+	require.Equal(t, []knowledge.ID{"leaf"}, ids(got))
 }
 
 func TestGetSubtreeMissingRoot(t *testing.T) {
@@ -104,9 +90,7 @@ func TestGetSubtreeMissingRoot(t *testing.T) {
 	insertBlock(ctx, t, db, "root", "", 0, "Root")
 
 	_, err := r(db).GetSubtree(ctx, "nope")
-	if !errors.Is(err, knowledge.ErrNotFound) {
-		t.Fatalf("GetSubtree(missing) error = %v, want errors.Is ErrNotFound", err)
-	}
+	require.ErrorIs(t, err, knowledge.ErrNotFound)
 }
 
 func TestGetTopics(t *testing.T) {
@@ -120,25 +104,17 @@ func TestGetTopics(t *testing.T) {
 	insertBlock(ctx, t, db, "deep", "t1a", 0, "Grandchild")
 
 	got, err := r(db).GetTopics(ctx)
-	if err != nil {
-		t.Fatalf("GetTopics: %v", err)
-	}
+	require.NoError(t, err)
 
 	set := map[knowledge.ID]bool{}
 	for _, b := range got {
 		set[b.ID] = true
 	}
 	for _, want := range []knowledge.ID{"t1", "t2", "t1a", "t1b"} {
-		if !set[want] {
-			t.Errorf("GetTopics missing %s; got %v", want, ids(got))
-		}
+		assert.True(t, set[want], "GetTopics missing %s; got %v", want, ids(got))
 	}
-	if set["deep"] {
-		t.Errorf("GetTopics leaked grandchild deep; got %v", ids(got))
-	}
-	if len(got) != 4 {
-		t.Fatalf("GetTopics returned %d blocks, want 4", len(got))
-	}
+	assert.False(t, set["deep"], "GetTopics leaked grandchild deep; got %v", ids(got))
+	require.Len(t, got, 4)
 }
 
 func TestGetTopicsOrdersByPosition(t *testing.T) {
@@ -151,29 +127,15 @@ func TestGetTopicsOrdersByPosition(t *testing.T) {
 	insertBlock(ctx, t, db, "z-a", "z-root", 0, "child a")
 
 	got, err := r(db).GetTopics(ctx)
-	if err != nil {
-		t.Fatalf("GetTopics: %v", err)
-	}
+	require.NoError(t, err)
 	want := []knowledge.ID{"z-root", "z-a", "z-b", "a-root"}
-	gotIDs := ids(got)
-	if len(gotIDs) != len(want) {
-		t.Fatalf("GetTopics = %v, want %v", gotIDs, want)
-	}
-	for i := range want {
-		if gotIDs[i] != want[i] {
-			t.Fatalf("GetTopics order = %v, want %v (roots and children by position)", gotIDs, want)
-		}
-	}
+	require.Equal(t, want, ids(got), "roots and children by position")
 }
 
 func TestGetTopicsEmpty(t *testing.T) {
 	got, err := r(openTestDB(t)).GetTopics(t.Context())
-	if err != nil {
-		t.Fatalf("GetTopics on empty base: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("GetTopics on empty base = %v, want empty", ids(got))
-	}
+	require.NoError(t, err, "GetTopics on empty base")
+	require.Empty(t, got)
 }
 
 func TestSearchFindsContent(t *testing.T) {
@@ -183,12 +145,8 @@ func TestSearchFindsContent(t *testing.T) {
 	insertBlock(ctx, t, db, "b2", "", 1, "python asyncio patterns")
 
 	got, err := r(db).Search(ctx, "pgx")
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(got) != 1 || got[0].Block.ID != "b1" {
-		t.Fatalf("Search(pgx) = %v, want [b1]", hitIDs(got))
-	}
+	require.NoError(t, err)
+	require.Equal(t, []knowledge.ID{"b1"}, hitIDs(got))
 }
 
 func TestSearchMultiWordIsAND(t *testing.T) {
@@ -198,12 +156,8 @@ func TestSearchMultiWordIsAND(t *testing.T) {
 	insertBlock(ctx, t, db, "one", "", 1, "python concurrency")
 
 	got, err := r(db).Search(ctx, "concurrency go")
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(got) != 1 || got[0].Block.ID != "both" {
-		t.Fatalf("Search(concurrency go) = %v, want [both] (implicit AND)", hitIDs(got))
-	}
+	require.NoError(t, err)
+	require.Equal(t, []knowledge.ID{"both"}, hitIDs(got), "implicit AND")
 }
 
 func TestSearchNeutralizesSyntax(t *testing.T) {
@@ -227,12 +181,8 @@ func TestSearchNeutralizesSyntax(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := r(db).Search(ctx, tc.query)
-			if err != nil {
-				t.Fatalf("Search(%q) errored: %v", tc.query, err)
-			}
-			if !equalIDs(hitIDs(got), tc.want) {
-				t.Fatalf("Search(%q) = %v, want %v", tc.query, hitIDs(got), tc.want)
-			}
+			require.NoError(t, err)
+			require.True(t, equalIDs(hitIDs(got), tc.want), "Search(%q) = %v, want %v", tc.query, hitIDs(got), tc.want)
 		})
 	}
 }
@@ -244,12 +194,8 @@ func TestSearchEmptyQuery(t *testing.T) {
 
 	for _, q := range []string{"", "   ", "\t\n"} {
 		got, err := r(db).Search(ctx, q)
-		if err != nil {
-			t.Fatalf("Search(%q): %v", q, err)
-		}
-		if len(got) != 0 {
-			t.Fatalf("Search(%q) = %v, want empty", q, hitIDs(got))
-		}
+		require.NoError(t, err, "Search(%q)", q)
+		require.Empty(t, got, "Search(%q)", q)
 	}
 }
 
@@ -260,31 +206,17 @@ func TestSearchReturnsASnippetAroundTheMatch(t *testing.T) {
 	// snippet is a real excerpt, not the whole block echoed back.
 	filler := strings.Repeat("filler ", 30)
 	doc := "# Marmalade\n\n" + filler + "\n\nCancellation propagates through the tree.\n"
-	if err := repo.ApplyOps(t.Context(), "g1", aiMeta("add"), []knowledge.Op{
+	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: doc, Mode: knowledge.ModeDoc},
-	}); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	}), "apply")
 	hits, err := repo.Search(t.Context(), "propagates")
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if len(hits) != 1 {
-		t.Fatalf("hits = %d, want 1", len(hits))
-	}
+	require.NoError(t, err, "search")
+	require.Len(t, hits, 1)
 	snippet := hits[0].Snippet
-	if !strings.Contains(snippet, "propagates") {
-		t.Errorf("snippet = %q, want it to carry the match", snippet)
-	}
-	if strings.Contains(snippet, "Marmalade") {
-		t.Errorf("snippet = %q, want the far-off opening word excluded — a whole-content snippet would carry it", snippet)
-	}
-	if !strings.Contains(snippet, "…") {
-		t.Errorf("snippet = %q, want the truncation marker: the document is far longer than the snippet window", snippet)
-	}
-	if hits[0].Block.ID != "t1" {
-		t.Errorf("block = %q, want t1", hits[0].Block.ID)
-	}
+	assert.Contains(t, snippet, "propagates")
+	assert.NotContains(t, snippet, "Marmalade", "a whole-content snippet would carry the far-off opening word")
+	assert.Contains(t, snippet, "…", "the document is far longer than the snippet window")
+	assert.Equal(t, knowledge.ID("t1"), hits[0].Block.ID)
 }
 
 func TestGetBlocks(t *testing.T) {
@@ -294,15 +226,11 @@ func TestGetBlocks(t *testing.T) {
 	insertBlock(ctx, t, db, "01B", "01A", 0, "beta")
 
 	got, err := r(db).GetBlocks(ctx, []knowledge.ID{"01A", "01GONE", "01B"})
-	if err != nil {
-		t.Fatalf("GetBlocks: %v", err)
-	}
-	if len(got) != 2 || got["01A"].Content != "alpha" || got["01B"].Content != "beta" {
-		t.Errorf("blocks = %+v, want 01A and 01B", got)
-	}
-	if _, ok := got["01GONE"]; ok {
-		t.Error("a missing id must be absent, not present")
-	}
+	require.NoError(t, err)
+	assert.Len(t, got, 2)
+	assert.Equal(t, "alpha", got["01A"].Content)
+	assert.Equal(t, "beta", got["01B"].Content)
+	assert.NotContains(t, got, knowledge.ID("01GONE"), "a missing id must be absent")
 }
 
 func TestGetBlocksEmptyInput(t *testing.T) {
@@ -310,9 +238,8 @@ func TestGetBlocksEmptyInput(t *testing.T) {
 	db := openTestDB(t)
 
 	got, err := r(db).GetBlocks(ctx, nil)
-	if err != nil || len(got) != 0 {
-		t.Errorf("GetBlocks(nil) = %v, %v, want empty map and no error", got, err)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func r(db *sql.DB) *Repo {
