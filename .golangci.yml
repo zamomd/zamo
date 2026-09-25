@@ -11,9 +11,12 @@ linters:
     - sqlclosecheck
     - depguard
     - lll
+    - testifylint
   settings:
     lll:
       line-length: 120
+    testifylint:
+      enable-all: true
     depguard:
       rules:
         domain-stdlib-only:

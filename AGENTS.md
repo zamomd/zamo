@@ -34,6 +34,9 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
   `for i := range n`, `new(expr)`.
 - `context.Context` is the first argument of every method that crosses
   a boundary.
+- Go tests assert with testify: `require` when the test cannot go on
+  (setup, an unexpected error), `assert` for the checks themselves, and
+  only `assert` off the test goroutine. `testifylint` enforces the rest.
 - Config: `config.toml` (`~/.config/comind/config.toml`) is declarative
   and read-only to the app — safe to be a nix-store symlink. The GUI
   writes a separate mutable layer, `settings.toml`, in the XDG data
