@@ -5,14 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func writeAt(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
 
@@ -30,21 +31,11 @@ model = "claude-sonnet-4-5"
 `)
 
 	r, err := ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Config.LLM.Model != "claude-sonnet-4-5" {
-		t.Errorf("model = %q, want the GUI override", r.Config.LLM.Model)
-	}
-	if r.Origins.Model != OriginGUI {
-		t.Errorf("model origin = %q, want %q", r.Origins.Model, OriginGUI)
-	}
-	if r.Config.LLM.Provider != ProviderAnthropic {
-		t.Errorf("provider = %q, want anthropic", r.Config.LLM.Provider)
-	}
-	if r.Origins.Provider != OriginConfig {
-		t.Errorf("provider origin = %q, want %q", r.Origins.Provider, OriginConfig)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "claude-sonnet-4-5", r.Config.LLM.Model, "want the GUI override")
+	assert.Equal(t, OriginGUI, r.Origins.Model)
+	assert.Equal(t, ProviderAnthropic, r.Config.LLM.Provider)
+	assert.Equal(t, OriginConfig, r.Origins.Provider)
 }
 
 func TestResolveExplicitEmptyOverrideBeatsConfig(t *testing.T) {
@@ -52,18 +43,13 @@ func TestResolveExplicitEmptyOverrideBeatsConfig(t *testing.T) {
 	setPath := writeAt(t, "settings.toml", "[llm]\nmodel = \"\"\n")
 
 	r, err := ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Config.LLM.Model != "" || r.Origins.Model != OriginGUI {
-		t.Errorf("model = %q from %q, want an explicit empty GUI override", r.Config.LLM.Model, r.Origins.Model)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, r.Config.LLM.Model, "want an explicit empty GUI override")
+	assert.Equal(t, OriginGUI, r.Origins.Model)
 }
 
 func TestSchemaEnvironmentName(t *testing.T) {
-	if got := environmentName("llm.base-url"); got != "COMIND_LLM_BASE_URL" {
-		t.Errorf("envName = %q, want COMIND_LLM_BASE_URL", got)
-	}
+	assert.Equal(t, "COMIND_LLM_BASE_URL", environmentName("llm.base-url"))
 }
 
 func TestSchemaResolvesLLMEnvironment(t *testing.T) {
@@ -74,18 +60,13 @@ func TestSchemaResolvesLLMEnvironment(t *testing.T) {
 	r, err := ResolveWith(Config{LLM: LLM{Provider: ProviderAnthropic, Model: "config-model"}}, Overrides{
 		LLM: LLMOverrides{Model: ptr("gui-model")},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Config.LLM.Provider != ProviderOpenAICompat || r.Origins.Provider != OriginEnv {
-		t.Errorf("provider = %q from %q", r.Config.LLM.Provider, r.Origins.Provider)
-	}
-	if r.Config.LLM.Model != "env-model" || r.Origins.Model != OriginEnv {
-		t.Errorf("model = %q from %q", r.Config.LLM.Model, r.Origins.Model)
-	}
-	if r.Config.LLM.BaseURL != "http://localhost:11434/v1" || r.Origins.BaseURL != OriginEnv {
-		t.Errorf("base URL = %q from %q", r.Config.LLM.BaseURL, r.Origins.BaseURL)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenAICompat, r.Config.LLM.Provider)
+	assert.Equal(t, OriginEnv, r.Origins.Provider)
+	assert.Equal(t, "env-model", r.Config.LLM.Model)
+	assert.Equal(t, OriginEnv, r.Origins.Model)
+	assert.Equal(t, "http://localhost:11434/v1", r.Config.LLM.BaseURL)
+	assert.Equal(t, OriginEnv, r.Origins.BaseURL)
 }
 
 func TestResolveDeclarativeIgnoresOverrides(t *testing.T) {
@@ -96,37 +77,21 @@ declarative = true
 model = "claude-opus-4-5"
 `)
 	setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
-	if err := os.WriteFile(setPath, []byte("[llm]\nmodel = \"stale\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(setPath, []byte("[llm]\nmodel = \"stale\"\n"), 0o600))
 
 	r, err := ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !r.Config.Declarative {
-		t.Fatal("Declarative = false, want true")
-	}
-	if r.Config.LLM.Model != "claude-opus-4-5" {
-		t.Errorf("model = %q, want the declared value (settings.toml must be ignored)", r.Config.LLM.Model)
-	}
-	if r.Origins.Model != OriginConfig {
-		t.Errorf("model origin = %q, want %q", r.Origins.Model, OriginConfig)
-	}
+	require.NoError(t, err)
+	require.True(t, r.Config.Declarative)
+	assert.Equal(t, "claude-opus-4-5", r.Config.LLM.Model, "settings.toml must be ignored")
+	assert.Equal(t, OriginConfig, r.Origins.Model)
 }
 
 func TestResolveMissingOverridesIsNotAnError(t *testing.T) {
 	cfgPath := writeAt(t, "config.toml", "")
 	r, err := ResolveFrom(cfgPath, filepath.Join(t.TempDir(), "absent.toml"))
-	if err != nil {
-		t.Fatalf("missing settings.toml must be fine, got: %v", err)
-	}
-	if r.Config.LLM.Provider != "" {
-		t.Errorf("provider = %q, want empty (no provider is the supported default)", r.Config.LLM.Provider)
-	}
-	if r.Origins.Provider != OriginDefault {
-		t.Errorf("provider origin = %q, want %q", r.Origins.Provider, OriginDefault)
-	}
+	require.NoError(t, err, "missing settings.toml must be fine")
+	assert.Empty(t, r.Config.LLM.Provider, "no provider is the supported default")
+	assert.Equal(t, OriginDefault, r.Origins.Provider)
 }
 
 func TestResolvedAPIKeyPrecedence(t *testing.T) {
@@ -146,36 +111,20 @@ api_key = "from-gui"
 `)
 
 	r, err := ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	key, err := r.APIKeyValue()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key != "from-gui" {
-		t.Errorf("key = %q, want from-gui", key)
-	}
-	if r.Origins.APIKey != OriginGUI {
-		t.Errorf("key origin = %q, want %q", r.Origins.APIKey, OriginGUI)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "from-gui", key)
+	assert.Equal(t, OriginGUI, r.Origins.APIKey)
 
 	t.Setenv("ANTHROPIC_API_KEY", "from-env")
 	r, err = ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	key, err = r.APIKeyValue()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key != "from-env" {
-		t.Errorf("key = %q, want from-env", key)
-	}
-	if r.Origins.APIKey != OriginEnv {
-		t.Errorf("key origin = %q, want %q", r.Origins.APIKey, OriginEnv)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "from-env", key)
+	assert.Equal(t, OriginEnv, r.Origins.APIKey)
 }
 
 func TestAPIKeyValueIsReadLazily(t *testing.T) {
@@ -186,65 +135,41 @@ func TestAPIKeyValueIsReadLazily(t *testing.T) {
 	cfgPath := writeAt(t, "config.toml", "[llm]\napi_key_file = \""+keyFile+"\"\n")
 
 	r, err := ResolveFrom(cfgPath, filepath.Join(t.TempDir(), "absent.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key, _ := r.APIKeyValue(); key != "old" {
-		t.Fatalf("key = %q, want old", key)
-	}
+	require.NoError(t, err)
+	key, _ := r.APIKeyValue()
+	require.Equal(t, "old", key)
 
-	if err := os.WriteFile(keyFile, []byte("new\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	key, err := r.APIKeyValue()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key != "new" {
-		t.Errorf("key = %q, want new (the file must be re-read on every call)", key)
-	}
-	if r.Origins.APIKey != OriginKeyFile {
-		t.Errorf("key origin = %q, want %q", r.Origins.APIKey, OriginKeyFile)
-	}
+	require.NoError(t, os.WriteFile(keyFile, []byte("new\n"), 0o600))
+	key, err = r.APIKeyValue()
+	require.NoError(t, err)
+	assert.Equal(t, "new", key, "the file must be re-read on every call")
+	assert.Equal(t, OriginKeyFile, r.Origins.APIKey)
 }
 
 func TestSaveOverridesRoundTripsAndIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.toml")
 	o := Overrides{LLM: LLMOverrides{Model: ptr("qwen3"), APIKey: "secret"}}
-	if err := SaveOverrides(path, o); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, SaveOverrides(path, o))
 
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("mode = %o, want 600 (the file holds an API key)", perm)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the file holds an API key")
 
 	got, err := LoadOverrides(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.AIEnabled != nil || got.LLM.Provider != nil || got.LLM.BaseURL != nil ||
-		got.LLM.Model == nil || *got.LLM.Model != "qwen3" || got.LLM.APIKey != "secret" {
-		t.Errorf("round trip = %+v, want %+v", got, o)
-	}
+	require.NoError(t, err)
+	assert.Nil(t, got.AIEnabled)
+	assert.Nil(t, got.LLM.Provider)
+	assert.Nil(t, got.LLM.BaseURL)
+	assert.Equal(t, ptr("qwen3"), got.LLM.Model)
+	assert.Equal(t, "secret", got.LLM.APIKey)
 }
 
 func TestSaveOverridesOmitsUnsetFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.toml")
-	if err := SaveOverrides(path, Overrides{LLM: LLMOverrides{Model: ptr("qwen3")}}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, SaveOverrides(path, Overrides{LLM: LLMOverrides{Model: ptr("qwen3")}}))
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "provider") {
-		t.Errorf("file mentions an unset field:\n%s", raw)
-	}
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "provider", "file mentions an unset field")
 }
 
 func TestLoadOverridesAcceptsUnknownKeys(t *testing.T) {
@@ -254,11 +179,9 @@ func TestLoadOverridesAcceptsUnknownKeys(t *testing.T) {
 		"future = true\n\n[llm]\n",
 	} {
 		o, err := LoadOverrides(writeAt(t, "settings.toml", content))
-		if err != nil {
-			t.Errorf("LoadOverrides(%q): %v", content, err)
-		}
-		if strings.Contains(content, "qwen3") && (o.LLM.Model == nil || *o.LLM.Model != "qwen3") {
-			t.Errorf("model = %v, want qwen3", o.LLM.Model)
+		require.NoError(t, err, content)
+		if strings.Contains(content, "qwen3") {
+			assert.Equal(t, ptr("qwen3"), o.LLM.Model, content)
 		}
 	}
 }
@@ -266,21 +189,13 @@ func TestLoadOverridesAcceptsUnknownKeys(t *testing.T) {
 func TestSaveOverridesPreservesUnknownKeys(t *testing.T) {
 	path := writeAt(t, "settings.toml", "future = false\n[llm]\nmodel = \"qwen3\"\ntemperature = 0.7\n")
 	o, err := LoadOverrides(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	o.LLM.Model = ptr("llama4")
-	if err := SaveOverrides(path, o); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, SaveOverrides(path, o))
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{"future", "false", "temperature", "0.7", "llama4"} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("file lost %q:\n%s", want, raw)
-		}
+		assert.Contains(t, string(raw), want)
 	}
 }
 
@@ -356,21 +271,13 @@ func TestAIEnabledPrecedence(t *testing.T) {
 			cfgPath := writeAt(t, "config.toml", tt.config)
 			setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
 			if tt.settings != "" {
-				if err := os.WriteFile(setPath, []byte(tt.settings), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(setPath, []byte(tt.settings), 0o600))
 			}
 
 			r, err := ResolveFrom(cfgPath, setPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := r.AIEnabled(); got != tt.want {
-				t.Errorf("AIEnabled() = %v, want %v", got, tt.want)
-			}
-			if r.Origins.AIEnabled != tt.wantOrigin {
-				t.Errorf("origin = %q, want %q", r.Origins.AIEnabled, tt.wantOrigin)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, r.AIEnabled())
+			assert.Equal(t, tt.wantOrigin, r.Origins.AIEnabled)
 		})
 	}
 }
@@ -383,12 +290,7 @@ func TestAIEnabledRejectsUnparsableEnv(t *testing.T) {
 
 	cfgPath := writeAt(t, "config.toml", "")
 	_, err := ResolveFrom(cfgPath, filepath.Join(filepath.Dir(cfgPath), "settings.toml"))
-	if err == nil {
-		t.Fatal("resolve succeeded, want an error naming the variable")
-	}
-	if !strings.Contains(err.Error(), aiEnv) {
-		t.Errorf("error %q does not name %s", err, aiEnv)
-	}
+	require.ErrorContains(t, err, aiEnv)
 }
 
 // Turning AI off must not cost the user their provider configuration.
@@ -405,21 +307,11 @@ base_url = "http://localhost:11434/v1"
 `)
 
 	r, err := ResolveFrom(cfgPath, filepath.Join(filepath.Dir(cfgPath), "settings.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.AIEnabled() {
-		t.Fatal("AIEnabled() = true, want false")
-	}
-	if r.Config.LLM.Provider != ProviderOpenAICompat {
-		t.Errorf("provider = %q, want it preserved while AI is off", r.Config.LLM.Provider)
-	}
-	if r.Config.LLM.Model != "qwen2.5:3b" {
-		t.Errorf("model = %q, want it preserved while AI is off", r.Config.LLM.Model)
-	}
-	if r.Config.LLM.BaseURL != "http://localhost:11434/v1" {
-		t.Errorf("base URL = %q, want it preserved while AI is off", r.Config.LLM.BaseURL)
-	}
+	require.NoError(t, err)
+	require.False(t, r.AIEnabled())
+	assert.Equal(t, ProviderOpenAICompat, r.Config.LLM.Provider)
+	assert.Equal(t, "qwen2.5:3b", r.Config.LLM.Model)
+	assert.Equal(t, "http://localhost:11434/v1", r.Config.LLM.BaseURL)
 }
 
 func TestNoProviderIgnoresEnvAPIKey(t *testing.T) {
@@ -430,20 +322,11 @@ func TestNoProviderIgnoresEnvAPIKey(t *testing.T) {
 	setPath := filepath.Join(filepath.Dir(cfgPath), "settings.toml")
 
 	r, err := ResolveFrom(cfgPath, setPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	if r.Config.LLM.Provider != "" {
-		t.Errorf("provider = %q, want empty (AI off)", r.Config.LLM.Provider)
-	}
-	if r.Origins.APIKey == OriginEnv {
-		t.Errorf("key origin = OriginEnv, must not be env-locked when provider is empty")
-	}
-	if r.APIKeySet() {
-		t.Errorf("APIKeySet = true, want false (no provider means no key is set)")
-	}
-	if key, _ := r.APIKeyValue(); key != "" {
-		t.Errorf("key value = %q, want empty when provider is empty", key)
-	}
+	assert.Empty(t, r.Config.LLM.Provider)
+	assert.NotEqual(t, OriginEnv, r.Origins.APIKey, "must not be env-locked when provider is empty")
+	assert.False(t, r.APIKeySet(), "no provider means no key is set")
+	key, _ := r.APIKeyValue()
+	assert.Empty(t, key)
 }

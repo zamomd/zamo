@@ -2,17 +2,17 @@ package openaicompat
 
 import (
 	"encoding/json/v2"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const tree = `{"content":"# Go contexts","children":[` +
@@ -36,54 +36,34 @@ func newTestClient(t *testing.T, apiKey string, handler http.HandlerFunc) *Clien
 func TestGenerateTreeParsesReply(t *testing.T) {
 	var gotBody map[string]any
 	c := newTestClient(t, "test-key", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/chat/completions" {
-			t.Errorf("request = %s %s, want POST /chat/completions", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("Authorization = %q, want Bearer test-key", got)
-		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Errorf("Content-Type = %q, want application/json", ct)
-		}
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/chat/completions", r.URL.Path)
+		assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("request body is not JSON: %v", err)
-		}
+		assert.NoError(t, json.Unmarshal(body, &gotBody), "request body is not JSON")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, chatReply(tree))
 	})
 
 	ops, err := c.GenerateTree(t.Context(), "Go contexts", "cancellation")
-	if err != nil {
-		t.Fatalf("GenerateTree: %v", err)
-	}
-	if len(ops) != 2 {
-		t.Fatalf("got %d ops, want 2: %+v", len(ops), ops)
-	}
-	if ops[0].Content != "# Go contexts" || ops[0].Parent != "" {
-		t.Errorf("root op = %+v, want the topic heading at the root", ops[0])
-	}
-	if ops[1].Parent != ops[0].TempID {
-		t.Errorf("child parent = %q, want the root temp id %q", ops[1].Parent, ops[0].TempID)
-	}
-	if model, _ := gotBody["model"].(string); model != "llama3" {
-		t.Errorf("model = %q, want llama3", gotBody["model"])
-	}
-	if mt, _ := gotBody["max_tokens"].(float64); mt <= 0 {
-		t.Errorf("max_tokens = %v, want a positive budget", gotBody["max_tokens"])
-	}
-	if !strings.Contains(bodyText(gotBody), "Go contexts") {
-		t.Errorf("request did not carry the topic to the model: %v", gotBody["messages"])
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2)
+	assert.Equal(t, "# Go contexts", ops[0].Content)
+	assert.Empty(t, ops[0].Parent, "want the topic heading at the root")
+	assert.Equal(t, ops[0].TempID, ops[1].Parent, "child must hang under the root")
+	model, _ := gotBody["model"].(string)
+	assert.Equal(t, "llama3", model)
+	mt, _ := gotBody["max_tokens"].(float64)
+	assert.Positive(t, mt, "want a positive max_tokens budget")
+	assert.Contains(t, bodyText(gotBody), "Go contexts", "request did not carry the topic to the model")
 }
 
 func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 	var gotBody map[string]any
 	c := newTestClient(t, "test-key", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("request body is not JSON: %v", err)
-		}
+		assert.NoError(t, json.Unmarshal(body, &gotBody), "request body is not JSON")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, chatReply(
 			`[{"op":"edit","block_id":"01A","content":"revised"},`+
@@ -92,50 +72,38 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 
 	scope := []knowledge.Block{{ID: "01A", Content: "old text"}, {ID: "01B", Content: "remove me"}}
 	ops, err := c.GenerateEdit(t.Context(), scope, "revise the first, drop the second")
-	if err != nil {
-		t.Fatalf("GenerateEdit: %v", err)
-	}
-	if len(ops) != 2 || ops[0].Kind != knowledge.OpEdit || ops[1].Kind != knowledge.OpDelete {
-		t.Fatalf("ops = %+v, want an edit and a delete", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2)
+	require.Equal(t, knowledge.OpEdit, ops[0].Kind)
+	require.Equal(t, knowledge.OpDelete, ops[1].Kind)
 	prompt := bodyText(gotBody)
-	if !strings.Contains(prompt, "revise the first, drop the second") || !strings.Contains(prompt, "01A") {
-		t.Errorf("request did not carry the instruction and scope to the model:\n%s", prompt)
-	}
+	assert.Contains(t, prompt, "revise the first, drop the second", "request did not carry the instruction")
+	assert.Contains(t, prompt, "01A", "request did not carry the scope")
 }
 
 func TestGenerateTreeWorksWithoutAPIKey(t *testing.T) {
 	c := newTestClient(t, "", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := r.Header["Authorization"]; ok {
-			t.Errorf("Authorization header sent with no key: %q", r.Header.Get("Authorization"))
-		}
+		assert.NotContains(t, r.Header, "Authorization", "Authorization header sent with no key")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, chatReply(tree))
 	})
 
 	ops, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if err != nil {
-		t.Fatalf("GenerateTree without a key: %v", err)
-	}
-	if len(ops) != 2 {
-		t.Errorf("got %d ops, want 2", len(ops))
-	}
+	require.NoError(t, err)
+	assert.Len(t, ops, 2)
 }
 
 func TestGenerateTreeTrimsTrailingSlashOnBaseURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
-		}
+		assert.Equal(t, "/chat/completions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, chatReply(tree))
 	}))
 	t.Cleanup(srv.Close)
 
 	c := New(srv.URL+"/", staticKey("test-key"), "llama3")
-	if _, err := c.GenerateTree(t.Context(), "Go contexts", ""); err != nil {
-		t.Fatalf("GenerateTree with trailing slash: %v", err)
-	}
+	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
+	require.NoError(t, err)
 }
 
 func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
@@ -147,9 +115,7 @@ func TestGenerateTreeReadsOnlyTheFirstChoice(t *testing.T) {
 	})
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMBadResponse) {
-		t.Errorf("error = %v, want ErrLLMBadResponse (empty first choice, no splicing)", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMBadResponse, "empty first choice, no splicing")
 }
 
 func TestPingChecksModelsEndpoint(t *testing.T) {
@@ -162,15 +128,9 @@ func TestPingChecksModelsEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := New(srv.URL+"/v1", staticKey("test-key"), "llama3")
-	if err := c.Ping(t.Context()); err != nil {
-		t.Fatalf("Ping = %v, want nil", err)
-	}
-	if gotPath != "/v1/models" {
-		t.Errorf("path = %q, want /v1/models", gotPath)
-	}
-	if gotAuth != "Bearer test-key" {
-		t.Errorf("Authorization = %q, want Bearer test-key", gotAuth)
-	}
+	require.NoError(t, c.Ping(t.Context()))
+	assert.Equal(t, "/v1/models", gotPath)
+	assert.Equal(t, "Bearer test-key", gotAuth)
 }
 
 func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
@@ -183,12 +143,8 @@ func TestPingWithoutKeyOmitsAuthorization(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := New(srv.URL+"/v1", staticKey(""), "llama3")
-	if err := c.Ping(t.Context()); err != nil {
-		t.Fatalf("Ping = %v, want nil", err)
-	}
-	if hadAuth {
-		t.Error("Authorization header sent with an empty key, want none")
-	}
+	require.NoError(t, c.Ping(t.Context()))
+	assert.False(t, hadAuth, "Authorization header sent with an empty key")
 }
 
 func TestGenerateTreeMapsErrors(t *testing.T) {
@@ -247,14 +203,10 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, "test-key", tc.handler)
 			ops, err := c.GenerateTree(t.Context(), "Go contexts", "")
-			if !errors.Is(err, tc.want) {
-				t.Errorf("error = %v, want %v", err, tc.want)
-			}
-			if ops != nil {
-				t.Errorf("ops = %+v, want nil on error", ops)
-			}
-			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
-				t.Errorf("error %q does not surface the API message %q", err, tc.wantMsg)
+			require.ErrorIs(t, err, tc.want)
+			assert.Nil(t, ops)
+			if tc.wantMsg != "" {
+				assert.ErrorContains(t, err, tc.wantMsg, "error does not surface the API message")
 			}
 		})
 	}
@@ -267,9 +219,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 
 	c := New(url, staticKey("test-key"), "llama3")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
 }
 
 func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
@@ -283,12 +233,9 @@ func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
 	})
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) || !strings.Contains(err.Error(), "307") {
-		t.Errorf("error = %v, want ErrLLMUnavailable with HTTP 307", err)
-	}
-	if followed.Load() {
-		t.Error("the prompt was re-POSTed to the redirect target")
-	}
+	require.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
+	require.ErrorContains(t, err, "307")
+	assert.False(t, followed.Load(), "the prompt was re-POSTed to the redirect target")
 }
 
 func TestGenerateTreeReportsProgressPhases(t *testing.T) {
@@ -302,15 +249,12 @@ func TestGenerateTreeReportsProgressPhases(t *testing.T) {
 		phases = append(phases, p.Phase)
 	})
 
-	if _, err := c.GenerateTree(ctx, "Go contexts", ""); err != nil {
-		t.Fatalf("GenerateTree: %v", err)
-	}
+	_, err := c.GenerateTree(ctx, "Go contexts", "")
+	require.NoError(t, err)
 	want := []knowledge.GenerationPhase{
 		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
 	}
-	if !slices.Equal(phases, want) {
-		t.Errorf("phases = %v, want %v", phases, want)
-	}
+	assert.Equal(t, want, phases)
 }
 
 func TestGenerateEditReportsProgressPhases(t *testing.T) {
@@ -325,15 +269,12 @@ func TestGenerateEditReportsProgressPhases(t *testing.T) {
 	})
 
 	scope := []knowledge.Block{{ID: "01A", Content: "old"}}
-	if _, err := c.GenerateEdit(ctx, scope, "revise it"); err != nil {
-		t.Fatalf("GenerateEdit: %v", err)
-	}
+	_, err := c.GenerateEdit(ctx, scope, "revise it")
+	require.NoError(t, err)
 	want := []knowledge.GenerationPhase{
 		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
 	}
-	if !slices.Equal(phases, want) {
-		t.Errorf("phases = %v, want %v", phases, want)
-	}
+	assert.Equal(t, want, phases)
 }
 
 func TestGenerateDocumentReportsProgressPhasesAndSkipsParsing(t *testing.T) {
@@ -349,16 +290,10 @@ func TestGenerateDocumentReportsProgressPhasesAndSkipsParsing(t *testing.T) {
 	})
 
 	got, err := c.GenerateDocument(ctx, "Go contexts", "")
-	if err != nil {
-		t.Fatalf("GenerateDocument: %v", err)
-	}
-	if got != doc {
-		t.Errorf("GenerateDocument = %q, want the model's text unparsed: %q", got, doc)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, doc, got, "want the model's text unparsed")
 	want := []knowledge.GenerationPhase{knowledge.PhaseRequesting, knowledge.PhaseAwaiting}
-	if !slices.Equal(phases, want) {
-		t.Errorf("phases = %v, want %v (no parsing phase for a document)", phases, want)
-	}
+	assert.Equal(t, want, phases, "no parsing phase for a document")
 }
 
 func TestGenerateDocumentEditReportsProgressPhasesAndSkipsParsing(t *testing.T) {
@@ -375,16 +310,10 @@ func TestGenerateDocumentEditReportsProgressPhasesAndSkipsParsing(t *testing.T) 
 
 	original := knowledge.Block{ID: "01A", Content: "# Go contexts\n\nOld body."}
 	got, err := c.GenerateDocumentEdit(ctx, original, "rewrite the body")
-	if err != nil {
-		t.Fatalf("GenerateDocumentEdit: %v", err)
-	}
-	if got != doc {
-		t.Errorf("GenerateDocumentEdit = %q, want the model's text unparsed: %q", got, doc)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, doc, got, "want the model's text unparsed")
 	want := []knowledge.GenerationPhase{knowledge.PhaseRequesting, knowledge.PhaseAwaiting}
-	if !slices.Equal(phases, want) {
-		t.Errorf("phases = %v, want %v (no parsing phase for a document)", phases, want)
-	}
+	assert.Equal(t, want, phases, "no parsing phase for a document")
 }
 
 func bodyText(body map[string]any) string {

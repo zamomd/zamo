@@ -1,13 +1,11 @@
 package llm
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,9 +136,7 @@ func TestParseOps(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(knowledge.Op{})); diff != "" {
-				t.Fatalf("ParseOps ops mismatch (-want +got):\n%s", diff)
-			}
+			require.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -150,15 +146,9 @@ func TestParseOpsCapsDepth(t *testing.T) {
 		`{"content":"d4","children":[{"content":"d5","children":[{"content":"d6","children":[` +
 		`{"content":"d7"}]}]}]}]}]}]}`
 	got, err := ParseOps([]byte(raw))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 5 {
-		t.Fatalf("kept %d blocks, want 5 (depth cap)", len(got))
-	}
-	if got[4].Content != "d5" {
-		t.Fatalf("deepest kept content = %q, want d5", got[4].Content)
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 5, "depth cap")
+	require.Equal(t, "d5", got[4].Content)
 }
 
 func TestParseOpsCapsCount(t *testing.T) {
@@ -173,53 +163,37 @@ func TestParseOpsCapsCount(t *testing.T) {
 	b.WriteString(`]}`)
 
 	got, err := ParseOps([]byte(b.String()))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 60 {
-		t.Fatalf("kept %d blocks, want 60 (count cap)", len(got))
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 60, "count cap")
 }
 
 func TestParseOpsRejectsOversizedReply(t *testing.T) {
 	raw := `{"content":"` + strings.Repeat("x", 2<<20) + `"}`
-	if _, err := ParseOps([]byte(raw)); !errors.Is(err, knowledge.ErrLLMBadResponse) {
-		t.Fatalf("oversized reply error = %v, want errors.Is %v", err, knowledge.ErrLLMBadResponse)
-	}
+	_, err := ParseOps([]byte(raw))
+	require.ErrorIs(t, err, knowledge.ErrLLMBadResponse)
 }
 
 func TestParseOpsAcceptsReplyAtSizeLimit(t *testing.T) {
 	overhead := len(`{"content":""}`)
 	raw := `{"content":"` + strings.Repeat("x", maxReplyBytes-overhead) + `"}`
-	if len(raw) != maxReplyBytes {
-		t.Fatalf("test setup: raw is %d bytes, want %d", len(raw), maxReplyBytes)
-	}
+	require.Len(t, raw, maxReplyBytes, "test setup")
 	got, err := ParseOps([]byte(raw))
-	if err != nil {
-		t.Fatalf("reply at the size limit was rejected: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("kept %d blocks, want 1", len(got))
-	}
+	require.NoError(t, err, "reply at the size limit was rejected")
+	require.Len(t, got, 1)
 }
 
 func TestParseOpsIgnoresBracesInsideContent(t *testing.T) {
 	content := `a \" b \\ c ` + strings.Repeat("{", 4*maxNestDepth)
 	raw := `{"content":"` + content + `"}`
 	got, err := ParseOps([]byte(raw))
-	if err != nil {
-		t.Fatalf("in-content braces were miscounted as nesting: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("kept %d blocks, want 1", len(got))
-	}
+	require.NoError(t, err, "in-content braces were miscounted as nesting")
+	require.Len(t, got, 1)
 }
 
 func TestParseOpsRejectsDeeplyNestedReply(t *testing.T) {
 	const depth = 500
 	raw := strings.Repeat(`{"content":"x","children":[`, depth) +
 		`{"content":"leaf"}` + strings.Repeat(`]}`, depth)
-	if _, err := ParseOps([]byte(raw)); !errors.Is(err, knowledge.ErrLLMBadResponse) {
-		t.Fatalf("deeply nested reply error = %v, want errors.Is %v", err, knowledge.ErrLLMBadResponse)
-	}
+	_, err := ParseOps([]byte(raw))
+	require.ErrorIs(t, err, knowledge.ErrLLMBadResponse)
 }

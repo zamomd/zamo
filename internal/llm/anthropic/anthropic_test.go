@@ -2,17 +2,17 @@ package anthropic
 
 import (
 	"encoding/json/v2"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/cominddev/comind/internal/llm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func staticKey(key string) llm.KeySource {
@@ -31,22 +31,13 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 func TestGenerateTreeParsesReply(t *testing.T) {
 	var gotBody map[string]any
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
-			t.Errorf("request = %s %s, want POST /v1/messages", r.Method, r.URL.Path)
-		}
-		if got := r.Header.Get("X-Api-Key"); got != "test-key" {
-			t.Errorf("X-Api-Key = %q, want test-key", got)
-		}
-		if r.Header.Get("Anthropic-Version") == "" {
-			t.Error("Anthropic-Version header is missing")
-		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Errorf("Content-Type = %q, want application/json", ct)
-		}
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v1/messages", r.URL.Path)
+		assert.Equal(t, "test-key", r.Header.Get("X-Api-Key"))
+		assert.NotEmpty(t, r.Header.Get("Anthropic-Version"), "Anthropic-Version header is missing")
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("request body is not JSON: %v", err)
-		}
+		assert.NoError(t, json.Unmarshal(body, &gotBody), "request body is not JSON")
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":`+
@@ -56,29 +47,17 @@ func TestGenerateTreeParsesReply(t *testing.T) {
 	})
 
 	ops, err := c.GenerateTree(t.Context(), "Go contexts", "cancellation")
-	if err != nil {
-		t.Fatalf("GenerateTree: %v", err)
-	}
-	if len(ops) != 2 {
-		t.Fatalf("got %d ops, want 2: %+v", len(ops), ops)
-	}
-	if ops[0].Content != "# Go contexts" || ops[0].Parent != "" {
-		t.Errorf("root op = %+v, want the topic heading at the root", ops[0])
-	}
-	if ops[1].Parent != ops[0].TempID {
-		t.Errorf("child parent = %q, want the root temp id %q", ops[1].Parent, ops[0].TempID)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2)
+	assert.Equal(t, "# Go contexts", ops[0].Content)
+	assert.Empty(t, ops[0].Parent, "want the topic heading at the root")
+	assert.Equal(t, ops[0].TempID, ops[1].Parent, "child must hang under the root")
 
 	model, _ := gotBody["model"].(string)
-	if model == "" {
-		t.Error("request omitted the model")
-	}
-	if mt, _ := gotBody["max_tokens"].(float64); mt <= 0 {
-		t.Errorf("max_tokens = %v, want a positive budget", gotBody["max_tokens"])
-	}
-	if !strings.Contains(bodyText(gotBody), "Go contexts") {
-		t.Errorf("request did not carry the topic to the model: %v", gotBody["messages"])
-	}
+	assert.NotEmpty(t, model, "request omitted the model")
+	mt, _ := gotBody["max_tokens"].(float64)
+	assert.Positive(t, mt, "want a positive max_tokens budget")
+	assert.Contains(t, bodyText(gotBody), "Go contexts", "request did not carry the topic to the model")
 }
 
 func TestGenerateTreeReadsKeyPerRequest(t *testing.T) {
@@ -94,18 +73,13 @@ func TestGenerateTreeReadsKeyPerRequest(t *testing.T) {
 	c := New(func() (string, error) { return key, nil }, "")
 	c.baseURL = srv.URL
 
-	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err := c.GenerateTree(t.Context(), "go", "")
+	require.NoError(t, err)
 	key = "new"
-	if _, err := c.GenerateTree(t.Context(), "go", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err = c.GenerateTree(t.Context(), "go", "")
+	require.NoError(t, err)
 
-	want := []string{"old", "new"}
-	if !slices.Equal(gotKeys, want) {
-		t.Errorf("keys sent = %v, want %v (key must be read per request, not cached)", gotKeys, want)
-	}
+	assert.Equal(t, []string{"old", "new"}, gotKeys, "key must be read per request, not cached")
 }
 
 func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
@@ -121,16 +95,13 @@ func TestGenerateEditParsesReplyAndCarriesScope(t *testing.T) {
 
 	scope := []knowledge.Block{{ID: "01A", Content: "old text"}, {ID: "01B", Content: "remove me"}}
 	ops, err := c.GenerateEdit(t.Context(), scope, "revise the first, drop the second")
-	if err != nil {
-		t.Fatalf("GenerateEdit: %v", err)
-	}
-	if len(ops) != 2 || ops[0].Kind != knowledge.OpEdit || ops[1].Kind != knowledge.OpDelete {
-		t.Fatalf("ops = %+v, want an edit and a delete", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2)
+	require.Equal(t, knowledge.OpEdit, ops[0].Kind)
+	require.Equal(t, knowledge.OpDelete, ops[1].Kind)
 	prompt := bodyText(gotBody)
-	if !strings.Contains(prompt, "revise the first, drop the second") || !strings.Contains(prompt, "01A") {
-		t.Errorf("request did not carry the instruction and scope to the model:\n%s", prompt)
-	}
+	assert.Contains(t, prompt, "revise the first, drop the second", "request did not carry the instruction")
+	assert.Contains(t, prompt, "01A", "request did not carry the scope")
 }
 
 func TestPingChecksModelsEndpoint(t *testing.T) {
@@ -140,15 +111,9 @@ func TestPingChecksModelsEndpoint(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[]}`)
 	})
-	if err := c.Ping(t.Context()); err != nil {
-		t.Fatalf("Ping = %v, want nil", err)
-	}
-	if gotPath != "/v1/models" {
-		t.Errorf("path = %q, want /v1/models", gotPath)
-	}
-	if gotKey != "test-key" {
-		t.Errorf("X-Api-Key = %q, want test-key", gotKey)
-	}
+	require.NoError(t, c.Ping(t.Context()))
+	assert.Equal(t, "/v1/models", gotPath)
+	assert.Equal(t, "test-key", gotKey)
 }
 
 func TestPingMapsUnauthorized(t *testing.T) {
@@ -157,17 +122,13 @@ func TestPingMapsUnauthorized(t *testing.T) {
 		_, _ = io.WriteString(w, `{"error":{"message":"invalid x-api-key"}}`)
 	})
 	err := c.Ping(t.Context())
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
 }
 
 func TestGenerateEditMissingKeyIsUnavailable(t *testing.T) {
 	c := New(staticKey(""), "")
 	_, err := c.GenerateEdit(t.Context(), []knowledge.Block{{ID: "01A", Content: "x"}}, "do a thing")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
 }
 
 func TestGenerateTreeMapsErrors(t *testing.T) {
@@ -226,14 +187,10 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, tc.handler)
 			ops, err := c.GenerateTree(t.Context(), "Go contexts", "")
-			if !errors.Is(err, tc.want) {
-				t.Errorf("error = %v, want %v", err, tc.want)
-			}
-			if ops != nil {
-				t.Errorf("ops = %+v, want nil on error", ops)
-			}
-			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
-				t.Errorf("error %q does not surface the API message %q", err, tc.wantMsg)
+			require.ErrorIs(t, err, tc.want)
+			assert.Nil(t, ops)
+			if tc.wantMsg != "" {
+				assert.ErrorContains(t, err, tc.wantMsg, "error does not surface the API message")
 			}
 		})
 	}
@@ -242,9 +199,7 @@ func TestGenerateTreeMapsErrors(t *testing.T) {
 func TestGenerateTreeMissingKeyIsUnavailable(t *testing.T) {
 	c := New(staticKey(""), "")
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
 }
 
 func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
@@ -255,9 +210,7 @@ func TestGenerateTreeTransportFailureIsUnavailable(t *testing.T) {
 	c.baseURL = url
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
+	assert.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
 }
 
 func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
@@ -271,12 +224,9 @@ func TestGenerateTreeDoesNotFollowRedirects(t *testing.T) {
 	})
 
 	_, err := c.GenerateTree(t.Context(), "Go contexts", "")
-	if !errors.Is(err, knowledge.ErrLLMUnavailable) || !strings.Contains(err.Error(), "307") {
-		t.Errorf("error = %v, want ErrLLMUnavailable with HTTP 307", err)
-	}
-	if followed.Load() {
-		t.Error("the prompt was re-POSTed to the redirect target")
-	}
+	require.ErrorIs(t, err, knowledge.ErrLLMUnavailable)
+	require.ErrorContains(t, err, "307")
+	assert.False(t, followed.Load(), "the prompt was re-POSTed to the redirect target")
 }
 
 func TestGenerateTreeReportsProgressPhases(t *testing.T) {
@@ -291,15 +241,12 @@ func TestGenerateTreeReportsProgressPhases(t *testing.T) {
 		phases = append(phases, p.Phase)
 	})
 
-	if _, err := c.GenerateTree(ctx, "Go contexts", ""); err != nil {
-		t.Fatalf("GenerateTree: %v", err)
-	}
+	_, err := c.GenerateTree(ctx, "Go contexts", "")
+	require.NoError(t, err)
 	want := []knowledge.GenerationPhase{
 		knowledge.PhaseRequesting, knowledge.PhaseAwaiting, knowledge.PhaseParsing,
 	}
-	if !slices.Equal(phases, want) {
-		t.Errorf("phases = %v, want %v", phases, want)
-	}
+	assert.Equal(t, want, phases)
 }
 
 func bodyText(body map[string]any) string {

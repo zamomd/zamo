@@ -1,11 +1,12 @@
 package llm
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseEditOpsMapsEveryKind(t *testing.T) {
@@ -16,36 +17,29 @@ func TestParseEditOpsMapsEveryKind(t *testing.T) {
 		{"op":"delete","block_id":"01C"}
 	]`)
 	ops, err := ParseEditOps(raw)
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 4 {
-		t.Fatalf("got %d ops, want 4: %+v", len(ops), ops)
-	}
-	if ops[0].Kind != knowledge.OpEdit || ops[0].BlockID != "01A" || ops[0].Content != "revised" {
-		t.Errorf("edit op = %+v", ops[0])
-	}
-	if ops[1].Kind != knowledge.OpAdd || ops[1].TempID != "t1" || ops[1].Parent != "01A" || ops[1].Content != "new child" {
-		t.Errorf("add op = %+v", ops[1])
-	}
-	if ops[2].Kind != knowledge.OpMove || ops[2].BlockID != "01B" || ops[2].Parent != "01A" {
-		t.Errorf("move op = %+v", ops[2])
-	}
-	if ops[3].Kind != knowledge.OpDelete || ops[3].BlockID != "01C" {
-		t.Errorf("delete op = %+v", ops[3])
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 4)
+	assert.Equal(t, knowledge.OpEdit, ops[0].Kind)
+	assert.Equal(t, knowledge.ID("01A"), ops[0].BlockID)
+	assert.Equal(t, "revised", ops[0].Content)
+	assert.Equal(t, knowledge.OpAdd, ops[1].Kind)
+	assert.Equal(t, "t1", ops[1].TempID)
+	assert.Equal(t, "01A", ops[1].Parent)
+	assert.Equal(t, "new child", ops[1].Content)
+	assert.Equal(t, knowledge.OpMove, ops[2].Kind)
+	assert.Equal(t, knowledge.ID("01B"), ops[2].BlockID)
+	assert.Equal(t, "01A", ops[2].Parent)
+	assert.Equal(t, knowledge.OpDelete, ops[3].Kind)
+	assert.Equal(t, knowledge.ID("01C"), ops[3].BlockID)
 }
 
 func TestParseEditOpsReadsArrayAmidProse(t *testing.T) {
 	raw := []byte("Sure! Here are the changes:\n```json\n" +
 		`[{"op":"delete","block_id":"01C"}]` + "\n```\nLet me know.")
 	ops, err := ParseEditOps(raw)
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete {
-		t.Errorf("ops = %+v, want one delete", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 1)
+	assert.Equal(t, knowledge.OpDelete, ops[0].Kind)
 }
 
 func TestParseEditOpsGeneratesTempIDForAdd(t *testing.T) {
@@ -54,16 +48,11 @@ func TestParseEditOpsGeneratesTempIDForAdd(t *testing.T) {
 		{"op":"add","temp_id":"keep","parent":"01A","content":"given"},
 		{"op":"add","parent":"01A","content":"second"}
 	]`))
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 3 {
-		t.Fatalf("got %d ops, want 3", len(ops))
-	}
-	if ops[0].TempID != "t1" || ops[1].TempID != "keep" || ops[2].TempID != "t2" {
-		t.Errorf("temp ids = %q,%q,%q, want t1, keep, t2",
-			ops[0].TempID, ops[1].TempID, ops[2].TempID)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 3)
+	assert.Equal(t, "t1", ops[0].TempID)
+	assert.Equal(t, "keep", ops[1].TempID)
+	assert.Equal(t, "t2", ops[2].TempID)
 }
 
 func TestParseEditOpsDropsInvalidOps(t *testing.T) {
@@ -77,22 +66,19 @@ func TestParseEditOpsDropsInvalidOps(t *testing.T) {
 		{"op":"delete","block_id":"01C"}
 	]`)
 	ops, err := ParseEditOps(raw)
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
-		t.Errorf("ops = %+v, want only the one valid delete", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 1, "want only the one valid delete")
+	assert.Equal(t, knowledge.OpDelete, ops[0].Kind)
+	assert.Equal(t, knowledge.ID("01C"), ops[0].BlockID)
 }
 
 func TestParseEditOpsMoveToRootKeepsEmptyParent(t *testing.T) {
 	ops, err := ParseEditOps([]byte(`[{"op":"move","block_id":"01A"}]`))
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 1 || ops[0].Kind != knowledge.OpMove || ops[0].BlockID != "01A" || ops[0].Parent != "" {
-		t.Errorf("ops = %+v, want a move of 01A to the root", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 1)
+	assert.Equal(t, knowledge.OpMove, ops[0].Kind)
+	assert.Equal(t, knowledge.ID("01A"), ops[0].BlockID)
+	assert.Empty(t, ops[0].Parent, "want a move to the root")
 }
 
 func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
@@ -100,18 +86,11 @@ func TestParseEditOpsGeneratedTempIDAvoidsSupplied(t *testing.T) {
 		{"op":"add","temp_id":"t1","parent":"01A","content":"supplied"},
 		{"op":"add","parent":"01A","content":"generated"}
 	]`))
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 2 {
-		t.Fatalf("got %d ops, want 2", len(ops))
-	}
-	if ops[0].TempID != "t1" {
-		t.Errorf("supplied temp id = %q, want t1", ops[0].TempID)
-	}
-	if ops[1].TempID == "" || ops[1].TempID == ops[0].TempID {
-		t.Errorf("generated temp id = %q, want a fresh id distinct from t1", ops[1].TempID)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2)
+	assert.Equal(t, "t1", ops[0].TempID, "supplied temp id")
+	assert.NotEmpty(t, ops[1].TempID, "generated temp id")
+	assert.NotEqual(t, ops[0].TempID, ops[1].TempID, "generated temp id must be distinct from the supplied one")
 }
 
 func TestParseEditOpsDropsDuplicateSuppliedTempID(t *testing.T) {
@@ -120,23 +99,19 @@ func TestParseEditOpsDropsDuplicateSuppliedTempID(t *testing.T) {
 		{"op":"add","temp_id":"t1","parent":"01A","content":"dup"},
 		{"op":"delete","block_id":"01B"}
 	]`))
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 2 || ops[0].Content != "first" || ops[1].Kind != knowledge.OpDelete {
-		t.Errorf("ops = %+v, want the first t1 add and the delete only", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 2, "want the first t1 add and the delete only")
+	assert.Equal(t, "first", ops[0].Content)
+	assert.Equal(t, knowledge.OpDelete, ops[1].Kind)
 }
 
 func TestParseEditOpsSkipsEmptyArrayShadow(t *testing.T) {
 	raw := []byte(`Options were [] but here are the changes: [{"op":"delete","block_id":"01C"}]`)
 	ops, err := ParseEditOps(raw)
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
-		t.Errorf("ops = %+v, want the real delete, not the empty array", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 1, "want the real delete, not the empty array")
+	assert.Equal(t, knowledge.OpDelete, ops[0].Kind)
+	assert.Equal(t, knowledge.ID("01C"), ops[0].BlockID)
 }
 
 func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
@@ -146,12 +121,8 @@ func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ops, err := ParseEditOps([]byte(body))
-			if err != nil {
-				t.Fatalf("ParseEditOps: %v", err)
-			}
-			if len(ops) != 0 {
-				t.Errorf("ops = %+v, want none for a no-change reply", ops)
-			}
+			require.NoError(t, err)
+			assert.Empty(t, ops)
 		})
 	}
 }
@@ -159,12 +130,10 @@ func TestParseEditOpsEmptyArrayMeansNoChange(t *testing.T) {
 func TestParseEditOpsSkipsForeignArrayShadow(t *testing.T) {
 	raw := []byte(`Considered [{"id":1}] first. Changes: [{"op":"delete","block_id":"01C"}]`)
 	ops, err := ParseEditOps(raw)
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != 1 || ops[0].Kind != knowledge.OpDelete || ops[0].BlockID != "01C" {
-		t.Errorf("ops = %+v, want the real delete, not the foreign array", ops)
-	}
+	require.NoError(t, err)
+	require.Len(t, ops, 1, "want the real delete, not the foreign array")
+	assert.Equal(t, knowledge.OpDelete, ops[0].Kind)
+	assert.Equal(t, knowledge.ID("01C"), ops[0].BlockID)
 }
 
 func TestParseEditOpsNoUsableOpsIsBadResponse(t *testing.T) {
@@ -176,12 +145,8 @@ func TestParseEditOpsNoUsableOpsIsBadResponse(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			ops, err := ParseEditOps([]byte(body))
-			if !errors.Is(err, knowledge.ErrLLMBadResponse) {
-				t.Errorf("error = %v, want ErrLLMBadResponse", err)
-			}
-			if ops != nil {
-				t.Errorf("ops = %+v, want nil", ops)
-			}
+			require.ErrorIs(t, err, knowledge.ErrLLMBadResponse)
+			assert.Nil(t, ops)
 		})
 	}
 }
@@ -189,15 +154,13 @@ func TestParseEditOpsNoUsableOpsIsBadResponse(t *testing.T) {
 func TestParseEditOpsRejectsHostileReply(t *testing.T) {
 	t.Run("too large", func(t *testing.T) {
 		huge := append([]byte(`[{"op":"delete","block_id":"01C"}]`), make([]byte, maxReplyBytes)...)
-		if _, err := ParseEditOps(huge); !errors.Is(err, knowledge.ErrLLMBadResponse) {
-			t.Errorf("error = %v, want ErrLLMBadResponse", err)
-		}
+		_, err := ParseEditOps(huge)
+		assert.ErrorIs(t, err, knowledge.ErrLLMBadResponse)
 	})
 	t.Run("too nested", func(t *testing.T) {
 		nested := []byte(strings.Repeat("[", maxNestDepth+2))
-		if _, err := ParseEditOps(nested); !errors.Is(err, knowledge.ErrLLMBadResponse) {
-			t.Errorf("error = %v, want ErrLLMBadResponse", err)
-		}
+		_, err := ParseEditOps(nested)
+		assert.ErrorIs(t, err, knowledge.ErrLLMBadResponse)
 	})
 }
 
@@ -212,10 +175,6 @@ func TestParseEditOpsCapsCount(t *testing.T) {
 	}
 	b.WriteByte(']')
 	ops, err := ParseEditOps([]byte(b.String()))
-	if err != nil {
-		t.Fatalf("ParseEditOps: %v", err)
-	}
-	if len(ops) != maxBlocks {
-		t.Errorf("got %d ops, want the cap of %d", len(ops), maxBlocks)
-	}
+	require.NoError(t, err)
+	assert.Len(t, ops, maxBlocks)
 }

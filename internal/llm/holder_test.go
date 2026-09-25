@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type stubClient struct{ name string }
@@ -32,22 +34,14 @@ func TestHolderSetSwapsClient(t *testing.T) {
 	h := NewHolder(stubClient{name: "first"})
 
 	ops, err := h.GenerateTree(t.Context(), "topic", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ops[0].Content != "first" {
-		t.Fatalf("content = %q, want first", ops[0].Content)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "first", ops[0].Content)
 
 	h.Set(stubClient{name: "second"})
 
 	ops, err = h.GenerateTree(t.Context(), "topic", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ops[0].Content != "second" {
-		t.Errorf("content = %q, want second (Set must swap the client)", ops[0].Content)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "second", ops[0].Content, "Set must swap the client")
 }
 
 func TestHolderRace(t *testing.T) {
@@ -56,9 +50,8 @@ func TestHolderRace(t *testing.T) {
 	for i := range 50 {
 		wg.Go(func() { h.Set(stubClient{name: "swapped"}) })
 		wg.Go(func() {
-			if _, err := h.GenerateTree(t.Context(), "topic", ""); err != nil {
-				t.Errorf("call %d: %v", i, err)
-			}
+			_, err := h.GenerateTree(t.Context(), "topic", "")
+			assert.NoError(t, err, "call %d", i)
 		})
 	}
 	wg.Wait()
