@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,9 +25,7 @@ func refFixture(t *testing.T) []refCase {
 	require.NoError(t, err)
 	var cases []refCase
 	require.NoError(t, json.Unmarshal(raw, &cases))
-	if len(cases) == 0 {
-		t.Fatal("fixture is empty")
-	}
+	require.NotEmpty(t, cases, "fixture is empty")
 	return cases
 }
 
@@ -42,9 +40,7 @@ func TestParseRefs(t *testing.T) {
 			if len(got) == 0 && len(want) == 0 {
 				return
 			}
-			if diff := cmp.Diff(want, got); diff != "" {
-				t.Errorf("ParseRefs(%q) mismatch (-want +got):\n%s", tc.Content, diff)
-			}
+			assert.Equal(t, want, got, "ParseRefs(%q)", tc.Content)
 		})
 	}
 }
@@ -66,9 +62,7 @@ func TestNormalizeTitle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NormalizeTitle(tt.in); got != tt.want {
-				t.Errorf("NormalizeTitle(%q) = %q, want %q", tt.in, got, tt.want)
-			}
+			assert.Equal(t, tt.want, NormalizeTitle(tt.in))
 		})
 	}
 }
@@ -90,14 +84,10 @@ func TestTopicName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := TopicName(tt.in)
-			if got != tt.want {
-				t.Errorf("TopicName(%q) = %q, want %q", tt.in, got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 			// A reference written from the name must resolve to the key the
 			// content itself normalizes to.
-			if NormalizeTitle(got) != NormalizeTitle(tt.in) {
-				t.Errorf("NormalizeTitle(%q) = %q, want %q", got, NormalizeTitle(got), NormalizeTitle(tt.in))
-			}
+			assert.Equal(t, NormalizeTitle(tt.in), NormalizeTitle(got))
 		})
 	}
 }
@@ -116,9 +106,7 @@ func TestFirstLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := FirstLine(tt.in); got != tt.want {
-				t.Errorf("FirstLine(%q) = %q, want %q", tt.in, got, tt.want)
-			}
+			assert.Equal(t, tt.want, FirstLine(tt.in))
 		})
 	}
 }

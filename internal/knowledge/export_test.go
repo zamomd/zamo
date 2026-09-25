@@ -1,9 +1,11 @@
 package knowledge
 
 import (
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func blk(id, parent string, pos int, content string) Block {
@@ -18,16 +20,12 @@ func TestRenderMarkdownNestsByDepth(t *testing.T) {
 		blk("t4", "t1", 1, "Never store a Context in a struct"),
 	}
 	files := RenderMarkdown([][]Block{sub})
-	if len(files) != 1 {
-		t.Fatalf("files = %d, want 1", len(files))
-	}
+	require.Len(t, files, 1)
 	want := "- # Go Contexts\n" +
 		"  - context.Context carries deadlines\n" +
 		"    - WithCancel returns a cancel func\n" +
 		"  - Never store a Context in a struct\n"
-	if files[0].Content != want {
-		t.Errorf("content mismatch:\n got:\n%q\nwant:\n%q", files[0].Content, want)
-	}
+	assert.Equal(t, want, files[0].Content)
 }
 
 // Obsidian resolves a wikilink by exact basename, so the filename has to be
@@ -51,9 +49,7 @@ func TestRenderMarkdownNamesFileAfterTopic(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.content, func(t *testing.T) {
 			files := RenderMarkdown([][]Block{{blk("t1", "", 0, tc.content)}})
-			if files[0].Name != tc.want {
-				t.Errorf("name = %q, want %q", files[0].Name, tc.want)
-			}
+			assert.Equal(t, tc.want, files[0].Name)
 		})
 	}
 }
@@ -69,9 +65,7 @@ func TestRenderMarkdownDedupesCollidingNames(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Go Contexts.md", "Go contexts!.md", "GO CONTEXTS-2.md"}
-	if !slices.Equal(got, want) {
-		t.Errorf("names = %v, want %v", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
@@ -82,14 +76,10 @@ func TestRenderMarkdownDedupeAvoidsSuffixCollision(t *testing.T) {
 	})
 	seen := map[string]bool{}
 	for _, f := range files {
-		if seen[f.Name] {
-			t.Errorf("duplicate filename %q — a topic would be overwritten", f.Name)
-		}
+		assert.False(t, seen[f.Name], "duplicate filename %q — a topic would be overwritten", f.Name)
 		seen[f.Name] = true
 	}
-	if len(seen) != 3 {
-		t.Errorf("got %d distinct names from 3 topics: %v", len(seen), seen)
-	}
+	assert.Len(t, seen, 3)
 }
 
 func TestRenderMarkdownFallsBackOnAnUnusableName(t *testing.T) {
@@ -100,9 +90,7 @@ func TestRenderMarkdownFallsBackOnAnUnusableName(t *testing.T) {
 	})
 	got := []string{files[0].Name, files[1].Name, files[2].Name}
 	want := []string{"Untitled.md", "Untitled-2.md", "Untitled-3.md"}
-	if !slices.Equal(got, want) {
-		t.Errorf("names = %v, want %v", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 func TestRenderMarkdownIndentsMultilineContent(t *testing.T) {
@@ -114,36 +102,25 @@ func TestRenderMarkdownIndentsMultilineContent(t *testing.T) {
 	want := "- # Root\n" +
 		"  - first line\n" +
 		"    second line\n"
-	if files[0].Content != want {
-		t.Errorf("content mismatch:\n got:\n%q\nwant:\n%q", files[0].Content, want)
-	}
+	assert.Equal(t, want, files[0].Content)
 }
 
 func TestRenderMarkdownEmptyInput(t *testing.T) {
-	if files := RenderMarkdown(nil); len(files) != 0 {
-		t.Errorf("files = %v, want none", files)
-	}
+	assert.Empty(t, RenderMarkdown(nil))
 }
 
 func TestRenderMarkdownSingleTopicNoChildren(t *testing.T) {
 	files := RenderMarkdown([][]Block{{blk("t1", "", 0, "# Lonely")}})
-	if len(files) != 1 || strings.TrimSpace(files[0].Content) != "- # Lonely" {
-		t.Errorf("content = %q, want a single root bullet", files[0].Content)
-	}
+	require.Len(t, files, 1)
+	assert.Equal(t, "- # Lonely", strings.TrimSpace(files[0].Content), "want a single root bullet")
 }
 
 func TestRenderMarkdownWritesADocumentVerbatim(t *testing.T) {
 	doc := "# Go Contexts\n\nPassed first. See [[Go Idioms]].\n\n## Cancellation\n\n- ctx.Done()\n"
 	files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
-	if len(files) != 1 {
-		t.Fatalf("files = %d, want 1", len(files))
-	}
-	if files[0].Name != "Go Contexts.md" {
-		t.Errorf("name = %q, want %q", files[0].Name, "Go Contexts.md")
-	}
-	if files[0].Content != doc {
-		t.Errorf("content =\n%q\nwant\n%q", files[0].Content, doc)
-	}
+	require.Len(t, files, 1)
+	assert.Equal(t, "Go Contexts.md", files[0].Name)
+	assert.Equal(t, doc, files[0].Content)
 }
 
 func TestRenderMarkdownEndsADocumentWithANewline(t *testing.T) {
@@ -152,18 +129,15 @@ func TestRenderMarkdownEndsADocumentWithANewline(t *testing.T) {
 	// without a final newline is a text file most tools call malformed.
 	for _, doc := range []string{"Go Contexts", "Go Contexts\n\n\n"} {
 		files := RenderMarkdown([][]Block{{{ID: "t", Content: doc, Mode: ModeDoc}}})
-		if got := files[0].Content; got != "Go Contexts\n" {
-			t.Errorf("RenderMarkdown of %q wrote %q, want %q", doc, got, "Go Contexts\n")
-		}
+		assert.Equal(t, "Go Contexts\n", files[0].Content, "RenderMarkdown of %q", doc)
 	}
 }
 
 func TestMarkdownMarkerCannotCollideWithATopicFile(t *testing.T) {
 	files := RenderMarkdown([][]Block{{blk("t1", "", 0, MarkdownMarkerName)}})
-	if files[0].Name == MarkdownMarkerName || strings.HasPrefix(files[0].Name, ".") {
-		t.Fatalf("topic file %q could shadow the marker", files[0].Name)
-	}
-	if m := MarkdownMarker(); m.Name != MarkdownMarkerName || !strings.HasPrefix(m.Content, "comind markdown ") {
-		t.Fatalf("marker = %+v", m)
-	}
+	require.NotEqual(t, MarkdownMarkerName, files[0].Name, "topic file could shadow the marker")
+	require.False(t, strings.HasPrefix(files[0].Name, "."), "topic file %q could shadow the marker", files[0].Name)
+	m := MarkdownMarker()
+	require.Equal(t, MarkdownMarkerName, m.Name)
+	require.True(t, strings.HasPrefix(m.Content, "comind markdown "), "marker = %+v", m)
 }

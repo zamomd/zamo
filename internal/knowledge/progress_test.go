@@ -3,6 +3,9 @@ package knowledge
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReportDeliversToInstalledReporter(t *testing.T) {
@@ -14,15 +17,9 @@ func TestReportDeliversToInstalledReporter(t *testing.T) {
 	Report(ctx, Progress{Phase: PhaseRequesting})
 	Report(ctx, Progress{Phase: PhaseParsing})
 
-	if len(got) != 2 {
-		t.Fatalf("reporter received %d reports, want 2", len(got))
-	}
-	if got[0].Phase != PhaseRequesting {
-		t.Errorf("first phase = %q, want %q", got[0].Phase, PhaseRequesting)
-	}
-	if got[1].Phase != PhaseParsing {
-		t.Errorf("second phase = %q, want %q", got[1].Phase, PhaseParsing)
-	}
+	require.Len(t, got, 2)
+	assert.Equal(t, PhaseRequesting, got[0].Phase)
+	assert.Equal(t, PhaseParsing, got[1].Phase)
 }
 
 func TestReportWithoutReporterIsNoOp(t *testing.T) {

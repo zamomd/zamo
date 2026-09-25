@@ -1,8 +1,9 @@
 package knowledge
 
 import (
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func subtree() []Block {
@@ -16,30 +17,22 @@ func subtree() []Block {
 
 func TestRenderDocumentKeepsTheRootLineAndNestsTheRest(t *testing.T) {
 	want := "Go Contexts\n\n- Passed as the first argument.\n  Always first.\n- ## Cancellation\n  - ctx.Done() closes.\n"
-	if got := RenderDocument(subtree()); got != want {
-		t.Errorf("RenderDocument =\n%q\nwant\n%q", got, want)
-	}
+	assert.Equal(t, want, RenderDocument(subtree()))
 }
 
 func TestRenderDocumentOfALoneRootIsItsContent(t *testing.T) {
-	if got := RenderDocument([]Block{{ID: "t", Content: "Go Contexts"}}); got != "Go Contexts\n" {
-		t.Errorf("RenderDocument = %q, want %q", got, "Go Contexts\n")
-	}
+	assert.Equal(t, "Go Contexts\n", RenderDocument([]Block{{ID: "t", Content: "Go Contexts"}}))
 }
 
 func TestSplitDocumentNestsByHeadingLevel(t *testing.T) {
 	root, children := SplitDocument("# Go Contexts\n\nIntro paragraph.\n\n## Cancellation\n\nctx.Done() closes.\n")
-	if root != "# Go Contexts" {
-		t.Errorf("root = %q, want %q", root, "# Go Contexts")
-	}
+	assert.Equal(t, "# Go Contexts", root)
 	want := []DocChild{
 		{Text: "Intro paragraph.", Depth: 0},
 		{Text: "## Cancellation", Depth: 0},
 		{Text: "ctx.Done() closes.", Depth: 1},
 	}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentNestsRelativeToTheShallowestHeading(t *testing.T) {
@@ -54,9 +47,7 @@ func TestSplitDocumentNestsRelativeToTheShallowestHeading(t *testing.T) {
 	want := []int{0, 1, 1, 2}
 	for _, doc := range []string{shallow, deep} {
 		_, children := SplitDocument(doc)
-		if got := depths(children); !slices.Equal(got, want) {
-			t.Errorf("SplitDocument(%q) nests at %v, want %v", doc, got, want)
-		}
+		assert.Equal(t, want, depths(children), "SplitDocument(%q)", doc)
 	}
 }
 
@@ -73,24 +64,18 @@ func depths(children []DocChild) []int {
 func TestSplitDocumentKeepsAFenceWhole(t *testing.T) {
 	_, children := SplitDocument("Topic\n\n```go\nfunc main() {}\n\nfmt.Println()\n```\n")
 	want := []DocChild{{Text: "```go\nfunc main() {}\n\nfmt.Println()\n```", Depth: 0}}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentReversesRenderDocument(t *testing.T) {
 	root, children := SplitDocument(RenderDocument(subtree()))
-	if root != "Go Contexts" {
-		t.Errorf("root = %q, want %q", root, "Go Contexts")
-	}
+	assert.Equal(t, "Go Contexts", root)
 	want := []DocChild{
 		{Text: "Passed as the first argument.\nAlways first.", Depth: 0},
 		{Text: "## Cancellation", Depth: 0},
 		{Text: "ctx.Done() closes.", Depth: 1},
 	}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentKeepsAMultiLineBlockWhole(t *testing.T) {
@@ -102,9 +87,7 @@ func TestSplitDocumentKeepsAMultiLineBlockWhole(t *testing.T) {
 		{Text: "line one\nline two", Depth: 0},
 		{Text: "next", Depth: 0},
 	}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentKeepsAFenceInsideABlockWithIt(t *testing.T) {
@@ -113,9 +96,7 @@ func TestSplitDocumentKeepsAFenceInsideABlockWithIt(t *testing.T) {
 	// line, and the indent is what says so.
 	_, children := SplitDocument("Go Contexts\n\n- before\n  ```\n  code\n  ```\n  after\n")
 	want := []DocChild{{Text: "before\n```\ncode\n```\nafter", Depth: 0}}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentKeepsABlankLineInsideABlock(t *testing.T) {
@@ -124,9 +105,7 @@ func TestSplitDocumentKeepsABlankLineInsideABlock(t *testing.T) {
 	// blocks. Losing that reading splits the block and strands the indent.
 	_, children := SplitDocument("Go Contexts\n\n- para one\n  \n  para two\n")
 	want := []DocChild{{Text: "para one\n\npara two", Depth: 0}}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentReversesRenderDocumentOfABlockStartingWithAHeadingLine(t *testing.T) {
@@ -139,17 +118,13 @@ func TestSplitDocumentReversesRenderDocumentOfABlockStartingWithAHeadingLine(t *
 	}
 	_, children := SplitDocument(RenderDocument(sub))
 	want := []DocChild{{Text: "Some text.\n## Not a real heading", Depth: 0}}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }
 
 func TestSplitDocumentKeepsTheFirstLineVerbatim(t *testing.T) {
 	for _, line := range []string{"# Topic  ", "  # Topic", "# Topic\t"} {
 		root, _ := SplitDocument(line + "\n\n- child\n")
-		if root != line {
-			t.Errorf("root = %q, want the first line unchanged: %q", root, line)
-		}
+		assert.Equal(t, line, root)
 	}
 }
 
@@ -159,14 +134,10 @@ func TestSplitDocumentLeavesARootBodyBehindAsAChild(t *testing.T) {
 		{ID: "a", ParentID: "t", Position: 1, Content: "Cancellation propagates."},
 	}
 	root, children := SplitDocument(RenderDocument(sub))
-	if root != "Go Contexts" {
-		t.Errorf("root = %q, want its first line", root)
-	}
+	assert.Equal(t, "Go Contexts", root)
 	want := []DocChild{
 		{Text: "An intro written into the root.", Depth: 0},
 		{Text: "Cancellation propagates.", Depth: 0},
 	}
-	if !slices.Equal(children, want) {
-		t.Errorf("children = %#v, want %#v", children, want)
-	}
+	assert.Equal(t, want, children)
 }

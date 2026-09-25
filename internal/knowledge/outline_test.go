@@ -1,10 +1,11 @@
 package knowledge
 
 import (
-	"errors"
 	"fmt"
-	"slices"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func outlineService(t *testing.T) (*Service, *fakeRepo) {
@@ -27,93 +28,70 @@ func TestSplitBlockEditsHeadAndAnchorsTailAfterIt(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	change, err := svc.SplitBlock(t.Context(), "first", "Fi", "rst")
-	if err != nil {
-		t.Fatalf("SplitBlock: %v", err)
-	}
-	if change.BlockID != "new-1" {
-		t.Errorf("new id = %q, want new-1", change.BlockID)
-	}
-	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Source != SourceGUIManual {
-		t.Errorf("meta = %+v, want owner/gui_manual (born reviewed)", repo.applyMeta)
-	}
-	if len(repo.applyOps) != 2 {
-		t.Fatalf("ops = %+v, want an edit and an add", repo.applyOps)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, ID("new-1"), change.BlockID)
+	assert.Equal(t, AuthorOwner, repo.applyMeta.Author, "born reviewed")
+	assert.Equal(t, SourceGUIManual, repo.applyMeta.Source, "born reviewed")
+	require.Len(t, repo.applyOps, 2, "want an edit and an add")
 	edit, add := repo.applyOps[0], repo.applyOps[1]
-	if edit.Kind != OpEdit || edit.BlockID != "first" || edit.Content != "Fi" {
-		t.Errorf("edit op = %+v, want edit of first to %q", edit, "Fi")
-	}
-	if add.Kind != OpAdd || add.Parent != "root" || add.After != "first" || add.Content != "rst" {
-		t.Errorf("add op = %+v, want add under root after first with %q", add, "rst")
-	}
-	if add.Before != "" {
-		t.Errorf("add op carries Before %q, want only After", add.Before)
-	}
+	assert.Equal(t, OpEdit, edit.Kind)
+	assert.Equal(t, ID("first"), edit.BlockID)
+	assert.Equal(t, "Fi", edit.Content)
+	assert.Equal(t, OpAdd, add.Kind)
+	assert.Equal(t, "root", add.Parent)
+	assert.Equal(t, "first", add.After)
+	assert.Equal(t, "rst", add.Content)
+	assert.Empty(t, add.Before, "want only After")
 }
 
 func TestInsertBeforeAnchorsAheadOfTheBlock(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.InsertBefore(t.Context(), "first", ""); err != nil {
-		t.Fatalf("InsertBefore: %v", err)
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %+v, want a single add", repo.applyOps)
-	}
+	_, err := svc.InsertBefore(t.Context(), "first", "")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1, "want a single add")
 	add := repo.applyOps[0]
-	if add.Kind != OpAdd || add.Parent != "root" || add.Before != "first" || add.Content != "" {
-		t.Errorf("add op = %+v, want empty add under root before first", add)
-	}
+	assert.Equal(t, OpAdd, add.Kind)
+	assert.Equal(t, "root", add.Parent)
+	assert.Equal(t, "first", add.Before)
+	assert.Empty(t, add.Content)
 }
 
 func TestSplitBlockRefusesATopicRoot(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	_, err := svc.SplitBlock(t.Context(), "root", "Ro", "ot")
-	if !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "refused before any write")
 }
 
 func TestSplitBlockReportsAMissingBlock(t *testing.T) {
 	svc, _ := outlineService(t)
 
-	if _, err := svc.SplitBlock(t.Context(), "ghost", "a", "b"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("error = %v, want ErrNotFound", err)
-	}
+	_, err := svc.SplitBlock(t.Context(), "ghost", "a", "b")
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestIndentBlockMovesItUnderThePreviousSibling(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.IndentBlock(t.Context(), "second"); err != nil {
-		t.Fatalf("IndentBlock: %v", err)
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %+v, want a single move", repo.applyOps)
-	}
+	_, err := svc.IndentBlock(t.Context(), "second")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1, "want a single move")
 	move := repo.applyOps[0]
-	if move.Kind != OpMove || move.BlockID != "second" || move.Parent != "first" {
-		t.Errorf("move op = %+v, want move of second under first", move)
-	}
-	if move.After != "" || move.Before != "" {
-		t.Errorf("move op = %+v, want no anchor (appended)", move)
-	}
+	assert.Equal(t, OpMove, move.Kind)
+	assert.Equal(t, ID("second"), move.BlockID)
+	assert.Equal(t, "first", move.Parent)
+	assert.Empty(t, move.After, "want no anchor (appended)")
+	assert.Empty(t, move.Before, "want no anchor (appended)")
 }
 
 func TestIndentFirstChildIsRefused(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	_, err := svc.IndentBlock(t.Context(), "first")
-	if !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls)
 }
 
 func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
@@ -128,28 +106,22 @@ func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" })
 
-	if _, err := svc.OutdentBlock(t.Context(), "leaf"); err != nil {
-		t.Fatalf("OutdentBlock: %v", err)
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %+v, want a single move (following siblings untouched)", repo.applyOps)
-	}
+	_, err := svc.OutdentBlock(t.Context(), "leaf")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1, "want a single move (following siblings untouched)")
 	move := repo.applyOps[0]
-	if move.Kind != OpMove || move.BlockID != "leaf" || move.Parent != "root" || move.After != "mid" {
-		t.Errorf("move op = %+v, want move of leaf under root after mid", move)
-	}
+	assert.Equal(t, OpMove, move.Kind)
+	assert.Equal(t, ID("leaf"), move.BlockID)
+	assert.Equal(t, "root", move.Parent)
+	assert.Equal(t, "mid", move.After)
 }
 
 func TestOutdentChildOfTopicRootIsRefused(t *testing.T) {
 	svc, repo := outlineService(t)
 
 	_, err := svc.OutdentBlock(t.Context(), "first")
-	if !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls)
 }
 
 func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
@@ -168,29 +140,20 @@ func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" })
 
-	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
-		t.Fatalf("MergeBlocks: %v", err)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "target", "source")
+	require.NoError(t, err)
 
 	kinds := make([]OpKind, 0, len(repo.applyOps))
 	for _, op := range repo.applyOps {
 		kinds = append(kinds, op.Kind)
 	}
 	want := []OpKind{OpEdit, OpMove, OpMove, OpDelete}
-	if !slices.Equal(kinds, want) {
-		t.Fatalf("op kinds = %v, want %v", kinds, want)
-	}
-	if got := repo.applyOps[0].Content; got != "Head tail" {
-		t.Errorf("merged content = %q, want %q", got, "Head tail")
-	}
+	require.Equal(t, want, kinds)
+	assert.Equal(t, "Head tail", repo.applyOps[0].Content)
 	for _, op := range repo.applyOps[1:3] {
-		if op.Parent != "target" {
-			t.Errorf("child move %+v, want parent target", op)
-		}
+		assert.Equal(t, "target", op.Parent, "child move %+v", op)
 	}
-	if repo.applyOps[3].BlockID != "source" {
-		t.Errorf("delete op = %+v, want the source", repo.applyOps[3])
-	}
+	assert.Equal(t, ID("source"), repo.applyOps[3].BlockID)
 }
 
 func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
@@ -210,9 +173,8 @@ func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
 	}
 	svc := NewService(nil, repo, func() ID { return "new-1" })
 
-	if _, err := svc.MergeBlocks(t.Context(), "target", "source"); err != nil {
-		t.Fatalf("MergeBlocks: %v", err)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "target", "source")
+	require.NoError(t, err)
 
 	var moved []ID
 	for _, op := range repo.applyOps {
@@ -220,97 +182,77 @@ func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
 			moved = append(moved, op.BlockID)
 		}
 	}
-	if slices.Contains(moved, "grandkid") {
-		t.Errorf("moved = %v, grandkid must not be reparented directly", moved)
-	}
+	assert.NotContains(t, moved, ID("grandkid"), "grandkid must not be reparented directly")
 	want := []ID{"kid-a", "kid-b"}
-	if !slices.Equal(moved, want) {
-		t.Fatalf("moved = %v, want only source's direct children %v", moved, want)
-	}
+	require.Equal(t, want, moved, "want only source's direct children")
 }
 
 func TestMergeBlocksWithNoChildrenEmitsNoMoves(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MergeBlocks(t.Context(), "first", "second"); err != nil {
-		t.Fatalf("MergeBlocks: %v", err)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "first", "second")
+	require.NoError(t, err)
 
 	kinds := make([]OpKind, 0, len(repo.applyOps))
 	for _, op := range repo.applyOps {
 		kinds = append(kinds, op.Kind)
 	}
 	want := []OpKind{OpEdit, OpDelete}
-	if !slices.Equal(kinds, want) {
-		t.Fatalf("op kinds = %v, want %v", kinds, want)
-	}
+	require.Equal(t, want, kinds)
 }
 
 func TestMergeBlocksRefusesMergingIntoItself(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MergeBlocks(t.Context(), "first", "first"); !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0", repo.applyCalls)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "first", "first")
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls)
 }
 
 func TestMergeBlocksRefusesATopicRootAsSource(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MergeBlocks(t.Context(), "first", "root"); !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "first", "root")
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "refused before any write")
 }
 
 func TestMergeBlocksRefusesATopicRootAsTarget(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MergeBlocks(t.Context(), "root", "first"); !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
-	}
+	_, err := svc.MergeBlocks(t.Context(), "root", "first")
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "refused before any write")
 }
 
 func TestDeleteBlockEmitsOneDelete(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.DeleteBlock(t.Context(), "second"); err != nil {
-		t.Fatalf("DeleteBlock: %v", err)
-	}
-	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpDelete || repo.applyOps[0].BlockID != "second" {
-		t.Errorf("ops = %+v, want a single delete of second", repo.applyOps)
-	}
+	_, err := svc.DeleteBlock(t.Context(), "second")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1)
+	assert.Equal(t, OpDelete, repo.applyOps[0].Kind)
+	assert.Equal(t, ID("second"), repo.applyOps[0].BlockID)
 }
 
 func TestMoveBlockPassesTheAnchorThrough(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MoveBlock(t.Context(), "second", "root", "first"); err != nil {
-		t.Fatalf("MoveBlock: %v", err)
-	}
+	_, err := svc.MoveBlock(t.Context(), "second", "root", "first")
+	require.NoError(t, err)
 	move := repo.applyOps[0]
-	if move.Kind != OpMove || move.BlockID != "second" || move.Parent != "root" || move.After != "first" {
-		t.Errorf("move op = %+v, want move of second under root after first", move)
-	}
+	assert.Equal(t, OpMove, move.Kind)
+	assert.Equal(t, ID("second"), move.BlockID)
+	assert.Equal(t, "root", move.Parent)
+	assert.Equal(t, "first", move.After)
 }
 
 func TestMoveBlockRefusesATopicRoot(t *testing.T) {
 	svc, repo := outlineService(t)
 
-	if _, err := svc.MoveBlock(t.Context(), "root", "first", ""); !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("applyCalls = %d, want 0 (refused before any write)", repo.applyCalls)
-	}
+	_, err := svc.MoveBlock(t.Context(), "root", "first", "")
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "refused before any write")
 }
 
 func sequencedOutlineService(t *testing.T) (*Service, *fakeRepo) {
@@ -326,29 +268,17 @@ func TestOutlineGesturesReportTheBatchTheyWrote(t *testing.T) {
 		svc, repo := sequencedOutlineService(t)
 
 		change, err := svc.SplitBlock(t.Context(), "first", "Fi", "rst")
-		if err != nil {
-			t.Fatalf("SplitBlock: %v", err)
-		}
-		if change.GroupID != repo.applyGroupID {
-			t.Errorf("GroupID = %q, want the batch's %q", change.GroupID, repo.applyGroupID)
-		}
-		if change.BlockID != "id-1" {
-			t.Errorf("BlockID = %q, want the new tail id-1", change.BlockID)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, repo.applyGroupID, change.GroupID)
+		assert.Equal(t, ID("id-1"), change.BlockID, "want the new tail")
 	})
 
 	t.Run("a gesture that creates nothing still reports its batch", func(t *testing.T) {
 		svc, repo := sequencedOutlineService(t)
 
 		change, err := svc.IndentBlock(t.Context(), "second")
-		if err != nil {
-			t.Fatalf("IndentBlock: %v", err)
-		}
-		if change.GroupID != repo.applyGroupID {
-			t.Errorf("GroupID = %q, want the batch's %q", change.GroupID, repo.applyGroupID)
-		}
-		if change.BlockID != "" {
-			t.Errorf("BlockID = %q, want empty: indent creates no block", change.BlockID)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, repo.applyGroupID, change.GroupID)
+		assert.Empty(t, change.BlockID, "indent creates no block")
 	})
 }

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeRepo struct {
@@ -199,27 +202,16 @@ func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 		addOp("root", "", "Root"),
 	}
 	got, err := svc.ApplyOps(t.Context(), WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}, ops)
-	if err != nil {
-		t.Fatalf("ApplyOps: %v", err)
-	}
-	if got.GroupID == "" {
-		t.Errorf("GroupID is empty, want a generated group id")
-	}
-	if len(got.IDs) != 2 || got.IDs["root"] == "" || got.IDs["child"] == "" {
-		t.Errorf("IDs = %+v, want every temp id mapped to a real id", got.IDs)
-	}
-	if repo.applyGroupID != got.GroupID {
-		t.Errorf("repo saw group %q, want the returned %q", repo.applyGroupID, got.GroupID)
-	}
-	if len(repo.applyOps) != 2 || repo.applyOps[0].Content != "Root" {
-		t.Fatalf("repo ops = %+v, want the root add first (parent-first)", repo.applyOps)
-	}
-	if string(repo.applyOps[0].BlockID) != string(got.IDs["root"]) {
-		t.Errorf("root BlockID = %q, want %q", repo.applyOps[0].BlockID, got.IDs["root"])
-	}
-	if repo.applyOps[1].Parent != string(got.IDs["root"]) {
-		t.Errorf("child parent = %q, want the resolved root id", repo.applyOps[1].Parent)
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, got.GroupID, "want a generated group id")
+	assert.Len(t, got.IDs, 2)
+	assert.NotEmpty(t, got.IDs["root"], "want every temp id mapped to a real id")
+	assert.NotEmpty(t, got.IDs["child"], "want every temp id mapped to a real id")
+	assert.Equal(t, got.GroupID, repo.applyGroupID)
+	require.Len(t, repo.applyOps, 2)
+	require.Equal(t, "Root", repo.applyOps[0].Content, "want the root add first (parent-first)")
+	assert.Equal(t, got.IDs["root"], repo.applyOps[0].BlockID)
+	assert.Equal(t, string(got.IDs["root"]), repo.applyOps[1].Parent, "want the resolved root id")
 }
 
 func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
@@ -229,12 +221,8 @@ func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 	_, err := svc.ApplyOps(t.Context(),
 		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "   "},
 		[]Op{addOp("t1", "", "A")})
-	if !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("storage ApplyOps called %d times, want 0 for an empty title", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "storage ApplyOps called for an empty title")
 }
 
 func TestApplyOpsPropagatesRepoError(t *testing.T) {
@@ -244,9 +232,7 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 
 	meta := WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{addOp("t1", "", "A")})
-	if !errors.Is(err, boom) {
-		t.Errorf("error = %v, want the storage error", err)
-	}
+	require.ErrorIs(t, err, boom)
 }
 
 func TestApplyOpsRejectsMalformedOps(t *testing.T) {
@@ -255,12 +241,8 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: "explode"}})
-	if !errors.Is(err, ErrInvalidOps) {
-		t.Errorf("error = %v, want ErrInvalidOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("a malformed batch reached storage: %d calls", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrInvalidOps)
+	assert.Zero(t, repo.applyCalls, "a malformed batch reached storage")
 }
 
 func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
@@ -268,51 +250,36 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	svc := NewService(nil, repo, seqIDs())
 
 	id, err := svc.CreateTopic(t.Context(), "Local-first", "")
-	if err != nil {
-		t.Fatalf("CreateTopic: %v", err)
-	}
-	if id == "" {
-		t.Error("CreateTopic returned no id, want the new root's")
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %+v, want a single add", repo.applyOps)
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, id, "CreateTopic returned no id, want the new root's")
+	require.Len(t, repo.applyOps, 1)
 	op := repo.applyOps[0]
-	if op.Kind != OpAdd || op.Parent != "" || op.BlockID != id {
-		t.Errorf("op = %+v, want an add of a root with the returned id", op)
-	}
+	assert.Equal(t, OpAdd, op.Kind)
+	assert.Empty(t, op.Parent)
+	assert.Equal(t, id, op.BlockID)
 	// Verbatim: the title_key storage derives from it is what the [[Topic]]
 	// reference that asked for this topic resolves by.
-	if op.Content != "Local-first" {
-		t.Errorf("content = %q, want the name written verbatim", op.Content)
-	}
-	if repo.applyMeta.Author != AuthorOwner {
-		t.Errorf("author = %q, want an owner write born reviewed", repo.applyMeta.Author)
-	}
+	assert.Equal(t, "Local-first", op.Content)
+	assert.Equal(t, AuthorOwner, repo.applyMeta.Author, "want an owner write born reviewed")
 }
 
 func TestCreateTopicTakesItsMode(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs())
 
-	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc); err != nil {
-		t.Fatalf("CreateTopic: %v", err)
-	}
-	if len(repo.applyOps) != 1 || repo.applyOps[0].Mode != ModeDoc {
-		t.Errorf("ops = %#v, want one add in doc mode", repo.applyOps)
-	}
+	_, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc)
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1)
+	assert.Equal(t, ModeDoc, repo.applyOps[0].Mode)
 }
 
 func TestCreateTopicDefaultsToOutline(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs())
 
-	if _, err := svc.CreateTopic(t.Context(), "Go Contexts", ""); err != nil {
-		t.Fatalf("CreateTopic: %v", err)
-	}
-	if got := repo.applyOps[0].Mode; got != ModeOutline {
-		t.Errorf("mode = %q, want %q", got, ModeOutline)
-	}
+	_, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
+	require.NoError(t, err)
+	assert.Equal(t, ModeOutline, repo.applyOps[0].Mode)
 }
 
 func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
@@ -322,53 +289,40 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	// A bracketed name belongs here too: the root would be created and the
 	// [[...]] that asked for it would still resolve to nothing.
 	for _, name := range []string{"", "   ", "###", "Notes [WIP]"} {
-		if _, err := svc.CreateTopic(t.Context(), name, ""); !errors.Is(err, ErrInvalidOps) {
-			t.Errorf("CreateTopic(%q) = %v, want ErrInvalidOps for an unaddressable root", name, err)
-		}
+		_, err := svc.CreateTopic(t.Context(), name, "")
+		require.ErrorIs(t, err, ErrInvalidOps, "CreateTopic(%q)", name)
 	}
-	if repo.applyCalls != 0 {
-		t.Errorf("a nameless topic reached storage: %d calls", repo.applyCalls)
-	}
+	assert.Zero(t, repo.applyCalls, "a nameless topic reached storage")
 }
 
 func TestCreateTopicReportsATakenName(t *testing.T) {
 	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
 	svc := NewService(nil, repo, seqIDs())
 
-	if _, err := svc.CreateTopic(t.Context(), "Local-first", ""); !errors.Is(err, ErrDuplicateTopic) {
-		t.Errorf("error = %v, want ErrDuplicateTopic", err)
-	}
+	_, err := svc.CreateTopic(t.Context(), "Local-first", "")
+	require.ErrorIs(t, err, ErrDuplicateTopic)
 }
 
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
 	svc := NewService(nil, repo, seqIDs())
 
-	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); err != nil {
-		t.Fatalf("EditBlockContent: %v", err)
-	}
-	if repo.applyMeta.Author != AuthorOwner || repo.applyMeta.Source != SourceGUIManual {
-		t.Errorf("meta = %+v, want owner/gui_manual", repo.applyMeta)
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %+v, want exactly one edit", repo.applyOps)
-	}
+	require.NoError(t, svc.EditBlockContent(t.Context(), "01A", "new text"))
+	assert.Equal(t, AuthorOwner, repo.applyMeta.Author)
+	assert.Equal(t, SourceGUIManual, repo.applyMeta.Source)
+	require.Len(t, repo.applyOps, 1)
 	op := repo.applyOps[0]
-	if op.Kind != OpEdit || op.BlockID != "01A" || op.Content != "new text" {
-		t.Errorf("op = %+v, want an edit of 01A with the new content", op)
-	}
+	assert.Equal(t, OpEdit, op.Kind)
+	assert.Equal(t, ID("01A"), op.BlockID)
+	assert.Equal(t, "new text", op.Content)
 }
 
 func TestEditBlockContentRefusesAMissingBlock(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(nil, repo, seqIDs())
 
-	if err := svc.EditBlockContent(t.Context(), "01A", "new text"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("error = %v, want ErrNotFound", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("a batch was applied for a missing block: %d calls", repo.applyCalls)
-	}
+	require.ErrorIs(t, svc.EditBlockContent(t.Context(), "01A", "new text"), ErrNotFound)
+	assert.Zero(t, repo.applyCalls, "a batch was applied for a missing block")
 }
 
 func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
@@ -378,24 +332,16 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.EditWithAI(t.Context(), "01A", "revise this block")
-	if err != nil {
-		t.Fatalf("EditWithAI: %v", err)
-	}
-	if repo.gotSubtree != "01A" {
-		t.Errorf("read subtree of %q, want 01A", repo.gotSubtree)
-	}
-	if llm.gotInstruction != "revise this block" || len(llm.gotScope) != 1 || llm.gotScope[0].ID != "01A" {
-		t.Errorf("model got scope %+v / instruction %q, want the scope and command", llm.gotScope, llm.gotInstruction)
-	}
-	if repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIEdit {
-		t.Errorf("meta = %+v, want ai/gui_edit", repo.applyMeta)
-	}
-	if len(repo.applyOps) != 1 || repo.applyOps[0].Kind != OpEdit {
-		t.Errorf("ops = %+v, want the edit from the model", repo.applyOps)
-	}
-	if got.GroupID == "" {
-		t.Errorf("GroupID is empty, want a generated group id")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, ID("01A"), repo.gotSubtree)
+	assert.Equal(t, "revise this block", llm.gotInstruction)
+	require.Len(t, llm.gotScope, 1)
+	assert.Equal(t, ID("01A"), llm.gotScope[0].ID)
+	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
+	assert.Equal(t, SourceGUIEdit, repo.applyMeta.Source)
+	require.Len(t, repo.applyOps, 1)
+	assert.Equal(t, OpEdit, repo.applyOps[0].Kind)
+	assert.NotEmpty(t, got.GroupID, "want a generated group id")
 }
 
 func TestEditWithAISurfacesLLMError(t *testing.T) {
@@ -403,12 +349,9 @@ func TestEditWithAISurfacesLLMError(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.EditWithAI(t.Context(), "01A", "do a thing"); !errors.Is(err, ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("a batch was applied despite the LLM failure")
-	}
+	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
+	require.ErrorIs(t, err, ErrLLMUnavailable)
+	assert.Zero(t, repo.applyCalls, "a batch was applied despite the LLM failure")
 }
 
 func TestEditWithAIPropagatesReadError(t *testing.T) {
@@ -418,12 +361,8 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
-	if !errors.Is(err, boom) {
-		t.Errorf("error = %v, want the storage read error", err)
-	}
-	if llm.gotInstruction != "" {
-		t.Errorf("the model was called despite a read failure")
-	}
+	require.ErrorIs(t, err, boom)
+	assert.Empty(t, llm.gotInstruction, "the model was called despite a read failure")
 }
 
 func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
@@ -431,12 +370,9 @@ func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.EditWithAI(t.Context(), "01A", "do nothing"); !errors.Is(err, ErrEmptyOps) {
-		t.Errorf("error = %v, want ErrEmptyOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("an empty edit was applied: %d calls", repo.applyCalls)
-	}
+	_, err := svc.EditWithAI(t.Context(), "01A", "do nothing")
+	require.ErrorIs(t, err, ErrEmptyOps)
+	assert.Zero(t, repo.applyCalls, "an empty edit was applied")
 }
 
 func TestExpandTopicAppliesDirectly(t *testing.T) {
@@ -445,20 +381,13 @@ func TestExpandTopicAppliesDirectly(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.ExpandTopic(t.Context(), "Go contexts", "cancellation")
-	if err != nil {
-		t.Fatalf("ExpandTopic: %v", err)
-	}
-	if llm.gotTopic != "Go contexts" || llm.gotHint != "cancellation" {
-		t.Errorf("LLM asked for (%q, %q), want (Go contexts, cancellation)", llm.gotTopic, llm.gotHint)
-	}
-	badMeta := repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand ||
-		repo.applyMeta.Title != "Go contexts"
-	if badMeta {
-		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
-	}
-	if got.GroupID == "" {
-		t.Errorf("GroupID is empty, want a generated group id")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Go contexts", llm.gotTopic)
+	assert.Equal(t, "cancellation", llm.gotHint)
+	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
+	assert.Equal(t, SourceGUIExpand, repo.applyMeta.Source)
+	assert.Equal(t, "Go contexts", repo.applyMeta.Title, "want the batch titled by the topic")
+	assert.NotEmpty(t, got.GroupID, "want a generated group id")
 }
 
 func TestExpandTopicSurfacesLLMError(t *testing.T) {
@@ -467,12 +396,8 @@ func TestExpandTopicSurfacesLLMError(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
-	if !errors.Is(err, ErrLLMUnavailable) {
-		t.Errorf("error = %v, want ErrLLMUnavailable", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("a batch was applied despite the LLM failure")
-	}
+	require.ErrorIs(t, err, ErrLLMUnavailable)
+	assert.Zero(t, repo.applyCalls, "a batch was applied despite the LLM failure")
 }
 
 func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
@@ -481,12 +406,9 @@ func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.ExpandTopic(t.Context(), "private topic", "private hint")
-	if !errors.Is(err, ErrAIDisabled) {
-		t.Fatalf("error = %v, want ErrAIDisabled", err)
-	}
-	if llm.gotTopic != "" || llm.gotHint != "" {
-		t.Error("the model was called while AI was disabled")
-	}
+	require.ErrorIs(t, err, ErrAIDisabled)
+	assert.Empty(t, llm.gotTopic, "the model was called while AI was disabled")
+	assert.Empty(t, llm.gotHint, "the model was called while AI was disabled")
 }
 
 func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
@@ -495,12 +417,9 @@ func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.EditWithAI(t.Context(), "01A", "private instruction")
-	if !errors.Is(err, ErrAIDisabled) {
-		t.Fatalf("error = %v, want ErrAIDisabled", err)
-	}
-	if repo.gotSubtree != "" || llm.gotInstruction != "" {
-		t.Error("storage or the model was called while AI was disabled")
-	}
+	require.ErrorIs(t, err, ErrAIDisabled)
+	assert.Empty(t, repo.gotSubtree, "storage was called while AI was disabled")
+	assert.Empty(t, llm.gotInstruction, "the model was called while AI was disabled")
 }
 
 func TestExpandTopicRejectsEmptyTree(t *testing.T) {
@@ -508,12 +427,9 @@ func TestExpandTopicRejectsEmptyTree(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.ExpandTopic(t.Context(), "Go contexts", ""); !errors.Is(err, ErrEmptyOps) {
-		t.Errorf("error = %v, want ErrEmptyOps", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("an empty expansion was applied")
-	}
+	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
+	require.ErrorIs(t, err, ErrEmptyOps)
+	assert.Zero(t, repo.applyCalls, "an empty expansion was applied")
 }
 
 func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
@@ -523,25 +439,16 @@ func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
 	llm := &fakeLLM{document: "# Doc\n\nNew body."}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.EditWithAI(t.Context(), "t", "rewrite the body"); err != nil {
-		t.Fatalf("EditWithAI: %v", err)
-	}
-	if llm.editOpsCalls != 0 {
-		t.Errorf("GenerateEdit was called %d times on a document", llm.editOpsCalls)
-	}
-	if len(repo.applyOps) != 1 {
-		t.Fatalf("ops = %#v, want one edit", repo.applyOps)
-	}
+	_, err := svc.EditWithAI(t.Context(), "t", "rewrite the body")
+	require.NoError(t, err)
+	assert.Zero(t, llm.editOpsCalls, "GenerateEdit was called on a document")
+	require.Len(t, repo.applyOps, 1)
 	op := repo.applyOps[0]
-	if op.Kind != OpEdit || op.BlockID != "t" || op.Content != "# Doc\n\nNew body." {
-		t.Errorf("op = %#v, want an edit of t with the new document", op)
-	}
-	if repo.applyMeta.Author != AuthorAI {
-		t.Errorf("author = %q, want %q", repo.applyMeta.Author, AuthorAI)
-	}
-	if llm.gotDocument.ID != "t" {
-		t.Errorf("model got document %+v, want the block being edited", llm.gotDocument)
-	}
+	assert.Equal(t, OpEdit, op.Kind)
+	assert.Equal(t, ID("t"), op.BlockID)
+	assert.Equal(t, "# Doc\n\nNew body.", op.Content)
+	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
+	assert.Equal(t, ID("t"), llm.gotDocument.ID, "want the block being edited")
 }
 
 func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
@@ -551,12 +458,10 @@ func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
 	llm := &fakeLLM{document: "# Go Contexts\n\nBody."}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
-		t.Fatalf("ExpandTopicByID: %v", err)
-	}
-	if len(repo.applyOps) != 1 || repo.applyOps[0].Content != "# Go Contexts\n\nBody." {
-		t.Errorf("ops = %#v, want one edit carrying the generated document", repo.applyOps)
-	}
+	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1)
+	assert.Equal(t, "# Go Contexts\n\nBody.", repo.applyOps[0].Content)
 }
 
 func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
@@ -571,32 +476,17 @@ func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	got, err := svc.ExpandTopicByID(t.Context(), "t", "cancellation")
-	if err != nil {
-		t.Fatalf("ExpandTopicByID: %v", err)
-	}
-	if llm.gotTopic != "Go Contexts" || llm.gotHint != "cancellation" {
-		t.Errorf("LLM asked for (%q, %q), want (Go Contexts, cancellation)", llm.gotTopic, llm.gotHint)
-	}
-	if len(repo.applyOps) != 2 {
-		t.Fatalf("ops = %+v, want the two blocks below the generated root", repo.applyOps)
-	}
-	if got, want := repo.applyOps[0].Content, "Cancellation propagates."; got != want {
-		t.Errorf("first op content = %q, want %q", got, want)
-	}
-	if repo.applyOps[0].Parent != "t" {
-		t.Errorf("first op parent = %q, want the topic t", repo.applyOps[0].Parent)
-	}
-	if repo.applyOps[1].Parent != string(repo.applyOps[0].BlockID) {
-		t.Errorf("nesting below the graft was lost: op = %+v", repo.applyOps[1])
-	}
-	badMeta := repo.applyMeta.Author != AuthorAI || repo.applyMeta.Source != SourceGUIExpand ||
-		repo.applyMeta.Title != "Go Contexts"
-	if badMeta {
-		t.Errorf("meta = %+v, want ai/gui_expand titled by the topic", repo.applyMeta)
-	}
-	if got.GroupID == "" {
-		t.Errorf("GroupID is empty, want a generated group id")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "Go Contexts", llm.gotTopic)
+	assert.Equal(t, "cancellation", llm.gotHint)
+	require.Len(t, repo.applyOps, 2, "want the two blocks below the generated root")
+	assert.Equal(t, "Cancellation propagates.", repo.applyOps[0].Content)
+	assert.Equal(t, "t", repo.applyOps[0].Parent)
+	assert.Equal(t, string(repo.applyOps[0].BlockID), repo.applyOps[1].Parent, "nesting below the graft was lost")
+	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
+	assert.Equal(t, SourceGUIExpand, repo.applyMeta.Source)
+	assert.Equal(t, "Go Contexts", repo.applyMeta.Title, "want the batch titled by the topic")
+	assert.NotEmpty(t, got.GroupID, "want a generated group id")
 }
 
 func TestExpandTopicByIDGraftsAFlatTreeOntoTheTopic(t *testing.T) {
@@ -609,16 +499,11 @@ func TestExpandTopicByIDGraftsAFlatTreeOntoTheTopic(t *testing.T) {
 	}}
 	svc := NewService(llm, repo, seqIDs())
 
-	if _, err := svc.ExpandTopicByID(t.Context(), "t", ""); err != nil {
-		t.Fatalf("ExpandTopicByID: %v", err)
-	}
-	if len(repo.applyOps) != 2 {
-		t.Fatalf("ops = %+v, want both generated blocks", repo.applyOps)
-	}
+	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 2)
 	for i, op := range repo.applyOps {
-		if op.Parent != "t" {
-			t.Errorf("op %d parent = %q, want the topic t", i, op.Parent)
-		}
+		assert.Equal(t, "t", op.Parent, "op %d", i)
 	}
 }
 
@@ -630,12 +515,8 @@ func TestExpandTopicByIDRefusesAnEmptyExpansion(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs())
 
 	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
-	if !errors.Is(err, ErrLLMBadResponse) {
-		t.Fatalf("error = %v, want ErrLLMBadResponse", err)
-	}
-	if repo.applyCalls != 0 {
-		t.Errorf("storage was written to %d times, want none", repo.applyCalls)
-	}
+	require.ErrorIs(t, err, ErrLLMBadResponse)
+	assert.Zero(t, repo.applyCalls)
 }
 
 func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
@@ -644,45 +525,36 @@ func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
 	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
 	_, err := svc.ExpandTopicByID(t.Context(), "t", "private hint")
-	if !errors.Is(err, ErrAIDisabled) {
-		t.Fatalf("error = %v, want ErrAIDisabled", err)
-	}
-	if repo.gotSubtree != "" || llm.gotTopic != "" || llm.gotHint != "" {
-		t.Error("storage or the model was called while AI was disabled")
-	}
+	require.ErrorIs(t, err, ErrAIDisabled)
+	assert.Empty(t, repo.gotSubtree, "storage was called while AI was disabled")
+	assert.Empty(t, llm.gotTopic, "the model was called while AI was disabled")
+	assert.Empty(t, llm.gotHint, "the model was called while AI was disabled")
 }
 
 func TestServiceReviewPassThroughs(t *testing.T) {
 	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
 	svc := NewService(nil, repo, seqIDs())
 
-	if got, err := svc.Unreviewed(t.Context()); err != nil || len(got.Blocks) != 1 {
-		t.Errorf("Unreviewed = %+v, %v, want the repo's changes", got, err)
-	}
-	if err := svc.AcceptBlock(t.Context(), "B1"); err != nil || repo.markedBlockReviewed != "B1" {
-		t.Errorf("AcceptBlock did not reach MarkBlockReviewed(B1): err=%v got=%q", err, repo.markedBlockReviewed)
-	}
-	if err := svc.AcceptGroup(t.Context(), "G1"); err != nil || repo.markedGroupReviewed != "G1" {
-		t.Errorf("AcceptGroup did not reach MarkGroupReviewed(G1): err=%v got=%q", err, repo.markedGroupReviewed)
-	}
-	if err := svc.AcceptPage(t.Context(), "T1"); err != nil || repo.markedPageReviewed != "T1" {
-		t.Errorf("AcceptPage did not reach MarkPageReviewed(T1): err=%v got=%q", err, repo.markedPageReviewed)
-	}
-	if err := svc.RejectBlock(t.Context(), "B1"); err != nil || repo.rejectedBlock != "B1" {
-		t.Errorf("RejectBlock did not reach RejectBlock(B1): err=%v got=%q", err, repo.rejectedBlock)
-	}
-	if err := svc.RejectPage(t.Context(), "T1"); err != nil || repo.rejectedPage != "T1" {
-		t.Errorf("RejectPage did not reach RejectPage(T1): err=%v got=%q", err, repo.rejectedPage)
-	}
+	got, err := svc.Unreviewed(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, got.Blocks, 1)
+	require.NoError(t, svc.AcceptBlock(t.Context(), "B1"))
+	assert.Equal(t, ID("B1"), repo.markedBlockReviewed)
+	require.NoError(t, svc.AcceptGroup(t.Context(), "G1"))
+	assert.Equal(t, ID("G1"), repo.markedGroupReviewed)
+	require.NoError(t, svc.AcceptPage(t.Context(), "T1"))
+	assert.Equal(t, ID("T1"), repo.markedPageReviewed)
+	require.NoError(t, svc.RejectBlock(t.Context(), "B1"))
+	assert.Equal(t, ID("B1"), repo.rejectedBlock)
+	require.NoError(t, svc.RejectPage(t.Context(), "T1"))
+	assert.Equal(t, ID("T1"), repo.rejectedPage)
 	repo.revisions = map[ID][]Revision{"B1": {{ID: "R1", BlockID: "B1"}}}
-	if hist, err := svc.BlockHistory(t.Context(), "B1"); err != nil || len(hist) != 1 {
-		t.Errorf("BlockHistory = %+v, %v, want the repo's revisions", hist, err)
-	}
-	err := svc.DeleteRevision(t.Context(), "B1", "R1")
-	if err != nil || repo.deletedBlockID != "B1" || repo.deletedRevID != "R1" {
-		t.Errorf("DeleteRevision did not reach DeleteRevision(B1,R1): err=%v got=(%q,%q)",
-			err, repo.deletedBlockID, repo.deletedRevID)
-	}
+	hist, err := svc.BlockHistory(t.Context(), "B1")
+	require.NoError(t, err)
+	assert.Len(t, hist, 1)
+	require.NoError(t, svc.DeleteRevision(t.Context(), "B1", "R1"))
+	assert.Equal(t, ID("B1"), repo.deletedBlockID)
+	assert.Equal(t, ID("R1"), repo.deletedRevID)
 }
 
 func TestTopicGraphPassesThrough(t *testing.T) {
@@ -694,20 +566,13 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 	svc := NewService(nil, repo, nil)
 
 	got, err := svc.TopicGraph(t.Context())
-	if err != nil {
-		t.Fatalf("TopicGraph: %v", err)
-	}
-	if len(got.Topics) != 1 || got.Topics[0] != want.Topics[0] {
-		t.Errorf("topics = %+v, want %+v", got.Topics, want.Topics)
-	}
-	if len(got.Edges) != 1 || got.Edges[0] != want.Edges[0] {
-		t.Errorf("edges = %+v, want %+v", got.Edges, want.Edges)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, want.Topics, got.Topics)
+	assert.Equal(t, want.Edges, got.Edges)
 
 	boom := errors.New("boom")
-	if _, err := NewService(nil, &fakeRepo{graphErr: boom}, nil).TopicGraph(t.Context()); !errors.Is(err, boom) {
-		t.Errorf("error = %v, want %v", err, boom)
-	}
+	_, err = NewService(nil, &fakeRepo{graphErr: boom}, nil).TopicGraph(t.Context())
+	require.ErrorIs(t, err, boom)
 }
 
 func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
@@ -736,14 +601,11 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 			svc := NewService(nil, repo, seqIDs(), WithAIPolicy(off))
 
 			_, err := svc.ApplyOps(t.Context(), tt.meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
-			switch {
-			case tt.wantRefuse && !errors.Is(err, ErrAIDisabled):
-				t.Errorf("error = %v, want ErrAIDisabled", err)
-			case !tt.wantRefuse && err != nil:
-				t.Errorf("error = %v, want the write to go through", err)
-			}
-			if tt.wantRefuse && repo.applyCalls != 0 {
-				t.Errorf("a batch reached storage while AI is off: %d calls", repo.applyCalls)
+			if tt.wantRefuse {
+				require.ErrorIs(t, err, ErrAIDisabled)
+				assert.Zero(t, repo.applyCalls, "a batch reached storage while AI is off")
+			} else {
+				require.NoError(t, err, "want the write to go through")
 			}
 		})
 	}
@@ -757,16 +619,12 @@ func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
 	ops := []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}
 
-	if _, err := svc.ApplyOps(t.Context(), meta, ops); err != nil {
-		t.Fatalf("first write: %v", err)
-	}
+	_, err := svc.ApplyOps(t.Context(), meta, ops)
+	require.NoError(t, err, "first write")
 	enabled = false
-	if _, err := svc.ApplyOps(t.Context(), meta, ops); !errors.Is(err, ErrAIDisabled) {
-		t.Errorf("second write: error = %v, want ErrAIDisabled", err)
-	}
-	if repo.applyCalls != 1 {
-		t.Errorf("storage saw %d batches, want only the one written while AI was on", repo.applyCalls)
-	}
+	_, err = svc.ApplyOps(t.Context(), meta, ops)
+	require.ErrorIs(t, err, ErrAIDisabled, "second write")
+	assert.Equal(t, 1, repo.applyCalls, "want only the batch written while AI was on")
 }
 
 func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
@@ -774,7 +632,6 @@ func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
 	svc := NewService(nil, repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
-	if _, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}); err != nil {
-		t.Errorf("error = %v, want the write to go through", err)
-	}
+	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
+	require.NoError(t, err)
 }
