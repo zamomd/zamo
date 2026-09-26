@@ -25,6 +25,28 @@ linters:
             - "!$test"
           allow:
             - $gostd
+        # Entry points talk to the domain, never to storage.
+        entrypoints-no-storage:
+          files:
+            - "**/internal/mcp/**"
+            - "**/internal/wailsbind/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/zamomd/zamo/internal/sqlite
+              desc: entry points must not depend on the storage adapter
+            - pkg: github.com/zamomd/zamo/internal/modules
+              desc: modules reach entry points through registration in app
+        # A feature module sees the host capability layer, domain types and
+        # its own subpackages only.
+        modules-host-only:
+          files:
+            - "**/internal/modules/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/zamomd/zamo/internal/host
+            - github.com/zamomd/zamo/internal/knowledge
+            - github.com/zamomd/zamo/internal/modules
     errcheck:
       exclude-functions:
         - (*database/sql.Tx).Rollback
