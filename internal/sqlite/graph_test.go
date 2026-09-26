@@ -3,9 +3,9 @@ package sqlite
 import (
 	"testing"
 
-	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 func TestGetTopicGraphCountsBlocks(t *testing.T) {

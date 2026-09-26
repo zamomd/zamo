@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
-	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
-	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
-	"github.com/cominddev/comind/internal/sqlite"
-	"github.com/cominddev/comind/internal/ulid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/logseq"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
+	"github.com/zamomd/zamo/internal/sqlite"
+	"github.com/zamomd/zamo/internal/ulid"
 )
 
 // openService assembles the domain over a fresh sqlite base, as main.go
@@ -23,7 +23,7 @@ import (
 // import storage; the module itself may not.
 func openService(t *testing.T) *knowledge.Service {
 	t.Helper()
-	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "comind.db"))
+	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "zamo.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }

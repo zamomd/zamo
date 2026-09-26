@@ -5,8 +5,8 @@ package export
 import (
 	"context"
 
-	"github.com/cominddev/comind/internal/host"
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/host"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Module exports the base. Its exported methods are bound into the desktop
@@ -33,7 +33,7 @@ func SetPicker(m *Module, p host.FilePicker) { m.picker = p }
 // cancelled. Files named after topics already in the directory are
 // overwritten; nothing else in it is touched.
 func (m *Module) Export(ctx context.Context) (string, error) {
-	dir, err := m.picker.OpenDirectory("Export the Comind base as Markdown")
+	dir, err := m.picker.OpenDirectory("Export the Zamo base as Markdown")
 	if err != nil || dir == "" {
 		return "", err
 	}

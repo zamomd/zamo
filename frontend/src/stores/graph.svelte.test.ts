@@ -4,7 +4,7 @@ const graphFixture = vi.hoisted(() => ({
 	calls: 0,
 	respond: (): Promise<unknown> => Promise.resolve({ Topics: [], Edges: [] }),
 }));
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		TopicGraph: () => {
 			graphFixture.calls++;

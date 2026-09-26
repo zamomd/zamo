@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Block, SearchHit } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { Block, SearchHit } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 import { base } from "../stores/base.svelte";
 import RefAutocomplete from "./RefAutocomplete.svelte";
 
@@ -11,7 +11,7 @@ vi.mock("@wailsio/runtime", () => ({
 	Browser: { OpenURL: () => {} },
 }));
 const backend = vi.hoisted(() => ({ hits: [] as unknown[] }));
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		TopicMap: async () => [],
 		Search: async () => backend.hits,

@@ -8,11 +8,11 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // serverName identifies this server in the MCP handshake.
-const serverName = "comind"
+const serverName = "zamo"
 
 // Searcher runs full-text search over the base.
 type Searcher interface {

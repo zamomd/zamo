@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // putRefs replaces a block's outgoing references with the ones its content

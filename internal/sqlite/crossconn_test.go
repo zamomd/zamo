@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 func TestWriteVisibleAcrossConnections(t *testing.T) {

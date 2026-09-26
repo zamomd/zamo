@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // positionStride spaces sibling positions so a block can be inserted between

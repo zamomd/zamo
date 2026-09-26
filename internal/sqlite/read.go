@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // blockColumns is the block projection every read shares, in the order

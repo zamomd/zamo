@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 const (

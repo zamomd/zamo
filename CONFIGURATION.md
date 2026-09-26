@@ -1,6 +1,6 @@
 # Configuration
 
-Comind reads two files. `config.toml` is declarative and the application never
+Zamo reads two files. `config.toml` is declarative and the application never
 writes to it, so it is safe to manage with home-manager, Ansible, or a dotfiles
 repo — it may be a read-only symlink into the nix store. `settings.toml` is the
 mutable layer the GUI writes when you change something on the Settings screen;
@@ -10,11 +10,11 @@ only the fields you actually changed land there.
 
 |                              | Linux                                                       | macOS                                   | Windows             |
 |------------------------------|-------------------------------------------------------------|-----------------------------------------|---------------------|
-| `config.toml`                | `$XDG_CONFIG_HOME/comind/` (default `~/.config/comind/`)    | `~/Library/Application Support/comind/` | `%AppData%\comind\` |
-| `settings.toml`, `comind.db` | `$XDG_DATA_HOME/comind/` (default `~/.local/share/comind/`) | `~/Library/Application Support/comind/` | `%AppData%\comind\` |
+| `config.toml`                | `$XDG_CONFIG_HOME/zamo/` (default `~/.config/zamo/`)    | `~/Library/Application Support/zamo/` | `%AppData%\zamo\` |
+| `settings.toml`, `zamo.db` | `$XDG_DATA_HOME/zamo/` (default `~/.local/share/zamo/`) | `~/Library/Application Support/zamo/` | `%AppData%\zamo\` |
 
 `settings.toml` is written with mode `0600` because it may hold an API key.
-Set `COMIND_CONFIG` to point at a different config file, and `COMIND_DB` at a
+Set `ZAMO_CONFIG` to point at a different config file, and `ZAMO_DB` at a
 different database.
 
 ## Precedence
@@ -38,7 +38,7 @@ could unlock itself.
 ai_enabled = false
 ```
 
-With AI off, Comind is a local knowledge base you maintain by hand. No AI
+With AI off, Zamo is a local knowledge base you maintain by hand. No AI
 control is rendered anywhere in the window, nothing is sent to a provider, and
 the MCP server keeps serving its read tools (`search`, `get_subtree`,
 `topic_map`, `get_backlinks`) while refusing `write_blocks` — including a
@@ -50,7 +50,7 @@ review stay reviewable: switching AI off neither deletes nor accepts them.
 
 Turning it off keeps your provider, model, base URL and key exactly as they
 are, so turning it back on needs no reconfiguration. The switch is on the
-Settings screen and stays visible while it is off. `COMIND_AI_ENABLED=false`
+Settings screen and stays visible while it is off. `ZAMO_AI_ENABLED=false`
 overrides both files, for a host that has to guarantee no model is reached.
 
 **This is not the same as leaving `llm.provider` empty.** No provider means the
@@ -94,7 +94,7 @@ a restart.
 ```toml
 [llm]
 provider = "anthropic"
-api_key_file = "/run/secrets/comind-anthropic"
+api_key_file = "/run/secrets/zamo-anthropic"
 ```
 
 When the environment supplies the key, the Settings screen shows it as
@@ -104,14 +104,14 @@ env-provided and will not let the GUI override it.
 
 | Variable              | Effect                                           |
 |-----------------------|--------------------------------------------------|
-| `COMIND_CONFIG`       | path to `config.toml`                            |
-| `COMIND_DB`           | path to the SQLite database                      |
-| `COMIND_AI_ENABLED`   | `true` / `false`; overrides both files           |
-| `COMIND_LLM_PROVIDER` | LLM provider; overrides both files               |
-| `COMIND_LLM_MODEL`    | model name; overrides both files                 |
-| `COMIND_LLM_BASE_URL` | OpenAI-compatible endpoint; overrides both files |
+| `ZAMO_CONFIG`       | path to `config.toml`                            |
+| `ZAMO_DB`           | path to the SQLite database                      |
+| `ZAMO_AI_ENABLED`   | `true` / `false`; overrides both files           |
+| `ZAMO_LLM_PROVIDER` | LLM provider; overrides both files               |
+| `ZAMO_LLM_MODEL`    | model name; overrides both files                 |
+| `ZAMO_LLM_BASE_URL` | OpenAI-compatible endpoint; overrides both files |
 | `ANTHROPIC_API_KEY`   | key for the `anthropic` provider                 |
 | `OPENAI_API_KEY`      | key for the `openai-compatible` provider         |
 
-An unparsable `COMIND_AI_ENABLED` is an error rather than a silent "off": a
+An unparsable `ZAMO_AI_ENABLED` is an error rather than a silent "off": a
 typo must not disable AI without saying so.

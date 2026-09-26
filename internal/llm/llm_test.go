@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 func add(tempID, parent, content string) knowledge.Op {

@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
 )
 
 // Adapter is the Logseq format.

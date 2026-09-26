@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cominddev/comind/internal/modules/basebackup"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/modules/basebackup"
 )
 
 type fakeArchive struct {
@@ -53,12 +53,12 @@ func (p fakePicker) OpenDirectory(_ string) (string, error) { return p.answer, p
 func TestBackupWritesWhereTheUserChose(t *testing.T) {
 	archive := &fakeArchive{}
 	m := basebackup.New(archive)
-	basebackup.SetPicker(m, fakePicker{answer: "/tmp/chosen.comind-backup"})
+	basebackup.SetPicker(m, fakePicker{answer: "/tmp/chosen.zamo-backup"})
 
 	got, err := m.Backup(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, "/tmp/chosen.comind-backup", got, "reported path")
-	assert.Equal(t, "/tmp/chosen.comind-backup", archive.backedUpTo, "written path")
+	assert.Equal(t, "/tmp/chosen.zamo-backup", got, "reported path")
+	assert.Equal(t, "/tmp/chosen.zamo-backup", archive.backedUpTo, "written path")
 }
 
 // A cancelled dialog is not a failure: the frontend distinguishes the two by
@@ -90,18 +90,18 @@ func TestCancellingADialogWritesNothing(t *testing.T) {
 func TestRestoreStagesTheChosenArchive(t *testing.T) {
 	archive := &fakeArchive{}
 	m := basebackup.New(archive)
-	basebackup.SetPicker(m, fakePicker{answer: "/tmp/base.comind-backup"})
+	basebackup.SetPicker(m, fakePicker{answer: "/tmp/base.zamo-backup"})
 
 	got, err := m.Restore(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, "/tmp/base.comind-backup", got, "reported archive")
-	assert.Equal(t, "/tmp/base.comind-backup", archive.staged, "staged archive")
+	assert.Equal(t, "/tmp/base.zamo-backup", got, "reported archive")
+	assert.Equal(t, "/tmp/base.zamo-backup", archive.staged, "staged archive")
 }
 
 // A refused archive must reach the frontend as an error rather than as a
 // quiet empty answer, which the UI would read as "cancelled".
 func TestRestoreReportsARefusedArchive(t *testing.T) {
-	refused := errors.New("not a Comind backup archive")
+	refused := errors.New("not a Zamo backup archive")
 	m := basebackup.New(&fakeArchive{err: refused})
 	basebackup.SetPicker(m, fakePicker{answer: "/tmp/junk"})
 
@@ -110,12 +110,12 @@ func TestRestoreReportsARefusedArchive(t *testing.T) {
 }
 
 func TestPendingAndCancelPassThrough(t *testing.T) {
-	archive := &fakeArchive{pending: "/tmp/base.comind-backup"}
+	archive := &fakeArchive{pending: "/tmp/base.zamo-backup"}
 	m := basebackup.New(archive)
 
 	got, err := m.PendingRestore(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, "/tmp/base.comind-backup", got)
+	require.Equal(t, "/tmp/base.zamo-backup", got)
 	require.NoError(t, m.CancelRestore(t.Context()))
 	assert.True(t, archive.cancelled, "CancelRestore did not reach the archive")
 }

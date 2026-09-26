@@ -49,13 +49,13 @@ func TestResolveExplicitEmptyOverrideBeatsConfig(t *testing.T) {
 }
 
 func TestSchemaEnvironmentName(t *testing.T) {
-	assert.Equal(t, "COMIND_LLM_BASE_URL", environmentName("llm.base-url"))
+	assert.Equal(t, "ZAMO_LLM_BASE_URL", environmentName("llm.base-url"))
 }
 
 func TestSchemaResolvesLLMEnvironment(t *testing.T) {
-	t.Setenv("COMIND_LLM_PROVIDER", ProviderOpenAICompat)
-	t.Setenv("COMIND_LLM_MODEL", "env-model")
-	t.Setenv("COMIND_LLM_BASE_URL", "http://localhost:11434/v1")
+	t.Setenv("ZAMO_LLM_PROVIDER", ProviderOpenAICompat)
+	t.Setenv("ZAMO_LLM_MODEL", "env-model")
+	t.Setenv("ZAMO_LLM_BASE_URL", "http://localhost:11434/v1")
 
 	r, err := ResolveWith(Config{LLM: LLM{Provider: ProviderAnthropic, Model: "config-model"}}, Overrides{
 		LLM: LLMOverrides{Model: ptr("gui-model")},

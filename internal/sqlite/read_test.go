@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 func openTestDB(t *testing.T) *sql.DB {

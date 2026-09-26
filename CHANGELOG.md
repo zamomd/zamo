@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Comind are recorded here. Entries are generated from
+All notable changes to Zamo are recorded here. Entries are generated from
 [Conventional Commits](https://www.conventionalcommits.org) by
 [git-cliff](https://git-cliff.org); the layout follows
 [Keep a Changelog](https://keepachangelog.com).

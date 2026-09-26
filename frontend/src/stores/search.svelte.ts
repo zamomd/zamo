@@ -1,5 +1,5 @@
-import type { SearchHit } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import type { SearchHit } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 import { messageFor } from "../lib/callerror";
 
 // How long typing settles before a query is sent, so search-as-you-type is not

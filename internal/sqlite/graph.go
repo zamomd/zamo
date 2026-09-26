@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // topicRoots pairs every block with the topic root it descends from. Every
@@ -40,7 +40,7 @@ func (r *Repo) GetTopicGraph(ctx context.Context) (knowledge.TopicGraph, error) 
 
 // pruneDanglingEdges drops any edge whose endpoint is not among topics, which
 // is how TopicGraph's invariant is kept: a write landing between the two reads
-// — comind mcp deleting a topic after the node read and before the edge read —
+// — zamo mcp deleting a topic after the node read and before the edge read —
 // otherwise yields an edge naming a topic that is not there. A read
 // transaction would close the window instead, but the DSN sets
 // _txlock=immediate (see Open), so it would take a write lock to draw a map.

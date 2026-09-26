@@ -10,19 +10,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/backup"
-	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/backup"
+	"github.com/zamomd/zamo/internal/sqlite"
 )
 
 func TestRestoreReplacesTheBaseAndKeepsTheOldOne(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 
 	seed(ctx, t, dbPath, "the archived claim")
-	archive := filepath.Join(t.TempDir(), "base.comind-backup")
+	archive := filepath.Join(t.TempDir(), "base.zamo-backup")
 	createFrom(ctx, t, dbPath, archive)
 	seed(ctx, t, dbPath, "the live claim")
 
@@ -41,10 +41,10 @@ func TestRestoreReplacesTheBaseAndKeepsTheOldOne(t *testing.T) {
 func TestRestoreClearsTheWriteAheadLog(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 
 	seed(ctx, t, dbPath, "the archived claim")
-	archive := filepath.Join(t.TempDir(), "base.comind-backup")
+	archive := filepath.Join(t.TempDir(), "base.zamo-backup")
 	createFrom(ctx, t, dbPath, archive)
 
 	// A live base under WAL, left with its sidecars in place.
@@ -115,9 +115,9 @@ func TestRestoreRefusesAnUnusableArchive(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			dbPath := filepath.Join(dir, "comind.db")
+			dbPath := filepath.Join(dir, "zamo.db")
 			seed(ctx, t, dbPath, "the live claim")
-			archive := filepath.Join(dir, "broken.comind-backup")
+			archive := filepath.Join(dir, "broken.zamo-backup")
 			tc.build(t, archive)
 
 			_, err := backup.Restore(ctx, archive, dbPath)
@@ -147,7 +147,7 @@ func buildArchive(t *testing.T, path string, m backup.Manifest, database []byte)
 	defer f.Close()
 	z := zip.NewWriter(f)
 	if database != nil {
-		w, err := z.Create("comind.db")
+		w, err := z.Create("zamo.db")
 		require.NoError(t, err)
 		_, err = w.Write(database)
 		require.NoError(t, err)

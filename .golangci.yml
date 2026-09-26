@@ -41,4 +41,4 @@ formatters:
     - gofumpt
   settings:
     gofumpt:
-      module-path: github.com/cominddev/comind
+      module-path: github.com/zamomd/zamo

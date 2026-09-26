@@ -1,4 +1,4 @@
-module github.com/cominddev/comind
+module github.com/zamomd/zamo
 
 go 1.27
 

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const unreviewedFixture = vi.hoisted(() => ({
 	respond: (): Promise<unknown> => Promise.resolve({ Blocks: [] }),
 }));
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: { Unreviewed: () => unreviewedFixture.respond() },
 }));
 

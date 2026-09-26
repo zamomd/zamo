@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 import { makeResolver } from "./resolve";
 import type { TreeNodeData } from "./tree";
 

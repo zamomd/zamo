@@ -12,16 +12,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cominddev/comind/internal/backup"
-	"github.com/cominddev/comind/internal/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/backup"
+	"github.com/zamomd/zamo/internal/sqlite"
 )
 
 func TestCreateCarriesTheDatabaseAndAManifest(t *testing.T) {
 	ctx := t.Context()
 	db := liveBase(ctx, t)
-	dest := filepath.Join(t.TempDir(), "base.comind-backup")
+	dest := filepath.Join(t.TempDir(), "base.zamo-backup")
 
 	require.NoError(t, backup.Create(ctx, db, dest, "v0.1.0"))
 
@@ -70,11 +70,11 @@ func readArchive(t *testing.T, path string) (backup.Manifest, []byte) {
 		switch f.Name {
 		case "manifest.json":
 			require.NoError(t, json.Unmarshal(b, &m), "decode the manifest")
-		case "comind.db":
+		case "zamo.db":
 			dbBytes = b
 		}
 	}
-	require.NotNil(t, dbBytes, "the archive carries no comind.db entry")
+	require.NotNil(t, dbBytes, "the archive carries no zamo.db entry")
 	return m, dbBytes
 }
 

@@ -15,7 +15,7 @@ const backend = vi.hoisted(() => ({
 	exportDir: "",
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		Settings: async () => ({
 			declarative: false,
@@ -28,13 +28,13 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	},
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/export", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/export", () => ({
 	Module: {
 		Export: async () => backend.exportDir,
 	},
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/vaultimport", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport", () => ({
 	Module: {
 		Preview: async () => ({ token: "" }),
 		Apply: async () => ({}),
@@ -42,11 +42,11 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/vaultimport
 	},
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/basebackup", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/basebackup", () => ({
 	Module: {
 		PendingRestore: async () => backend.pending,
 		Restore: async () => backend.chosen,
-		Backup: async () => "/tmp/base.comind-backup",
+		Backup: async () => "/tmp/base.zamo-backup",
 		CancelRestore: async () => {
 			backend.cancelled = true;
 		},
@@ -117,11 +117,11 @@ describe("backing up and restoring the base", () => {
 	});
 
 	it("shows a staged restore and lets it be dropped", async () => {
-		backend.pending = "/tmp/base.comind-backup";
+		backend.pending = "/tmp/base.zamo-backup";
 		const { container } = render(SettingsView);
 
 		await waitFor(() => {
-			expect(container.textContent).toContain("/tmp/base.comind-backup");
+			expect(container.textContent).toContain("/tmp/base.zamo-backup");
 		});
 		// A base already waiting to be replaced offers no second restore.
 		expect(restoreButton(container)).toBeUndefined();
@@ -131,6 +131,6 @@ describe("backing up and restoring the base", () => {
 		await waitFor(() => {
 			expect(backend.cancelled).toBe(true);
 		});
-		expect(container.textContent).not.toContain("/tmp/base.comind-backup");
+		expect(container.textContent).not.toContain("/tmp/base.zamo-backup");
 	});
 });

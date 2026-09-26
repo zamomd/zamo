@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
-	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
 )
 
 const fixture = "../testdata/obsidian"

@@ -1,7 +1,7 @@
-// Package comind parses a directory Comind itself exported: one markdown
+// Package zamo parses a directory Zamo itself exported: one markdown
 // file per topic beside the marker file the export writes, each file either
 // a whole document or one root bullet with the block tree under it.
-package comind
+package zamo
 
 import (
 	"context"
@@ -11,17 +11,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
 )
 
-// Adapter is Comind's own export format.
+// Adapter is Zamo's own export format.
 type Adapter struct{}
 
 // Format names the format for reports.
-func (Adapter) Format() string { return "Comind export" }
+func (Adapter) Format() string { return "Zamo export" }
 
-// Detect reports whether dir holds a Comind export: the marker file the
+// Detect reports whether dir holds a Zamo export: the marker file the
 // export writes beside the topic files.
 func (Adapter) Detect(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, knowledge.MarkdownMarkerName))

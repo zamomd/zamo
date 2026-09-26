@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/jobs"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/sqlite"
-	"github.com/cominddev/comind/internal/ulid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/jobs"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/sqlite"
+	"github.com/zamomd/zamo/internal/ulid"
 )
 
 // hangingLLM behaves like a provider that never answers: every generation
@@ -45,7 +45,7 @@ func (h hangingLLM) GenerateDocumentEdit(ctx context.Context, _ knowledge.Block,
 func (h hangingLLM) Ping(ctx context.Context) error { return h.wait(ctx) }
 
 func TestCancelGenerationInterruptsARunningExpansion(t *testing.T) {
-	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "comind.db"))
+	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "zamo.db"))
 	require.NoError(t, err)
 	defer db.Close()
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }

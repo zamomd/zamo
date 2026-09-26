@@ -14,7 +14,7 @@ import (
 
 	sqlite3 "modernc.org/sqlite"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Open opens (creating if needed) the database file and applies

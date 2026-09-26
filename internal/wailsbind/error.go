@@ -5,9 +5,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 
-	"github.com/cominddev/comind/internal/host"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/settings"
+	"github.com/zamomd/zamo/internal/host"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/settings"
 )
 
 // ErrorPayload is the machine-readable envelope every binding error crosses

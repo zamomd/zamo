@@ -10,11 +10,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/config"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
-	"github.com/cominddev/comind/internal/llm/anthropic"
-	"github.com/cominddev/comind/internal/llm/openaicompat"
+	"github.com/zamomd/zamo/internal/config"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
+	"github.com/zamomd/zamo/internal/llm/anthropic"
+	"github.com/zamomd/zamo/internal/llm/openaicompat"
 )
 
 // ErrDeclarative is returned when config.toml manages the settings and the

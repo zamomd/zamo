@@ -4,7 +4,7 @@ import type {
 	Conflict,
 	Plan,
 	Warning,
-} from "../../bindings/github.com/cominddev/comind/internal/modules/vaultimport/models";
+} from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models";
 
 export interface Group<T> {
 	kind: string;

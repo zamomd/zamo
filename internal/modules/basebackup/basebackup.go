@@ -5,7 +5,7 @@ package basebackup
 import (
 	"context"
 
-	"github.com/cominddev/comind/internal/host"
+	"github.com/zamomd/zamo/internal/host"
 )
 
 // Module drives backup and restore through the platform's file dialogs. Its
@@ -30,7 +30,7 @@ func SetPicker(m *Module, p host.FilePicker) { m.picker = p }
 // Backup asks where to write a snapshot of the base and writes it, answering
 // with the path it wrote. An empty answer means the user cancelled.
 func (m *Module) Backup(ctx context.Context) (string, error) {
-	dest, err := m.picker.SaveFile("Back up the Comind base", "comind-base.comind-backup")
+	dest, err := m.picker.SaveFile("Back up the Zamo base", "zamo-base.zamo-backup")
 	if err != nil || dest == "" {
 		return "", err
 	}
@@ -44,7 +44,7 @@ func (m *Module) Backup(ctx context.Context) (string, error) {
 // with the path it accepted. An empty answer means the user cancelled. The
 // base itself is replaced at the next launch, when no process holds it.
 func (m *Module) Restore(ctx context.Context) (string, error) {
-	archive, err := m.picker.OpenFile("Restore the Comind base from a backup")
+	archive, err := m.picker.OpenFile("Restore the Zamo base from a backup")
 	if err != nil || archive == "" {
 		return "", err
 	}

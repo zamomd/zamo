@@ -49,14 +49,14 @@ func TestLoadRejectsUnknownKey(t *testing.T) {
 }
 
 func TestDatabasePathPrecedence(t *testing.T) {
-	t.Setenv("COMIND_DB", "/tmp/env.db")
+	t.Setenv("ZAMO_DB", "/tmp/env.db")
 	r, err := ResolveWith(Config{Database: "/tmp/file.db"}, Overrides{})
 	require.NoError(t, err)
 	p, err := r.Config.DatabasePath()
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/env.db", p, "env must win")
 
-	t.Setenv("COMIND_DB", "")
+	t.Setenv("ZAMO_DB", "")
 	r, err = ResolveWith(Config{Database: "/tmp/file.db"}, Overrides{})
 	require.NoError(t, err)
 	p, _ = r.Config.DatabasePath()

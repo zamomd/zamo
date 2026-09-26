@@ -22,7 +22,7 @@ import * as settings$0 from "../settings/models.js";
  * AcceptBlock passes the call to knowledge.Service.
  */
 export function AcceptBlock(id: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(1970725898, id);
+    return $Call.ByID(1163498186, id);
 }
 
 /**
@@ -30,7 +30,7 @@ export function AcceptBlock(id: knowledge$0.ID): $CancellablePromise<void> {
  * one AI batch, identified by its group id.
  */
 export function AcceptGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(2954804596, groupID);
+    return $Call.ByID(1829703732, groupID);
 }
 
 /**
@@ -38,14 +38,14 @@ export function AcceptGroup(groupID: knowledge$0.ID): $CancellablePromise<void> 
  * block under topicID in one step.
  */
 export function AcceptPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(1412499454, topicID);
+    return $Call.ByID(3165425342, topicID);
 }
 
 /**
  * Backlinks lists every reference pointing at the block or topic.
  */
 export function Backlinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Backlink[] | null> {
-    return $Call.ByID(455889751, id);
+    return $Call.ByID(382051095, id);
 }
 
 /**
@@ -53,7 +53,7 @@ export function Backlinks(id: knowledge$0.ID): $CancellablePromise<knowledge$0.B
  * newest first.
  */
 export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Revision[] | null> {
-    return $Call.ByID(1982850262, id);
+    return $Call.ByID(3225137046, id);
 }
 
 /**
@@ -61,7 +61,7 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
  * there were. The cancelled call fails with the "cancelled" code.
  */
 export function CancelGeneration(): $CancellablePromise<number> {
-    return $Call.ByID(1308611245);
+    return $Call.ByID(391441261);
 }
 
 /**
@@ -69,7 +69,7 @@ export function CancelGeneration(): $CancellablePromise<number> {
  * values the user has not saved yet.
  */
 export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
-    return $Call.ByID(1418756582, $in);
+    return $Call.ByID(2483810470, $in);
 }
 
 /**
@@ -77,7 +77,7 @@ export function CheckSettings($in: settings$0.In): $CancellablePromise<void> {
  * the user, written without the AI and reporting the new root's id.
  */
 export function CreateTopic(name: string, mode: knowledge$0.Mode): $CancellablePromise<knowledge$0.ID> {
-    return $Call.ByID(3007216784, name, mode);
+    return $Call.ByID(1774480464, name, mode);
 }
 
 /**
@@ -85,14 +85,14 @@ export function CreateTopic(name: string, mode: knowledge$0.Mode): $CancellableP
  * empty block the owner deletes.
  */
 export function DeleteBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(3350413163, id);
+    return $Call.ByID(1052335403, id);
 }
 
 /**
  * DeleteRevision passes the call to knowledge.Service.
  */
 export function DeleteRevision(blockID: knowledge$0.ID, revID: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(3242430375, blockID, revID);
+    return $Call.ByID(1856726887, blockID, revID);
 }
 
 /**
@@ -100,7 +100,7 @@ export function DeleteRevision(blockID: knowledge$0.ID, revID: knowledge$0.ID): 
  * owner applies directly, without the review queue.
  */
 export function EditBlockContent(id: knowledge$0.ID, content: string): $CancellablePromise<void> {
-    return $Call.ByID(2403512003, id, content);
+    return $Call.ByID(3896198019, id, content);
 }
 
 /**
@@ -108,14 +108,14 @@ export function EditBlockContent(id: knowledge$0.ID, content: string): $Cancella
  * scope (a block or subtree root) and the user's text command.
  */
 export function EditWithAI(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(686107899, scope, instruction);
+    return $Call.ByID(3918853051, scope, instruction);
 }
 
 /**
  * ExpandTopic passes the call to knowledge.Service.
  */
 export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(738254684, topic, hint);
+    return $Call.ByID(3015547164, topic, hint);
 }
 
 /**
@@ -123,21 +123,21 @@ export function ExpandTopic(topic: string, hint: string): $CancellablePromise<kn
  * topic in the shape it has.
  */
 export function ExpandTopicByID(id: knowledge$0.ID, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(2139554748, id, hint);
+    return $Call.ByID(96987004, id, hint);
 }
 
 /**
  * GetSubtree passes the call to knowledge.Service.
  */
 export function GetSubtree(root: knowledge$0.ID): $CancellablePromise<knowledge$0.Block[] | null> {
-    return $Call.ByID(309124419, root);
+    return $Call.ByID(2725583107, root);
 }
 
 /**
  * IndentBlock is Tab: the block becomes the last child of the sibling above.
  */
 export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(2582260824, id);
+    return $Call.ByID(1976397336, id);
 }
 
 /**
@@ -145,7 +145,7 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0
  * appears above and the block keeps its id and history.
  */
 export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(1337418982, id, content);
+    return $Call.ByID(1463859878, id, content);
 }
 
 /**
@@ -153,7 +153,7 @@ export function InsertBlockBefore(id: knowledge$0.ID, content: string): $Cancell
  * text and children, source is removed.
  */
 export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(1686297213, target, source);
+    return $Call.ByID(4056355645, target, source);
 }
 
 /**
@@ -161,28 +161,28 @@ export function MergeBlocks(target: knowledge$0.ID, source: knowledge$0.ID): $Ca
  * empty.
  */
 export function MoveBlock(id: knowledge$0.ID, parent: knowledge$0.ID, after: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(1003820089, id, parent, after);
+    return $Call.ByID(732585977, id, parent, after);
 }
 
 /**
  * OutdentBlock is Shift+Tab: the block becomes its parent's next sibling.
  */
 export function OutdentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(3796162431, id);
+    return $Call.ByID(647646015, id);
 }
 
 /**
  * RejectBlock passes the call to knowledge.Service.
  */
 export function RejectBlock(id: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(2790479111, id);
+    return $Call.ByID(444773575, id);
 }
 
 /**
  * RejectPage passes the call to knowledge.Service.
  */
 export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(370056809, topicID);
+    return $Call.ByID(65004073, topicID);
 }
 
 /**
@@ -190,7 +190,7 @@ export function RejectPage(topicID: knowledge$0.ID): $CancellablePromise<void> {
  * immediately: the live client is swapped, no restart.
  */
 export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
-    return $Call.ByID(2896257, $in);
+    return $Call.ByID(2938091329, $in);
 }
 
 /**
@@ -198,7 +198,7 @@ export function SaveSettings($in: settings$0.In): $CancellablePromise<void> {
  * query string; the backend owns the FTS syntax and its neutralisation.
  */
 export function Search(query: string): $CancellablePromise<knowledge$0.SearchHit[] | null> {
-    return $Call.ByID(1512770581, query);
+    return $Call.ByID(1009099989, query);
 }
 
 /**
@@ -206,7 +206,7 @@ export function Search(query: string): $CancellablePromise<knowledge$0.SearchHit
  * an outline and a document.
  */
 export function SetTopicMode(id: knowledge$0.ID, mode: knowledge$0.Mode): $CancellablePromise<void> {
-    return $Call.ByID(410443209, id, mode);
+    return $Call.ByID(1427547273, id, mode);
 }
 
 /**
@@ -215,7 +215,7 @@ export function SetTopicMode(id: knowledge$0.ID, mode: knowledge$0.Mode): $Cance
  * result — only whether one is set.
  */
 export function Settings(): $CancellablePromise<settings$0.View> {
-    return $Call.ByID(4032669524);
+    return $Call.ByID(3515430676);
 }
 
 /**
@@ -223,28 +223,28 @@ export function Settings(): $CancellablePromise<settings$0.View> {
  * sibling below takes tail.
  */
 export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $CancellablePromise<knowledge$0.OutlineChange> {
-    return $Call.ByID(4068486128, id, head, tail);
+    return $Call.ByID(3632188848, id, head, tail);
 }
 
 /**
  * TopicGraph passes the call to knowledge.Service.
  */
 export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
-    return $Call.ByID(362224900);
+    return $Call.ByID(3335755460);
 }
 
 /**
  * TopicMap passes the call to knowledge.Service.
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
-    return $Call.ByID(2904437206);
+    return $Call.ByID(1755291030);
 }
 
 /**
  * UndoGroup rolls back an outline operation by its revision group.
  */
 export function UndoGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
-    return $Call.ByID(2076062586, groupID);
+    return $Call.ByID(2977599034, groupID);
 }
 
 /**
@@ -252,5 +252,5 @@ export function UndoGroup(groupID: knowledge$0.ID): $CancellablePromise<void> {
  * still awaiting a human decision.
  */
 export function Unreviewed(): $CancellablePromise<knowledge$0.UnreviewedChanges> {
-    return $Call.ByID(1571825863);
+    return $Call.ByID(234077319);
 }

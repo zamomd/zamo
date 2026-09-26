@@ -1,8 +1,8 @@
-# Comind — agent guide
+# Zamo — agent guide
 
 Local-first block-based knowledge base: AI writes directly; every change is
 flagged, reversible, and reviewed by the human. One Go binary, two modes:
-`comind` (Wails v3 GUI) and `comind mcp` (stdio MCP server).
+`zamo` (Wails v3 GUI) and `zamo mcp` (stdio MCP server).
 Stack: Go 1.26, Wails v3 beta, Svelte 5 + TS + Vite, modernc.org/sqlite.
 
 ## Commands
@@ -37,7 +37,7 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
 - Go tests assert with testify: `require` when the test cannot go on
   (setup, an unexpected error), `assert` for the checks themselves, and
   only `assert` off the test goroutine. `testifylint` enforces the rest.
-- Config: `config.toml` (`~/.config/comind/config.toml`) is declarative
+- Config: `config.toml` (`~/.config/zamo/config.toml`) is declarative
   and read-only to the app — safe to be a nix-store symlink. The GUI
   writes a separate mutable layer, `settings.toml`, in the XDG data
   dir (0600; only fields the user changed in the GUI land there, may

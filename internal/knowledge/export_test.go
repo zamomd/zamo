@@ -139,5 +139,5 @@ func TestMarkdownMarkerCannotCollideWithATopicFile(t *testing.T) {
 	require.False(t, strings.HasPrefix(files[0].Name, "."), "topic file %q could shadow the marker", files[0].Name)
 	m := MarkdownMarker()
 	require.Equal(t, MarkdownMarkerName, m.Name)
-	require.True(t, strings.HasPrefix(m.Content, "comind markdown "), "marker = %+v", m)
+	require.True(t, strings.HasPrefix(m.Content, "zamo markdown "), "marker = %+v", m)
 }

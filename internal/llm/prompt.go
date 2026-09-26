@@ -5,7 +5,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // ExpandPrompt renders the topic-expansion prompt for a topic and an optional

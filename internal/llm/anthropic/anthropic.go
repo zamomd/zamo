@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
 )
 
 // DefaultModel is used when no model is configured in the settings.

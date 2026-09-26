@@ -5,12 +5,12 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "Comind" # The name of the company
-  productName: "Comind" # The name of the application
-  productIdentifier: "dev.comind.app" # The unique product identifier
+  companyName: "Zamo" # The name of the company
+  productName: "Zamo" # The name of the application
+  productIdentifier: "dev.zamo.app" # The unique product identifier
   description: "Living knowledge base: AI proposes, the human reviews" # The application description
-  copyright: "(c) 2026, Comind contributors" # Copyright text
-  comments: "https://github.com/cominddev/comind" # Comments
+  copyright: "(c) 2026, Zamo contributors" # Copyright text
+  comments: "https://github.com/zamomd/zamo" # Comments
   version: "0.0.1" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { Module as BaseBackup } from "../bindings/github.com/cominddev/comind/internal/modules/basebackup";
-	import { Module as Export } from "../bindings/github.com/cominddev/comind/internal/modules/export";
-	import { Module as VaultImport } from "../bindings/github.com/cominddev/comind/internal/modules/vaultimport";
-	import type { Plan } from "../bindings/github.com/cominddev/comind/internal/modules/vaultimport/models";
-	import type { In, View } from "../bindings/github.com/cominddev/comind/internal/settings/models.js";
-	import { App } from "../bindings/github.com/cominddev/comind/internal/wailsbind";
+	import { Module as BaseBackup } from "../bindings/github.com/zamomd/zamo/internal/modules/basebackup";
+	import { Module as Export } from "../bindings/github.com/zamomd/zamo/internal/modules/export";
+	import { Module as VaultImport } from "../bindings/github.com/zamomd/zamo/internal/modules/vaultimport";
+	import type { Plan } from "../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models";
+	import type { In, View } from "../bindings/github.com/zamomd/zamo/internal/settings/models.js";
+	import { App } from "../bindings/github.com/zamomd/zamo/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
 	import { submittedSwitch, submittedText } from "./lib/settingsinput";
 	import { canApply, count, describeKind, groupByKind, summaryLine } from "./lib/vaultimport";
@@ -187,7 +187,7 @@
 		if (!view) return "";
 		switch (view.aiEnabled.origin) {
 			case "env":
-				return "set from COMIND_AI_ENABLED; it cannot be changed here";
+				return "set from ZAMO_AI_ENABLED; it cannot be changed here";
 			case "config":
 				return "set in config.toml";
 			case "gui":
@@ -405,7 +405,7 @@
 		<p class="hint">
 			Export writes one Markdown file per topic, readable by Obsidian and Logseq, into a
 			directory you choose; files named after topics already there are overwritten. Import
-			brings an Obsidian vault, a Logseq graph or a Comind export back in as topics of your own.
+			brings an Obsidian vault, a Logseq graph or a Zamo export back in as topics of your own.
 			A backup holds what Markdown leaves out: stable ids, revisions, review state and
 			references. Neither carries an API key.
 		</p>
@@ -468,7 +468,7 @@
 		{#if restoreConfirming}
 			<p class="confirm">
 				Restoring replaces this base with the one in the backup. The base you have now is kept
-				beside it, and nothing changes until you restart Comind.
+				beside it, and nothing changes until you restart Zamo.
 				<button type="button" onclick={chooseRestore} disabled={baseBusy}>Choose a backup…</button>
 				<button type="button" onclick={() => (restoreConfirming = false)} disabled={baseBusy}>
 					Cancel
@@ -478,7 +478,7 @@
 
 		{#if pendingRestore !== ""}
 			<p class="confirm">
-				<code>{pendingRestore}</code> replaces this base the next time Comind starts. It cannot
+				<code>{pendingRestore}</code> replaces this base the next time Zamo starts. It cannot
 				happen while the app is running, because the MCP server may be reading the base too.
 				<button type="button" onclick={cancelRestore} disabled={baseBusy}>
 					Cancel the restore

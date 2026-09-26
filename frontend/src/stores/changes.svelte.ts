@@ -1,5 +1,5 @@
-import type { UnreviewedBlock } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import type { UnreviewedBlock } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 
 // The unreviewed-change set shared by the whole window: the sidebar footer,
 // the Changes screen and the tree's ghost rows read the same snapshot, so

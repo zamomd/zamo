@@ -4,15 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cominddev/comind/internal/fsexport"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/modules/export"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
-	"github.com/cominddev/comind/internal/modules/vaultimport/comind"
-	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
-	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/fsexport"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/modules/export"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/logseq"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/zamo"
 )
 
 // shape is a topic as content and structure only: what a round trip through
@@ -80,11 +80,11 @@ func TestExportThenImportKeepsEveryTopic(t *testing.T) {
 	require.NoError(t, export.New(src, fsexport.Writer{}).Markdown(ctx, dir))
 
 	dst := openService(t)
-	m := vaultimport.New(dst, dst, comind.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
+	m := vaultimport.New(dst, dst, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
 	vaultimport.SetPicker(m, fakePicker{answer: dir})
 	plan, err := m.Preview(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "Comind export", plan.Format)
+	require.Equal(t, "Zamo export", plan.Format)
 	require.Empty(t, plan.Conflicts)
 	require.Equal(t, 4, plan.Pages)
 	_, err = m.Apply(ctx, plan.Token)

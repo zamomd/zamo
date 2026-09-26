@@ -1,4 +1,4 @@
-// Package backup captures and restores the complete Comind base — the
+// Package backup captures and restores the complete Zamo base — the
 // stable ids, revisions, review state and references that portable Markdown
 // export deliberately leaves behind.
 package backup
@@ -23,7 +23,7 @@ const Format = 1
 
 const (
 	manifestEntry = "manifest.json"
-	databaseEntry = "comind.db"
+	databaseEntry = "zamo.db"
 )
 
 // Manifest describes one archive: what wrote it, what schema the database
@@ -49,7 +49,7 @@ func Create(ctx context.Context, db *sql.DB, dest string, appVersion string) err
 		return err
 	}
 
-	staging, err := os.MkdirTemp(filepath.Dir(dest), ".comind-backup-")
+	staging, err := os.MkdirTemp(filepath.Dir(dest), ".zamo-backup-")
 	if err != nil {
 		return fmt.Errorf("stage the snapshot: %w", err)
 	}

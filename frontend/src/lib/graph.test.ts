@@ -223,7 +223,7 @@ describe("scaleFor", () => {
 
 describe("truncateLabel", () => {
 	it("leaves a short title untouched", () => {
-		expect(truncateLabel("Comind roadmap")).toBe("Comind roadmap");
+		expect(truncateLabel("Zamo roadmap")).toBe("Zamo roadmap");
 	});
 
 	it("bounds a long title with an ellipsis", () => {

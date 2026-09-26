@@ -3,7 +3,7 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "comind"
+name: "zamo"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.0.1"
@@ -11,18 +11,18 @@ section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
 description: "Living knowledge base: AI proposes, the human reviews"
-vendor: "Comind"
+vendor: "Zamo"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/comind"
-    dst: "/usr/local/bin/comind"
+  - src: "./bin/zamo"
+    dst: "/usr/local/bin/zamo"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/comind.png"
-  - src: "./build/linux/comind.desktop"
-    dst: "/usr/share/applications/comind.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/zamo.png"
+  - src: "./build/linux/zamo.desktop"
+    dst: "/usr/share/applications/zamo.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

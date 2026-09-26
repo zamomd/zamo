@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // BlocksReferencingTopic implements knowledge.Repository. It reads the

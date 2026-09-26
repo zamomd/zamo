@@ -6,7 +6,7 @@ const settingsFixture = vi.hoisted(() => ({
 	calls: 0,
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		Settings: async () => {
 			settingsFixture.calls++;

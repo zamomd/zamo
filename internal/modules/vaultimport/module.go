@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/cominddev/comind/internal/host"
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/host"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // SourceImport marks the revisions an import writes.

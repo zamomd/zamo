@@ -15,7 +15,7 @@ const backend = vi.hoisted(() => ({
 	applyError: "",
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		Settings: async () => ({
 			declarative: false,
@@ -28,11 +28,11 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => (
 	},
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/export", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/export", () => ({
 	Module: { Export: async () => "" },
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/basebackup", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/basebackup", () => ({
 	Module: {
 		PendingRestore: async () => "",
 		Restore: async () => "",
@@ -41,7 +41,7 @@ vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/basebackup"
 	},
 }));
 
-vi.mock("../../bindings/github.com/cominddev/comind/internal/modules/vaultimport", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport", () => ({
 	Module: {
 		Preview: async () =>
 			backend.plan ?? {

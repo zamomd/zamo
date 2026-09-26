@@ -9,7 +9,7 @@ import (
 var bullet = regexp.MustCompile(`^([ \t]*)[-*](?: (.*))?$`)
 
 // ParseOutline builds a block tree from a markdown bullet list, the shape
-// Logseq writes and Comind's own export writes. A tab is one level; spaces
+// Logseq writes and Zamo's own export writes. A tab is one level; spaces
 // are measured against the first indented bullet's width. A line that is not
 // a bullet continues the block above it, with the bullet's indentation
 // removed, so a block keeps its extra lines. Text above the first bullet is

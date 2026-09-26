@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cominddev/comind/internal/backup"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/backup"
 )
 
 // A restore cannot replace the database while this process — or the MCP
@@ -16,9 +16,9 @@ import (
 func TestStageRefusesABadArchiveImmediately(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 	seed(ctx, t, dbPath, "the live claim")
-	junk := filepath.Join(dir, "junk.comind-backup")
+	junk := filepath.Join(dir, "junk.zamo-backup")
 	writeFile(t, junk, []byte("not a zip"))
 
 	require.ErrorIs(t, backup.Stage(ctx, junk, dbPath), backup.ErrNotAnArchive,
@@ -29,10 +29,10 @@ func TestStageRefusesABadArchiveImmediately(t *testing.T) {
 func TestApplyStagedReplacesTheBaseAtStartup(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 
 	seed(ctx, t, dbPath, "the archived claim")
-	archive := filepath.Join(t.TempDir(), "base.comind-backup")
+	archive := filepath.Join(t.TempDir(), "base.zamo-backup")
 	createFrom(ctx, t, dbPath, archive)
 	seed(ctx, t, dbPath, "the live claim")
 
@@ -50,7 +50,7 @@ func TestApplyStagedReplacesTheBaseAtStartup(t *testing.T) {
 
 func TestApplyStagedIsANoOpWithoutAMarker(t *testing.T) {
 	ctx := t.Context()
-	dbPath := filepath.Join(t.TempDir(), "comind.db")
+	dbPath := filepath.Join(t.TempDir(), "zamo.db")
 	seed(ctx, t, dbPath, "the live claim")
 
 	safety, err := backup.ApplyStaged(ctx, dbPath)
@@ -65,10 +65,10 @@ func TestApplyStagedIsANoOpWithoutAMarker(t *testing.T) {
 func TestApplyStagedRefusesAnArchiveGoneBad(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 
 	seed(ctx, t, dbPath, "the archived claim")
-	archive := filepath.Join(dir, "base.comind-backup")
+	archive := filepath.Join(dir, "base.zamo-backup")
 	createFrom(ctx, t, dbPath, archive)
 	seed(ctx, t, dbPath, "the live claim")
 	require.NoError(t, backup.Stage(ctx, archive, dbPath))
@@ -84,9 +84,9 @@ func TestApplyStagedRefusesAnArchiveGoneBad(t *testing.T) {
 func TestStageIsUndoable(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "comind.db")
+	dbPath := filepath.Join(dir, "zamo.db")
 	seed(ctx, t, dbPath, "the live claim")
-	archive := filepath.Join(t.TempDir(), "base.comind-backup")
+	archive := filepath.Join(t.TempDir(), "base.zamo-backup")
 	createFrom(ctx, t, dbPath, archive)
 
 	require.NoError(t, backup.Stage(ctx, archive, dbPath))

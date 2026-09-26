@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Holder is an LLMClient whose implementation can be replaced while the

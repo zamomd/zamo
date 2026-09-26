@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 import { base } from "../stores/base.svelte";
 import TreeNode from "./TreeNode.svelte";
 
@@ -15,7 +15,7 @@ const backend = vi.hoisted(() => ({
 	writeGate: null as Promise<void> | null,
 	written: [] as string[],
 }));
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		TopicMap: async () => [],
 		GetSubtree: async () => backend.subtree,

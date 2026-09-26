@@ -17,14 +17,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
  * with the path it wrote. An empty answer means the user cancelled.
  */
 export function Backup(): $CancellablePromise<string> {
-    return $Call.ByID(4090775456);
+    return $Call.ByID(1550651616);
 }
 
 /**
  * CancelRestore drops a pending restore, leaving the live base in place.
  */
 export function CancelRestore(): $CancellablePromise<void> {
-    return $Call.ByID(558762998);
+    return $Call.ByID(3001586230);
 }
 
 /**
@@ -32,7 +32,7 @@ export function CancelRestore(): $CancellablePromise<void> {
  * start, or "" when there is none.
  */
 export function PendingRestore(): $CancellablePromise<string> {
-    return $Call.ByID(2141046573);
+    return $Call.ByID(4200097389);
 }
 
 /**
@@ -41,5 +41,5 @@ export function PendingRestore(): $CancellablePromise<string> {
  * base itself is replaced at the next launch, when no process holds it.
  */
 export function Restore(): $CancellablePromise<string> {
-    return $Call.ByID(2681624004);
+    return $Call.ByID(3537060612);
 }

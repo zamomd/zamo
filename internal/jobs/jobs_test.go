@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cominddev/comind/internal/jobs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/jobs"
 )
 
 // newRegistry issues the IDs a, b, c… and a clock that advances one second

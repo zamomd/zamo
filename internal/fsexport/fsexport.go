@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cominddev/comind/internal/host"
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/host"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Writer writes an export to the local filesystem. It keeps the domain free of

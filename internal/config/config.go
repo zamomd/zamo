@@ -60,18 +60,18 @@ type LLM struct {
 	APIKeyFile string `toml:"api_key_file"`
 }
 
-// DefaultPath returns the config file location: $COMIND_CONFIG if set,
-// otherwise <user config dir>/comind/config.toml (respects
+// DefaultPath returns the config file location: $ZAMO_CONFIG if set,
+// otherwise <user config dir>/zamo/config.toml (respects
 // XDG_CONFIG_HOME on Linux).
 func DefaultPath() (string, error) {
-	if p := os.Getenv("COMIND_CONFIG"); p != "" {
+	if p := os.Getenv("ZAMO_CONFIG"); p != "" {
 		return p, nil
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("config directory: %w", err)
 	}
-	return filepath.Join(dir, "comind", "config.toml"), nil
+	return filepath.Join(dir, "zamo", "config.toml"), nil
 }
 
 // Load reads the config file at path (empty means DefaultPath).
@@ -117,7 +117,7 @@ func (c Config) DatabasePath() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "comind.db"), nil
+	return filepath.Join(dir, "zamo.db"), nil
 }
 
 // dataDir returns the platform directory for application data. Data and
@@ -126,13 +126,13 @@ func (c Config) DatabasePath() (string, error) {
 func dataDir() (string, error) {
 	if runtime.GOOS == "linux" {
 		if d := os.Getenv("XDG_DATA_HOME"); d != "" {
-			return filepath.Join(d, "comind"), nil
+			return filepath.Join(d, "zamo"), nil
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("home directory: %w", err)
 		}
-		return filepath.Join(home, ".local", "share", "comind"), nil
+		return filepath.Join(home, ".local", "share", "zamo"), nil
 	}
 	// macOS (~/Library/Application Support) and Windows (%AppData%)
 	// use one directory for both config and data.
@@ -140,5 +140,5 @@ func dataDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("config directory: %w", err)
 	}
-	return filepath.Join(dir, "comind"), nil
+	return filepath.Join(dir, "zamo"), nil
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Disabled is a null-object knowledge.LLMClient for the "no provider

@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=Comind
+Name=Zamo
 Comment=Living knowledge base: AI proposes, the human reviews
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/comind %u
+Exec=/usr/local/bin/zamo %u
 Terminal=false
 Type=Application
-Icon=comind
+Icon=zamo
 Categories=Utility;
-StartupWMClass=comind
+StartupWMClass=zamo
 
  

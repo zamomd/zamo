@@ -1,5 +1,5 @@
-import type { TopicEdge, TopicNode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import type { TopicEdge, TopicNode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 import { messageFor } from "../lib/callerror";
 import { layout, type Point } from "../lib/graph";
 

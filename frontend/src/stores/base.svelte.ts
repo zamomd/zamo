@@ -6,8 +6,8 @@ import type {
 	Mode,
 	OutlineChange,
 	Revision,
-} from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+} from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 import { callError, messageFor } from "../lib/callerror";
 import { lineCount, offsetAtLine } from "../lib/caret";
 import {

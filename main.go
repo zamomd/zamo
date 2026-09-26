@@ -1,7 +1,7 @@
-// Command comind is a single binary with two run modes:
+// Command zamo is a single binary with two run modes:
 //
-//	comind      — the GUI application (Wails);
-//	comind mcp  — the MCP server over stdio (spawned by the MCP client
+//	zamo      — the GUI application (Wails);
+//	zamo mcp  — the MCP server over stdio (spawned by the MCP client
 //	              itself: Claude Code, Claude Desktop, Cursor, etc.).
 //
 // Both modes work with the same database file.
@@ -15,24 +15,24 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/cominddev/comind/internal/backup"
-	"github.com/cominddev/comind/internal/config"
-	"github.com/cominddev/comind/internal/fsexport"
-	"github.com/cominddev/comind/internal/jobs"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
-	"github.com/cominddev/comind/internal/mcp"
-	"github.com/cominddev/comind/internal/modules/basebackup"
-	"github.com/cominddev/comind/internal/modules/export"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
-	"github.com/cominddev/comind/internal/modules/vaultimport/comind"
-	"github.com/cominddev/comind/internal/modules/vaultimport/logseq"
-	"github.com/cominddev/comind/internal/modules/vaultimport/obsidian"
-	"github.com/cominddev/comind/internal/settings"
-	"github.com/cominddev/comind/internal/sqlite"
-	"github.com/cominddev/comind/internal/ulid"
-	"github.com/cominddev/comind/internal/wailsbind"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/zamomd/zamo/internal/backup"
+	"github.com/zamomd/zamo/internal/config"
+	"github.com/zamomd/zamo/internal/fsexport"
+	"github.com/zamomd/zamo/internal/jobs"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
+	"github.com/zamomd/zamo/internal/mcp"
+	"github.com/zamomd/zamo/internal/modules/basebackup"
+	"github.com/zamomd/zamo/internal/modules/export"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/logseq"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/zamo"
+	"github.com/zamomd/zamo/internal/settings"
+	"github.com/zamomd/zamo/internal/sqlite"
+	"github.com/zamomd/zamo/internal/ulid"
+	"github.com/zamomd/zamo/internal/wailsbind"
 )
 
 // The compiled frontend, embedded into the binary. The all: prefix picks
@@ -47,7 +47,7 @@ var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "comind:", err)
+		fmt.Fprintln(os.Stderr, "zamo:", err)
 		os.Exit(1)
 	}
 }
@@ -61,7 +61,7 @@ func run() error {
 	// --version must answer before any setup: it cannot depend on config
 	// or the database, which may be absent on a fresh install or in CI.
 	if mode == "version" || mode == "--version" || mode == "-v" {
-		fmt.Println("comind", version)
+		fmt.Println("zamo", version)
 		return nil
 	}
 
@@ -141,9 +141,9 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
-	importer := vaultimport.New(svc, svc, comind.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
+	importer := vaultimport.New(svc, svc, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
 	app := application.New(application.Options{
-		Name:        "Comind",
+		Name:        "Zamo",
 		Description: "Living knowledge base",
 		Services: []application.Service{
 			wailsbind.Service(bind),
@@ -170,7 +170,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	vaultimport.SetPicker(importer, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Comind",
+		Title:  "Zamo",
 		Width:  1100,
 		Height: 720,
 		URL:    "/",
@@ -197,7 +197,7 @@ func (d dialogPicker) OpenFile(title string) (string, error) {
 		SetTitle(title).
 		CanChooseFiles(true).
 		CanChooseDirectories(false).
-		AddFilter("Comind backup", "*.comind-backup").
+		AddFilter("Zamo backup", "*.zamo-backup").
 		PromptForSingleSelection()
 }
 

@@ -24,14 +24,14 @@ import * as $models from "./models.js";
  * run it again.
  */
 export function Apply(token: string): $CancellablePromise<$models.Result> {
-    return $Call.ByID(3523850230, token);
+    return $Call.ByID(1034728758, token);
 }
 
 /**
  * Discard drops the pending preview, so nothing of it can be written.
  */
 export function Discard(): $CancellablePromise<void> {
-    return $Call.ByID(2911825544);
+    return $Call.ByID(2644167368);
 }
 
 /**
@@ -40,5 +40,5 @@ export function Discard(): $CancellablePromise<void> {
  * cancelled. The plan replaces any earlier preview and is what Apply writes.
  */
 export function Preview(): $CancellablePromise<$models.Plan> {
-    return $Call.ByID(2439903778);
+    return $Call.ByID(1149913698);
 }

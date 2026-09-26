@@ -5,11 +5,11 @@
 	"info": {
 		"0000": {
 			"ProductVersion": "0.0.1",
-			"CompanyName": "Comind",
+			"CompanyName": "Zamo",
 			"FileDescription": "Living knowledge base: AI proposes, the human reviews",
-			"LegalCopyright": "(c) 2026, Comind contributors",
-			"ProductName": "Comind",
-			"Comments": "https://github.com/cominddev/comind"
+			"LegalCopyright": "(c) 2026, Zamo contributors",
+			"ProductName": "Zamo",
+			"Comments": "https://github.com/zamomd/zamo"
 		}
 	}
 }

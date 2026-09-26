@@ -1,4 +1,4 @@
-package comind_test
+package zamo_test
 
 import (
 	"testing"
@@ -6,15 +6,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/modules/vaultimport"
-	"github.com/cominddev/comind/internal/modules/vaultimport/comind"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/modules/vaultimport"
+	"github.com/zamomd/zamo/internal/modules/vaultimport/zamo"
 )
 
-const fixture = "../testdata/comind"
+const fixture = "../testdata/zamo"
 
 func TestDetectNeedsTheMarker(t *testing.T) {
-	var a comind.Adapter
+	var a zamo.Adapter
 	assert.True(t, a.Detect(fixture), "Detect(fixture)")
 	for _, other := range []string{"../testdata/obsidian", "../testdata/logseq", t.TempDir()} {
 		assert.False(t, a.Detect(other), "Detect(%s)", other)
@@ -23,10 +23,10 @@ func TestDetectNeedsTheMarker(t *testing.T) {
 
 func parse(t *testing.T) map[string]vaultimport.Page {
 	t.Helper()
-	var a comind.Adapter
+	var a zamo.Adapter
 	v, err := a.Parse(t.Context(), fixture)
 	require.NoError(t, err)
-	assert.Equal(t, "Comind export", v.Format)
+	assert.Equal(t, "Zamo export", v.Format)
 	pages := map[string]vaultimport.Page{}
 	for _, p := range v.Pages {
 		assert.Empty(t, p.Warnings, "%s: the export is lossless", p.Name)

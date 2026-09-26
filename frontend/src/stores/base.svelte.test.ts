@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type Block, Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import { type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 
 vi.mock("@wailsio/runtime", () => ({
 	Events: { On: () => () => {} },
@@ -23,7 +23,7 @@ const reloadFixture = vi.hoisted(() => ({
 	editGate: null as Promise<void> | null,
 }));
 const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }));
-vi.mock("../../bindings/github.com/cominddev/comind/internal/wailsbind", () => ({
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 	App: {
 		TopicMap: async () => {
 			if (reloadFixture.gate !== null) {
@@ -93,7 +93,7 @@ vi.mock("./changes.svelte", () => ({
 	changes: { blocks: [], count: 0, refresh: vi.fn(async () => {}) },
 }));
 
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 import { parseRefs } from "../lib/refs";
 import { findNode, type TreeNodeData } from "../lib/tree";
 import { base } from "./base.svelte";

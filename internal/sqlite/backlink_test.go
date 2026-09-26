@@ -3,9 +3,9 @@ package sqlite
 import (
 	"testing"
 
-	"github.com/cominddev/comind/internal/knowledge"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 func backlinkBase(t *testing.T, repo *Repo) {

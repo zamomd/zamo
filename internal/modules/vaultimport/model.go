@@ -5,14 +5,14 @@
 //
 // Adapter is the contract a format implementation targets. An adapter reads
 // files, names pages, parses their structure, and rewrites link syntax into
-// Comind's forms; it resolves nothing, because it knows neither the base's
+// Zamo's forms; it resolves nothing, because it knows neither the base's
 // topics nor the ids the import will receive. That is the planner's job.
 package vaultimport
 
 import (
 	"context"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Adapter parses one vault format into the neutral model.

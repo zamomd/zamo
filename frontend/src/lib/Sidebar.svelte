@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+	import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
 	import { search } from "../stores/search.svelte";

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Block } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+	import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 	import { base } from "../stores/base.svelte";
 	import Diff from "./Diff.svelte";
 

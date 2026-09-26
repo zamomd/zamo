@@ -1,5 +1,5 @@
 {
-  description = "Comind — living knowledge base";
+  description = "Zamo — living knowledge base";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

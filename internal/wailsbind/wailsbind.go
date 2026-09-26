@@ -6,9 +6,9 @@ package wailsbind
 import (
 	"context"
 
-	"github.com/cominddev/comind/internal/jobs"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/settings"
+	"github.com/zamomd/zamo/internal/jobs"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/settings"
 )
 
 // GenerationProgressEvent is the name of the Wails event carrying live LLM

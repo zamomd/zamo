@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-// The link syntax shared by both formats and by Comind: [[Page]] and
+// The link syntax shared by both formats and by Zamo: [[Page]] and
 // ((block)) spans. A backslash escapes the character after it, and a span is
 // skipped whole once opened, so a [[Page]] written inside a block
 // reference's label is text.
@@ -72,7 +72,7 @@ func (e *escaper) active(c byte) bool {
 	return active
 }
 
-// RewriteWikilinks reduces every [[...]] to the plain [[Page]] form Comind
+// RewriteWikilinks reduces every [[...]] to the plain [[Page]] form Zamo
 // resolves: an alias after | and a heading or block anchor after # or ^ are
 // dropped, and an embed ![[x]] becomes a reference. Each loss is reported
 // with the original link as detail; the Page of each warning is left for the

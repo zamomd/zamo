@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 45
     env:
       SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
-      NOTARY_PROFILE: comind-notary
+      NOTARY_PROFILE: zamo-notary
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +91,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         working-directory: build
         run: |
-          wails3 update build-assets -name comind -binaryname comind -config config.yml \
+          wails3 update build-assets -name zamo -binaryname zamo -config config.yml \
             -productversion "$VERSION" -dir .
           grep -A1 CFBundleShortVersionString darwin/Info.plist | grep -F ">$VERSION<"
 
@@ -106,28 +106,28 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SIGNING" = true ]; then
-            wails3 tool sign --input bin/comind.app --identity "$IDENTITY" \
+            wails3 tool sign --input bin/zamo.app --identity "$IDENTITY" \
               --notarize --keychain-profile "$NOTARY_PROFILE"
           else
-            wails3 tool sign --input bin/comind.app --identity - --hardened-runtime
+            wails3 tool sign --input bin/zamo.app --identity - --hardened-runtime
           fi
-          codesign --verify --deep --strict bin/comind.app
+          codesign --verify --deep --strict bin/zamo.app
           # The hardened runtime refuses a non-system dylib; a bundle that cannot
           # start must not ship.
-          bin/comind.app/Contents/MacOS/comind --version
+          bin/zamo.app/Contents/MacOS/zamo --version
 
       - name: Zip the bundle
         env:
           VERSION: ${{ steps.version.outputs.version }}
         # ditto preserves the bundle's symlinks and metadata; a plain zip does not.
-        run: ditto -c -k --keepParent bin/comind.app "comind-${VERSION}-darwin-arm64.zip"
+        run: ditto -c -k --keepParent bin/zamo.app "zamo-${VERSION}-darwin-arm64.zip"
 
       - name: Build the disk image
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           wails3 task darwin:create:dmg
-          mv bin/comind.dmg "comind-${VERSION}-darwin-arm64.dmg"
+          mv bin/zamo.dmg "zamo-${VERSION}-darwin-arm64.dmg"
 
       - name: Sign, notarize and staple the disk image
         if: env.SIGNING == 'true'
@@ -135,23 +135,23 @@ jobs:
           IDENTITY: ${{ steps.cert.outputs.identity }}
         run: |
           set -euo pipefail
-          codesign --force --timestamp --sign "$IDENTITY" comind-*.dmg
-          xcrun notarytool submit comind-*.dmg --keychain-profile "$NOTARY_PROFILE" --wait
+          codesign --force --timestamp --sign "$IDENTITY" zamo-*.dmg
+          xcrun notarytool submit zamo-*.dmg --keychain-profile "$NOTARY_PROFILE" --wait
           # stapler finds no ticket unless the submission was accepted.
-          xcrun stapler staple comind-*.dmg
+          xcrun stapler staple zamo-*.dmg
 
       - name: Verify Gatekeeper acceptance
         if: env.SIGNING == 'true'
         run: |
           set -euo pipefail
-          spctl --assess --type execute -vv bin/comind.app
-          spctl --assess --type open --context context:primary-signature -vv comind-*.dmg
-          xcrun stapler validate bin/comind.app
-          xcrun stapler validate comind-*.dmg
+          spctl --assess --type execute -vv bin/zamo.app
+          spctl --assess --type open --context context:primary-signature -vv zamo-*.dmg
+          xcrun stapler validate bin/zamo.app
+          xcrun stapler validate zamo-*.dmg
 
       # After stapling, which rewrites the disk image.
       - name: Write SHA256SUMS
-        run: shasum -a 256 comind-*.zip comind-*.dmg > SHA256SUMS
+        run: shasum -a 256 zamo-*.zip zamo-*.dmg > SHA256SUMS
 
       - name: Generate release notes with git-cliff
         env:
@@ -176,16 +176,16 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./comind-*.zip ./comind-*.dmg ./SHA256SUMS
+        run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./zamo-*.zip ./zamo-*.dmg ./SHA256SUMS
 
       - name: Upload the dry-run bundle
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: comind-dry-run
+          name: zamo-dry-run
           path: |
-            comind-*.zip
-            comind-*.dmg
+            zamo-*.zip
+            zamo-*.dmg
             SHA256SUMS
           retention-days: 3
 

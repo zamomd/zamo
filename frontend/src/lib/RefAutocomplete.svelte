@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Block, SearchHit } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
-	import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+	import type { Block, SearchHit } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+	import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 	import { base } from "../stores/base.svelte";
 	import { messageFor } from "./callerror";
 	import { caretColumn } from "./caret";

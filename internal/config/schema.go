@@ -110,7 +110,7 @@ func (f field[T]) origin(origins *Origins, origin Origin) {
 
 func environmentName(path string) string {
 	replacer := strings.NewReplacer(".", "_", "-", "_")
-	return "COMIND_" + strings.ToUpper(replacer.Replace(path))
+	return "ZAMO_" + strings.ToUpper(replacer.Replace(path))
 }
 
 func parseString(raw string) (string, error) { return raw, nil }
@@ -119,7 +119,7 @@ var settingsSchema = newSchema(
 	register("database", parseString,
 		func(c Config) (string, bool) { return c.Database, c.Database != "" },
 		func(c *Config, value string) { c.Database = value },
-		environment[string]("COMIND_DB"),
+		environment[string]("ZAMO_DB"),
 	),
 	register("ai_enabled", strconv.ParseBool,
 		func(c Config) (bool, bool) {

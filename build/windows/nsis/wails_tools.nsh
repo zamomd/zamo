@@ -5,19 +5,19 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "comind"
+    !define INFO_PROJECTNAME "zamo"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "Comind"
+    !define INFO_COMPANYNAME "Zamo"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "Comind"
+    !define INFO_PRODUCTNAME "Zamo"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.0.1"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "(c) 2026, Comind contributors"
+    !define INFO_COPYRIGHT "(c) 2026, Zamo contributors"
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"

@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
 )
 
 // Client talks to a chat-completions API at a configurable base URL: an

@@ -13,19 +13,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cominddev/comind/internal/sqlite"
+	"github.com/zamomd/zamo/internal/sqlite"
 )
 
 // Restore refuses an archive it cannot vouch for, and says which way.
 var (
-	// ErrNotAnArchive reports a file that is not a Comind backup at all.
-	ErrNotAnArchive = errors.New("not a Comind backup archive")
+	// ErrNotAnArchive reports a file that is not a Zamo backup at all.
+	ErrNotAnArchive = errors.New("not a Zamo backup archive")
 	// ErrCorrupt reports an archive whose database does not match the
 	// checksum its own manifest carries.
 	ErrCorrupt = errors.New("the backup archive is damaged")
 	// ErrUnsupported reports an archive written by a later release: a
 	// layout or a database schema this build cannot read.
-	ErrUnsupported = errors.New("the backup archive comes from a newer version of Comind")
+	ErrUnsupported = errors.New("the backup archive comes from a newer version of Zamo")
 )
 
 // Restore replaces the database at dbPath with the one inside archive and

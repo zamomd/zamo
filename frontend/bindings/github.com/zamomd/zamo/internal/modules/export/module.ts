@@ -18,7 +18,7 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
  * overwritten; nothing else in it is touched.
  */
 export function Export(): $CancellablePromise<string> {
-    return $Call.ByID(2257586129);
+    return $Call.ByID(4094061073);
 }
 
 /**
@@ -29,5 +29,5 @@ export function Export(): $CancellablePromise<string> {
  * the writer's concern.
  */
 export function Markdown(dir: string): $CancellablePromise<void> {
-    return $Call.ByID(4262167094, dir);
+    return $Call.ByID(338316406, dir);
 }

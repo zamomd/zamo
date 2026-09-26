@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // Plan is what an import would do, shown to the user before anything is

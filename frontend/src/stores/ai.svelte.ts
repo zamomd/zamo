@@ -1,4 +1,4 @@
-import { App } from "../../bindings/github.com/cominddev/comind/internal/wailsbind";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
 import { base } from "./base.svelte";
 
 // AIStore holds the effective AI policy for the window.

@@ -1,4 +1,4 @@
-import type { Block, Mode } from "../../bindings/github.com/cominddev/comind/internal/knowledge/models.js";
+import type { Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 import { plainText } from "./plaintext";
 import { firstLine } from "./refs";
 

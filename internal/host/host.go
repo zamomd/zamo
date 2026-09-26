@@ -11,7 +11,7 @@ package host
 import (
 	"context"
 
-	"github.com/cominddev/comind/internal/knowledge"
+	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 // BaseReader is read access to the shape of the base: its topics and the

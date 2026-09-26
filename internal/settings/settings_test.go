@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cominddev/comind/internal/config"
-	"github.com/cominddev/comind/internal/knowledge"
-	"github.com/cominddev/comind/internal/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/config"
+	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
 )
 
 type stubClient struct{}
@@ -47,7 +47,7 @@ func newManager(t *testing.T, configTOML string) (*Manager, *llm.Holder, string)
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(configTOML), 0o600))
-	t.Setenv("COMIND_CONFIG", cfgPath)
+	t.Setenv("ZAMO_CONFIG", cfgPath)
 
 	setPath := filepath.Join(dir, "settings.toml")
 	h := llm.NewHolder(stubClient{})
@@ -284,7 +284,7 @@ func TestCurrentReportsTheStoredSwitchUnderAnEnvOverride(t *testing.T) {
 	no := false
 	require.NoError(t, m.Save(t.Context(), In{AIEnabled: &no, Provider: ptr(config.ProviderAnthropic)}))
 
-	t.Setenv("COMIND_AI_ENABLED", "true")
+	t.Setenv("ZAMO_AI_ENABLED", "true")
 	v, err := m.Current(t.Context())
 	require.NoError(t, err)
 	require.True(t, v.AIEnabled.Value)
@@ -306,7 +306,7 @@ func TestCurrentReportsStoredStringOverrideUnderEnvironment(t *testing.T) {
 	m, _, _ := newManager(t, "[llm]\nprovider = \"anthropic\"\nmodel = \"config-model\"\n")
 
 	require.NoError(t, m.Save(t.Context(), In{Model: ptr("gui-model")}))
-	t.Setenv("COMIND_LLM_MODEL", "env-model")
+	t.Setenv("ZAMO_LLM_MODEL", "env-model")
 
 	v, err := m.Current(t.Context())
 	require.NoError(t, err)
