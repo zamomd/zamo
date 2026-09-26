@@ -3,7 +3,7 @@
 Local-first block-based knowledge base: AI writes directly; every change is
 flagged, reversible, and reviewed by the human. One Go binary, two modes:
 `zamo` (Wails v3 GUI) and `zamo mcp` (stdio MCP server).
-Stack: Go 1.26, Wails v3 beta, Svelte 5 + TS + Vite, modernc.org/sqlite.
+Stack: Go 1.27, Wails v3 beta, Svelte 5 + TS + Vite, modernc.org/sqlite.
 
 ## Commands
 
@@ -30,8 +30,8 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
   Never record implementation history, rejected approaches, task references,
   debugging evidence, or the steps used to reach a solution. Do not narrate
   code or duplicate assertions and test names.
-- Go 1.26 idioms: `errors.AsType`, `wg.Go`, `t.Context()`, `omitzero`,
-  `for i := range n`, `new(expr)`.
+- Go 1.27 language level; use modern idioms: `errors.AsType`,
+  `wg.Go`, `t.Context()`, `omitzero`, `for i := range n`, `new(expr)`.
 - `context.Context` is the first argument of every method that crosses
   a boundary.
 - Go tests assert with testify: `require` when the test cannot go on

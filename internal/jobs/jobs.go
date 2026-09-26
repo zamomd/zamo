@@ -50,7 +50,7 @@ func New(root context.Context, newID func() string, now func() time.Time) *Regis
 func (r *Registry) Start(parent context.Context, kind Kind) (ctx context.Context, done func()) {
 	ctx, cancel := context.WithCancel(parent)
 	stop := context.AfterFunc(r.root, cancel)
-	j := &running{Job: Job{ID: r.newID(), Kind: kind, Started: r.now()}, cancel: cancel}
+	j := &running{ID: r.newID(), Kind: kind, Started: r.now(), cancel: cancel}
 
 	r.mu.Lock()
 	r.jobs[j.ID] = j

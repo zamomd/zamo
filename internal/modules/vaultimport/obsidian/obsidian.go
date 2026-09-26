@@ -101,8 +101,8 @@ func page(rel, raw string) vaultimport.Page {
 // a link only to tell two pages of one name apart, and lets a link carry
 // the extension; a page is named by its basename either way.
 func shortName(target string) string {
-	if i := strings.LastIndexByte(target, '/'); i >= 0 {
-		target = target[i+1:]
+	if _, base, ok := strings.CutLast(target, "/"); ok {
+		target = base
 	}
 	return strings.TrimSuffix(target, ".md")
 }
