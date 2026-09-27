@@ -24,7 +24,7 @@ func TestWriteVisibleAcrossConnections(t *testing.T) {
 	require.Empty(t, before, "reader saw blocks before any write")
 
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: "mcp write"}
-	require.NoError(t, r(writer).ApplyOps(t.Context(), "01GRP", meta, []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), r(writer), "01GRP", meta, []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "01MCP", Content: "from mcp"},
 	}))
 

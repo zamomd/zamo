@@ -93,7 +93,7 @@ func (r *concurrentRenameRepo) BlocksReferencingTopic(ctx context.Context, key s
 	if err != nil {
 		return nil, err
 	}
-	require.NoError(r.t, r.ApplyOps(ctx, "concurrent", ownerMeta("concurrent write"), []knowledge.Op{r.op}),
+	require.NoError(r.t, applyOps(ctx, r.Repo, "concurrent", ownerMeta("concurrent write"), []knowledge.Op{r.op}),
 		"concurrent write")
 	return blocks, nil
 }
@@ -386,7 +386,7 @@ func TestAPageHoldingAWholeRenameIsAccepted(t *testing.T) {
 func TestAnOrdinaryBatchIsStillReviewedPerBlock(t *testing.T) {
 	repo := testRepo(t)
 	renameBase(t, repo)
-	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("two edits"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "01G2", aiMeta("two edits"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "01NOTE", Content: "Rewritten by the AI."},
 		{Kind: knowledge.OpEdit, BlockID: "01OTHER", Content: "Also rewritten."},
 	}))

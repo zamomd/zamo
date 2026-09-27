@@ -18,6 +18,8 @@ type fakeRepo struct {
 	subtreeErr error
 	gotSubtree ID // the root GetSubtree was asked for
 
+	applyNothing bool // ApplyOps reports that nothing changed
+
 	backlinks    []Backlink // what GetBacklinks returns
 	backlinksErr error
 
@@ -101,10 +103,10 @@ func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) 
 	return out, nil
 }
 
-func (f *fakeRepo) ApplyOps(_ context.Context, groupID ID, meta WriteMeta, ops []Op) error {
+func (f *fakeRepo) ApplyOps(_ context.Context, groupID ID, meta WriteMeta, ops []Op) (bool, error) {
 	f.applyCalls++
 	f.applyGroupID, f.applyMeta, f.applyOps = groupID, meta, ops
-	return f.applyErr
+	return !f.applyNothing, f.applyErr
 }
 
 func (f *fakeRepo) ListRevisions(_ context.Context, blockID ID) ([]Revision, error) {

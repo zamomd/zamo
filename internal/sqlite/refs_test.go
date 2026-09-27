@@ -81,7 +81,7 @@ func TestRefsRestoredWithBlock(t *testing.T) {
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Zig"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ROOT", Content: "See [[Rust]]."},
 	), "apply")
-	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("ai delete"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "01G2", aiMeta("ai delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "01NOTE"},
 	}), "ai delete")
 	require.NoError(t, repo.RejectBlock(t.Context(), "01NOTE"), "reject")
@@ -93,7 +93,7 @@ func TestRefsClearedWhenRejectedAddVanishes(t *testing.T) {
 	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Zig"},
 	), "apply")
-	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("ai add"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "01G2", aiMeta("ai add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ROOT", Content: "See [[Rust]]."},
 	}), "ai add")
 	require.NoError(t, repo.RejectBlock(t.Context(), "01NOTE"), "reject")

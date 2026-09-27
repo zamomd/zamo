@@ -26,10 +26,10 @@ func TestDeleteHeadRevisionRevertsProjection(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "original"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "edited"},
 	}))
 	revs := revisionsOf(t, repo, "b1")
@@ -48,13 +48,13 @@ func TestDeleteMiddleRevisionKeepsState(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("edit1"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("edit1"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-3", aiMeta("edit2"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-3", aiMeta("edit2"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v3"},
 	}))
 
@@ -72,7 +72,7 @@ func TestDeleteLastRevisionRemovesBlock(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "leaf", Parent: "root", Content: "leaf"},
 	}))
@@ -88,10 +88,10 @@ func TestDeleteHeadTombstoneResurrects(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "alive text"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("delete"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "b1"},
 	}))
 	_, _, _, ok := blockRow(t, repo, "b1")
@@ -112,7 +112,7 @@ func TestDeleteRevisionOrphanGuard(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "child", Parent: "root", Content: "child"},
 	}))
@@ -128,14 +128,14 @@ func TestDeleteRevisionParentGuard(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P"},
 		{Kind: knowledge.OpAdd, BlockID: "x", Parent: "p", Content: "X"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("delete x"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("delete x"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "x"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-3", aiMeta("delete p"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-3", aiMeta("delete p"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p"},
 	}))
 
@@ -149,9 +149,9 @@ func TestRejectRestoresTheModeTheBlockHad(t *testing.T) {
 	repo := testRepo(t)
 	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
 	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", owner, add))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", owner, add))
 	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("convert"), convert))
 	require.Equal(t, knowledge.ModeDoc, modeOf(t, repo, "t1"), "before reject")
 	require.NoError(t, repo.RejectBlock(t.Context(), "t1"))
 	assert.Equal(t, knowledge.ModeOutline, modeOf(t, repo, "t1"), "after reject")
@@ -161,9 +161,9 @@ func TestUndoGroupRestoresTheModeTheBlockHad(t *testing.T) {
 	repo := testRepo(t)
 	owner := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "add"}
 	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", owner, add))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", owner, add))
 	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", owner, convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", owner, convert))
 	require.Equal(t, knowledge.ModeDoc, modeOf(t, repo, "t1"), "before undo")
 	require.NoError(t, repo.UndoGroup(t.Context(), "g2"))
 	assert.Equal(t, knowledge.ModeOutline, modeOf(t, repo, "t1"), "after undo")
@@ -175,13 +175,13 @@ func TestRejectLeavesADocumentADocument(t *testing.T) {
 	add := []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", owner, add))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", owner, add))
 	// A content-only AI edit: it names no mode, so the surviving revision is
 	// the only place the mode can come back from. A projectHead that writes the
 	// column's default instead of the snapshot's value silently turns the
 	// document into an outline here, and nothing else in the system complains.
 	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Topic\n\nBody."}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("edit"), edit))
 	require.NoError(t, repo.RejectBlock(t.Context(), "t1"))
 	assert.Equal(t, knowledge.ModeDoc, modeOf(t, repo, "t1"), "after reject")
 }
@@ -197,12 +197,12 @@ func convertedToDocument(t *testing.T, repo *Repo) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", ownerMeta("build"), build))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", ownerMeta("build"), build))
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("convert"), convert))
 }
 
 func TestRejectRefusesToResurrectAChildUnderADocument(t *testing.T) {
@@ -213,7 +213,7 @@ func TestRejectRefusesToResurrectAChildUnderADocument(t *testing.T) {
 	require.ErrorIs(t, err, knowledge.ErrInvalidRollback)
 	_, _, _, ok := blockRow(t, repo, "c1")
 	assert.False(t, ok, "the refused reject brought the child back anyway")
-	require.NoError(t, repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g3", ownerMeta("elsewhere"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
 	}), "write after the refusal")
 }
@@ -237,12 +237,12 @@ func TestRejectPageUndoesADocumentConversionWhole(t *testing.T) {
 func expandedFromDocument(t *testing.T, repo *Repo) {
 	t.Helper()
 	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Topic", Mode: knowledge.ModeDoc}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), add))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", ownerMeta("add"), add))
 	expand := []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeOutline},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("expand"), expand))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("expand"), expand))
 }
 
 func TestRejectRefusesToRestoreADocumentOverLiveChildren(t *testing.T) {
@@ -252,7 +252,7 @@ func TestRejectRefusesToRestoreADocumentOverLiveChildren(t *testing.T) {
 	err := repo.RejectBlock(t.Context(), "t1")
 	require.ErrorIs(t, err, knowledge.ErrInvalidRollback)
 	assert.Equal(t, knowledge.ModeOutline, modeOf(t, repo, "t1"), "after the refused reject")
-	require.NoError(t, repo.ApplyOps(t.Context(), "g3", ownerMeta("elsewhere"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g3", ownerMeta("elsewhere"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
 	}), "write after the refusal")
 }
@@ -289,15 +289,15 @@ func entryFor(t *testing.T, repo *Repo, blockID knowledge.ID) knowledge.Unreview
 // under g3 because an unreviewed revision becomes the group it reports.
 func buriedBatch(t *testing.T, repo *Repo) {
 	t.Helper()
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "one"},
 		{Kind: knowledge.OpAdd, BlockID: "b2", Content: "two"},
 	}))
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("batch"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("batch"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g2"},
 		{Kind: knowledge.OpEdit, BlockID: "b2", Content: "two by g2"},
 	}))
-	require.NoError(t, repo.ApplyOps(t.Context(), "g3", aiMeta("later"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g3", aiMeta("later"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "one by g3"},
 	}))
 }
@@ -334,13 +334,13 @@ func TestRejectBlockDropsUnreviewedChain(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "owner text"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("edit1"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("edit1"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "ai edit 1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-3", aiMeta("edit2"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-3", aiMeta("edit2"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "ai edit 2"},
 	}))
 
@@ -358,7 +358,7 @@ func TestRejectBlockOnAIAddRemovesBlock(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("ai add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", aiMeta("ai add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "leaf", Content: "ai text"},
 	}))
 
@@ -372,27 +372,27 @@ func TestMarkReviewedVariants(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-root", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-root", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "topic", Content: "topic"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-b", aiMeta("ai add b"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-b", aiMeta("ai add b"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "topic", Content: "b text"},
 	}))
 	require.NoError(t, repo.MarkBlockReviewed(ctx, "b"))
 	assertNotInUnreviewed(t, repo, "b")
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-g", aiMeta("ai add g"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-g", aiMeta("ai add g"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "topic", Content: "g text"},
 	}))
 	require.NoError(t, repo.MarkGroupReviewed(ctx, "grp-g"))
 	assertNotInUnreviewed(t, repo, "g")
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-c", aiMeta("ai add c"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-c", aiMeta("ai add c"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "topic", Content: "c text"},
 	}))
 	require.NoError(t, repo.MarkBlockReviewed(ctx, "c"))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del-c", aiMeta("ai delete c"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del-c", aiMeta("ai delete c"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "c"},
 	}))
 	assertInUnreviewed(t, repo, "c")
@@ -427,7 +427,7 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-root", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-root", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "live", Parent: "root", Content: "live v1"},
 		{Kind: knowledge.OpAdd, BlockID: "gone", Parent: "root", Content: "gone v1"},
@@ -437,16 +437,16 @@ func TestListUnreviewedReturnsHeadsTopicsAndGhosts(t *testing.T) {
 		require.NoError(t, repo.MarkBlockReviewed(ctx, knowledge.ID(id)), "mark %s reviewed", id)
 	}
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-edit", aiMeta("ai edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-edit", aiMeta("ai edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "live", Content: "live v2"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("ai delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "gone"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-ai-buried", aiMeta("ai edit buried"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-ai-buried", aiMeta("ai edit buried"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "buried", Content: "buried v2 ai"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-owner-buried", ownerMeta("owner edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-owner-buried", ownerMeta("owner edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "buried", Content: "buried v3 owner"},
 	}))
 
@@ -489,11 +489,11 @@ func TestBlocksCarryUnreviewedFlag(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "root", Content: "v1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("ai edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("ai edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b", Content: "v2"},
 	}))
 
@@ -522,13 +522,13 @@ func TestRejectPageResurrectsNestedSubtree(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
 		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
 		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "c", Content: "G text"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p"},
 	}))
 	for _, id := range []string{"p", "c", "g"} {
@@ -553,17 +553,17 @@ func TestRejectPageMixedAddAndDelete(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "topic", Content: "topic"},
 		{Kind: knowledge.OpAdd, BlockID: "old", Parent: "topic", Content: "old text"},
 		{Kind: knowledge.OpAdd, BlockID: "oldchild", Parent: "old", Content: "oldchild text"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-add", aiMeta("ai add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-add", aiMeta("ai add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "new", Parent: "topic", Content: "new text"},
 		{Kind: knowledge.OpAdd, BlockID: "newchild", Parent: "new", Content: "newchild text"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("ai delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "old"},
 	}))
 
@@ -585,14 +585,14 @@ func TestAcceptDeletedSubtreeCascades(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
 		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
 	}))
 	require.NoError(t, repo.MarkBlockReviewed(ctx, "p"))
 	require.NoError(t, repo.MarkBlockReviewed(ctx, "c"))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p"},
 	}))
 	assertInUnreviewed(t, repo, "p")
@@ -615,7 +615,7 @@ func TestAcceptDeletedSubtreeCascadesMultiLevel(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "p", Content: "P text"},
 		{Kind: knowledge.OpAdd, BlockID: "c", Parent: "p", Content: "C text"},
 		{Kind: knowledge.OpAdd, BlockID: "g", Parent: "c", Content: "G text"},
@@ -624,7 +624,7 @@ func TestAcceptDeletedSubtreeCascadesMultiLevel(t *testing.T) {
 		require.NoError(t, repo.MarkBlockReviewed(ctx, knowledge.ID(id)), "mark %s reviewed", id)
 	}
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("ai delete p"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p"},
 	}))
 	for _, id := range []string{"p", "c", "g"} {
@@ -647,7 +647,7 @@ func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "topic", Content: "topic"},
 		{Kind: knowledge.OpAdd, BlockID: "p1", Parent: "topic", Content: "P1 text"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "p1", Content: "C1 text"},
@@ -658,10 +658,10 @@ func TestAcceptDeletedSubtreeCascadeDoesNotCrossSiblings(t *testing.T) {
 		require.NoError(t, repo.MarkBlockReviewed(ctx, knowledge.ID(id)), "mark %s reviewed", id)
 	}
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del1", aiMeta("ai delete p1"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del1", aiMeta("ai delete p1"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del2", aiMeta("ai delete p2"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del2", aiMeta("ai delete p2"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "p2"},
 	}))
 
@@ -681,11 +681,11 @@ func TestUndoGroupTakesBackASplit(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("write"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "topic"},
 		{Kind: knowledge.OpAdd, BlockID: "head", Parent: "root", Content: "head tail"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "head", Content: "head"},
 		{Kind: knowledge.OpAdd, BlockID: "tail", Parent: "root", After: "head", Content: " tail"},
 	}))
@@ -705,13 +705,13 @@ func TestUndoGroupResurrectsAMergedBlock(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("write"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "topic"},
 		{Kind: knowledge.OpAdd, BlockID: "target", Parent: "root", Content: "head"},
 		{Kind: knowledge.OpAdd, BlockID: "source", Parent: "root", After: "target", Content: " tail"},
 		{Kind: knowledge.OpAdd, BlockID: "kid", Parent: "source", Content: "kid"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "target", Content: "head tail"},
 		{Kind: knowledge.OpMove, BlockID: "kid", Parent: "target"},
 		{Kind: knowledge.OpDelete, BlockID: "source"},
@@ -734,13 +734,13 @@ func TestUndoGroupRefusesAGroupWithNewerRevisions(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", ownerMeta("write"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", ownerMeta("write"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", ownerMeta("manual edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-3", ownerMeta("manual edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-3", ownerMeta("manual edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v3"},
 	}))
 

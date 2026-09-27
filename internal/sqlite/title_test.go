@@ -23,7 +23,7 @@ func titleKeyOf(t *testing.T, repo *Repo, id knowledge.ID) string {
 
 func ownerOps(t *testing.T, repo *Repo, group knowledge.ID, ops ...knowledge.Op) error {
 	t.Helper()
-	return repo.ApplyOps(t.Context(), group, ownerMeta("test"), ops)
+	return applyOps(t.Context(), repo, group, ownerMeta("test"), ops)
 }
 
 func TestTitleKeyOnlyForRoots(t *testing.T) {
@@ -167,7 +167,7 @@ func TestTitleKeyRestoredWithTopic(t *testing.T) {
 	require.NoError(t, ownerOps(t, repo, "01G1",
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ROOT", Content: "Local-first"},
 	))
-	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("ai delete"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "01G2", aiMeta("ai delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "01ROOT"},
 	}), "ai delete")
 	require.NoError(t, repo.RejectBlock(t.Context(), "01ROOT"), "reject")
