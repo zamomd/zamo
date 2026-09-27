@@ -409,9 +409,10 @@ class BaseStore {
 				await this.expandNewTopic(text);
 			} else {
 				this.status = "asking the AI to restructure…";
-				await App.EditWithAI(scope, text);
+				const applied = await App.EditWithAI(scope, text);
 				await this.reload();
-				this.status = "changes applied, awaiting review";
+				// An empty group means the model answered with what was already there.
+				this.status = applied.GroupID === "" ? "the AI found nothing to change" : "changes applied, awaiting review";
 			}
 			this.command = "";
 			this.clearScope();

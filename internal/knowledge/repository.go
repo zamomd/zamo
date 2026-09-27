@@ -28,7 +28,7 @@ type Repository interface {
 	// that same transaction and refuse the batch with ErrConcurrentWrite
 	// when the base has moved on, or a rename silently overwrites the write
 	// that landed between the preparation and the apply.
-	ApplyOps(ctx context.Context, groupID ID, meta WriteMeta, ops []Op) error
+	ApplyOps(ctx context.Context, groupID ID, meta WriteMeta, ops []Op) (changed bool, err error)
 
 	ListRevisions(ctx context.Context, blockID ID) ([]Revision, error)
 	DeleteRevision(ctx context.Context, blockID, revID ID) error

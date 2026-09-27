@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -37,6 +38,14 @@ func testService(repo *Repo) *knowledge.Service {
 
 func aiMeta(title string) knowledge.WriteMeta {
 	return knowledge.WriteMeta{Author: knowledge.AuthorAI, Source: knowledge.SourceMCP, Title: title}
+}
+
+// applyOps applies a batch for a test that cares only whether it was refused.
+func applyOps(
+	ctx context.Context, repo *Repo, group knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op,
+) error {
+	_, err := repo.ApplyOps(ctx, group, meta, ops)
+	return err
 }
 
 func blockRow(t *testing.T, repo *Repo, id string) (parent string, position int, content string, ok bool) {
@@ -94,7 +103,7 @@ func TestApplyOpsAddWritesRevisionAndProjection(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "b-root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "b-child", Parent: "b-root", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("Add root+child"), ops))
+	require.NoError(t, applyOps(ctx, repo, "grp-1", aiMeta("Add root+child"), ops))
 
 	parent, pos, content, ok := blockRow(t, repo, "b-root")
 	assert.True(t, ok, "b-root missing")
@@ -125,10 +134,10 @@ func TestApplyOpsEditAppendsRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", aiMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "v1"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("edit"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "b1", Content: "v2"},
 	}))
 
@@ -149,14 +158,14 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 		{Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root", Content: "Mid"},
 		{Kind: knowledge.OpAdd, BlockID: "leaf", Parent: "mid", Content: "Leaf"},
 		{Kind: knowledge.OpAdd, BlockID: "other", Content: "Other"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-2", aiMeta("move"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-2", aiMeta("move"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "other", Parent: "root"},
 	}))
 	parent, pos, content, ok := blockRow(t, repo, "other")
@@ -170,7 +179,7 @@ func TestApplyOpsMoveKeepsContent(t *testing.T) {
 	assert.Equal(t, "root", revs[1].parent)
 	assert.Equal(t, positionStride, revs[1].position)
 
-	err := repo.ApplyOps(ctx, "grp-3", aiMeta("cycle"), []knowledge.Op{
+	err := applyOps(ctx, repo, "grp-3", aiMeta("cycle"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "root", Parent: "leaf"},
 	})
 	require.ErrorIs(t, err, knowledge.ErrCycle, "move into own subtree")
@@ -187,13 +196,13 @@ func TestApplyOpsDeleteTombstonesSubtree(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root text"},
 		{Kind: knowledge.OpAdd, BlockID: "a", Parent: "root", Content: "A text"},
 		{Kind: knowledge.OpAdd, BlockID: "b", Parent: "a", Content: "B text"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(ctx, "grp-del", aiMeta("delete"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-del", aiMeta("delete"), []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "root"},
 	}))
 
@@ -221,7 +230,7 @@ func TestApplyOpsOwnerRevisionsBornReviewed(t *testing.T) {
 	ctx := t.Context()
 
 	meta := knowledge.WriteMeta{Author: knowledge.AuthorOwner, Source: knowledge.SourceGUIManual, Title: "owner edit"}
-	require.NoError(t, repo.ApplyOps(ctx, "grp-1", meta, []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "grp-1", meta, []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "b1", Content: "owner-written"},
 	}))
 
@@ -234,7 +243,7 @@ func TestApplyOpsMissingTargetIsNotFound(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	err := repo.ApplyOps(ctx, "grp-1", aiMeta("edit"), []knowledge.Op{
+	err := applyOps(ctx, repo, "grp-1", aiMeta("edit"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "x"},
 	})
 	require.ErrorIs(t, err, knowledge.ErrNotFound)
@@ -246,7 +255,7 @@ func TestApplyAddCarriesMode(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "doc-1", Content: "# Go Contexts\n\nBody.", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpAdd, BlockID: "out-1", Content: "Go Idioms"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("two topics"), ops))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("two topics"), ops))
 
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"doc-1", "out-1"})
 	require.NoError(t, err)
@@ -261,16 +270,16 @@ func TestApplyAddCarriesMode(t *testing.T) {
 func TestApplyEditKeepsModeUnlessAsked(t *testing.T) {
 	repo := testRepo(t)
 	add := []knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), add))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("add"), add))
 
 	edit := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "# Doc\n\nMore."}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("edit"), edit))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("edit"), edit))
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
 	require.NoError(t, err)
 	require.Equal(t, knowledge.ModeDoc, blocks["t1"].Mode, "after a plain edit")
 
 	convert := []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Doc", Mode: knowledge.ModeOutline}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g3", aiMeta("convert"), convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g3", aiMeta("convert"), convert))
 	blocks, err = repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
 	require.NoError(t, err)
 	assert.Equal(t, knowledge.ModeOutline, blocks["t1"].Mode, "after an edit asking for outline")
@@ -282,8 +291,8 @@ func TestApplyRefusesAModeOnAnEditOfAChild(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
-	err := repo.ApplyOps(t.Context(), "g2", aiMeta("bad"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("build"), build))
+	err := applyOps(t.Context(), repo, "g2", aiMeta("bad"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed", Mode: knowledge.ModeDoc},
 	})
 	require.ErrorIs(t, err, knowledge.ErrInvalidOps)
@@ -297,9 +306,9 @@ func TestApplyMoveUnderAParentDropsDocMode(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "host", Content: "Host"},
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), ops))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("add"), ops))
 	move := []knowledge.Op{{Kind: knowledge.OpMove, BlockID: "t1", Parent: "host"}}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("move"), move))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("move"), move))
 	blocks, err := repo.GetBlocks(t.Context(), []knowledge.ID{"t1"})
 	require.NoError(t, err)
 	assert.Equal(t, knowledge.ModeOutline, blocks["t1"].Mode, "moved under a parent")
@@ -309,7 +318,7 @@ func TestApplyOpsAtomic(t *testing.T) {
 	repo := testRepo(t)
 	ctx := t.Context()
 
-	err := repo.ApplyOps(ctx, "grp-1", aiMeta("mixed"), []knowledge.Op{
+	err := applyOps(ctx, repo, "grp-1", aiMeta("mixed"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "new", Content: "half-applied"},
 		{Kind: knowledge.OpEdit, BlockID: "nope", Content: "never lands"},
 	})
@@ -326,7 +335,7 @@ func TestApplyRefusesAChildUnderADocument(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "# Doc", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	err := repo.ApplyOps(t.Context(), "g1", aiMeta("bad"), ops)
+	err := applyOps(t.Context(), repo, "g1", aiMeta("bad"), ops)
 	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren)
 	_, _, _, ok := blockRow(t, repo, "t1")
 	assert.False(t, ok, "the refused batch left a block behind")
@@ -338,8 +347,8 @@ func TestApplyRefusesADocumentOverAnUntouchedChild(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
-	err := repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("build"), build))
+	err := applyOps(t.Context(), repo, "g2", aiMeta("convert"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic", Mode: knowledge.ModeDoc},
 	})
 	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren)
@@ -352,12 +361,12 @@ func TestApplyAllowsConvertingAwayTheChildrenInOneBatch(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("build"), build))
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("convert"), convert))
 }
 
 func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
@@ -366,12 +375,12 @@ func TestApplyAllowsTheConversionWithTheDeleteFirst(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("build"), build))
 	convert := []knowledge.Op{
 		{Kind: knowledge.OpDelete, BlockID: "c1"},
 		{Kind: knowledge.OpEdit, BlockID: "t1", Content: "Topic\n\n- child", Mode: knowledge.ModeDoc},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("convert"), convert))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("convert"), convert))
 }
 
 func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
@@ -380,14 +389,14 @@ func TestApplyChecksOnlyTheBatchForDocumentChildren(t *testing.T) {
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: "Topic"},
 		{Kind: knowledge.OpAdd, BlockID: "c1", Parent: "t1", Content: "child"},
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("build"), build))
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("build"), build))
 	_, err := repo.db.ExecContext(t.Context(), `UPDATE blocks SET mode = 'doc' WHERE id = ?`, "t1")
 	require.NoError(t, err, "plant the inconsistency")
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g2", aiMeta("elsewhere"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("elsewhere"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t2", Content: "Other"},
 	}))
-	err = repo.ApplyOps(t.Context(), "g3", aiMeta("touch the child"), []knowledge.Op{
+	err = applyOps(t.Context(), repo, "g3", aiMeta("touch the child"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "c1", Content: "changed"},
 	})
 	require.ErrorIs(t, err, knowledge.ErrDocumentHasChildren, "write touching the child")

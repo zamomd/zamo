@@ -206,7 +206,7 @@ func TestSearchReturnsASnippetAroundTheMatch(t *testing.T) {
 	// snippet is a real excerpt, not the whole block echoed back.
 	filler := strings.Repeat("filler ", 30)
 	doc := "# Marmalade\n\n" + filler + "\n\nCancellation propagates through the tree.\n"
-	require.NoError(t, repo.ApplyOps(t.Context(), "g1", aiMeta("add"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("add"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "t1", Content: doc, Mode: knowledge.ModeDoc},
 	}), "apply")
 	hits, err := repo.Search(t.Context(), "propagates")

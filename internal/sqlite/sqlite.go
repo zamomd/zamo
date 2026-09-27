@@ -231,7 +231,9 @@ func (b batch) revision(id knowledge.ID, op knowledge.Op, seq int, snap knowledg
 // storage does on its own account is the optimistic guard an op may carry (see
 // guard). The apply is atomic: any error rolls the whole transaction back, so
 // search and the tree never observe a half-applied batch.
-func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op) error {
+func (r *Repo) ApplyOps(
+	ctx context.Context, groupID knowledge.ID, meta knowledge.WriteMeta, ops []knowledge.Op,
+) (changed bool, err error) {
 	b := batch{
 		groupID: groupID,
 		meta:    meta,
@@ -247,27 +249,35 @@ func (r *Repo) ApplyOps(ctx context.Context, groupID knowledge.ID, meta knowledg
 	// apply cannot deadlock on a lock upgrade under WAL.
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
+		return false, fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	defer tx.Rollback()
 	if err := guard(ctx, tx, ops); err != nil {
-		return err
+		return false, err
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO revision_groups (id, title, source, atomic, created_at) VALUES (?, ?, ?, ?, ?)`,
 		string(groupID), meta.Title, string(meta.Source), meta.Atomic, b.now); err != nil {
-		return fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
+		return false, fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
 	}
 	for _, op := range ops {
-		if err := r.applyOp(ctx, tx, op, b); err != nil {
-			return err
+		opChanged, err := r.applyOp(ctx, tx, op, b)
+		if err != nil {
+			return false, err
 		}
+		changed = changed || opChanged
+	}
+	if !changed {
+		return false, nil
 	}
 	if err := refuseDocumentChildren(ctx, tx, ops); err != nil {
-		return fmt.Errorf("apply ops group %s: %w", groupID, err)
+		return false, fmt.Errorf("apply ops group %s: %w", groupID, err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("apply ops group %s: %w", groupID, translate(err))
+	}
+	return true, nil
 }
 
 // guard checks the optimistic preconditions a rename expansion attached to the
@@ -349,19 +359,20 @@ func refuseDocumentChildren(ctx context.Context, tx *sql.Tx, ops []knowledge.Op)
 	return fmt.Errorf("block %s: %w", offender.String, knowledge.ErrDocumentHasChildren)
 }
 
-// applyOp applies one resolved operation inside the apply transaction.
-func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
+// applyOp applies one resolved operation inside the apply transaction and
+// reports whether it changed anything.
+func (r *Repo) applyOp(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) (changed bool, err error) {
 	switch op.Kind {
 	case knowledge.OpAdd:
-		return r.applyAdd(ctx, tx, op, b)
+		return true, r.applyAdd(ctx, tx, op, b)
 	case knowledge.OpEdit:
 		return r.applyEdit(ctx, tx, op, b)
 	case knowledge.OpMove:
-		return r.applyMove(ctx, tx, op, b)
+		return true, r.applyMove(ctx, tx, op, b)
 	case knowledge.OpDelete:
-		return r.applyDelete(ctx, tx, op, b)
+		return true, r.applyDelete(ctx, tx, op, b)
 	default:
-		return fmt.Errorf("apply: unsupported op kind %q", op.Kind)
+		return false, fmt.Errorf("apply: unsupported op kind %q", op.Kind)
 	}
 }
 
@@ -489,27 +500,35 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 //
 // An edit names its target by id alone, so storage validates that a requested
 // mode belongs to a topic root.
-func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) error {
+//
+// An edit that leaves both the content and the mode as they are writes
+// nothing: a revision is a change, and an identical one would queue a review
+// of nothing.
+func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batch) (changed bool, err error) {
 	var parent sql.NullString
 	var pos int
 	var current knowledge.Mode
+	var content string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT parent_id, position, mode FROM blocks WHERE id = ?`,
-		string(op.BlockID)).Scan(&parent, &pos, &current); err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+		`SELECT parent_id, position, mode, content FROM blocks WHERE id = ?`,
+		string(op.BlockID)).Scan(&parent, &pos, &current, &content); err != nil {
+		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	var parentArg any
 	if parent.Valid && parent.String != "" {
 		parentArg = parent.String
 	}
 	if op.Mode != "" && parentArg != nil {
-		return fmt.Errorf("apply edit %s: only a topic root has a mode, and %s is a child of %s: %w",
+		return false, fmt.Errorf("apply edit %s: only a topic root has a mode, and %s is a child of %s: %w",
 			op.BlockID, op.BlockID, parent.String, knowledge.ErrInvalidOps)
 	}
 	mode := storedMode(parentArg, current, op.Mode)
+	if op.Content == content && mode == current {
+		return false, nil
+	}
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
-		return fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
+		return false, fmt.Errorf("apply edit %s: next seq: %w", op.BlockID, translate(err))
 	}
 	rev := b.revision(r.newID(), op, seq, knowledge.Revision{
 		BlockID:  op.BlockID,
@@ -519,18 +538,18 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		Mode:     mode,
 	})
 	if err := insertRevision(ctx, tx, rev, b.now); err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	key := titleKey(parentArg, op.Content)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET content = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
 		op.Content, key, string(mode), b.now, string(op.BlockID)); err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
+		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	if err := putRefs(ctx, tx, op.BlockID, op.Content); err != nil {
-		return fmt.Errorf("apply edit %s: %w", op.BlockID, err)
+		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, err)
 	}
-	return nil
+	return true, nil
 }
 
 // applyMove reparents a block, appending it after its new siblings or

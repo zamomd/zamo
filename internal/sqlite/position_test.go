@@ -19,14 +19,14 @@ func seedChildren(t *testing.T, repo *Repo, parent string, contents ...string) [
 			Kind: knowledge.OpAdd, BlockID: id, Parent: parent, Content: c,
 		})
 	}
-	require.NoError(t, repo.ApplyOps(t.Context(), knowledge.ID("g-"+parent), aiMeta("seed"), ops),
+	require.NoError(t, applyOps(t.Context(), repo, knowledge.ID("g-"+parent), aiMeta("seed"), ops),
 		"seed children of %q", parent)
 	return ids
 }
 
 func TestAppendPositionsUseTheStride(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b", "c")
 
@@ -39,11 +39,11 @@ func TestAppendPositionsUseTheStride(t *testing.T) {
 
 func TestInsertAfterMiddleSiblingTakesTheMidpoint(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b", "c") // 0, 65536, 131072
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
 			After: "b-id", Content: "between b and c",
@@ -60,11 +60,11 @@ func TestInsertAfterMiddleSiblingTakesTheMidpoint(t *testing.T) {
 
 func TestInsertAfterLastSiblingAppends(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b") // 0, 65536
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "tail", Parent: "root",
 			After: "b-id", Content: "after b",
@@ -75,14 +75,14 @@ func TestInsertAfterLastSiblingAppends(t *testing.T) {
 
 func TestInsertAfterForeignSiblingIsRefused(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{
 			{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 			{Kind: knowledge.OpAdd, BlockID: "other", Content: "Other root"},
 		}))
 	seedChildren(t, repo, "root", "a")
 
-	err := repo.ApplyOps(t.Context(), "g-bad", aiMeta("bad"),
+	err := applyOps(t.Context(), repo, "g-bad", aiMeta("bad"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "x", Parent: "root",
 			After: "other", Content: "nope",
@@ -94,11 +94,11 @@ func TestInsertAfterForeignSiblingIsRefused(t *testing.T) {
 
 func TestInsertBeforeFirstSiblingGoesAhead(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b") // 0, 65536
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "head", Parent: "root",
 			Before: "a-id", Content: "before a",
@@ -111,7 +111,7 @@ func TestInsertBeforeFirstSiblingGoesAhead(t *testing.T) {
 
 func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b", "c") // 0, 65536, 131072
 	for id, pos := range map[string]int{"a-id": 0, "b-id": 1, "c-id": 2} {
@@ -120,7 +120,7 @@ func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
 			After: "b-id", Content: "squeezed",
@@ -144,14 +144,14 @@ func TestInsertIntoExhaustedGapRespaces(t *testing.T) {
 
 func TestApplyOpsMovesChildBeforeDeletingItsOldParent(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 		{Kind: knowledge.OpAdd, BlockID: "target", Parent: "root", Content: "Target"},
 		{Kind: knowledge.OpAdd, BlockID: "source", Parent: "root", Content: "Source"},
 		{Kind: knowledge.OpAdd, BlockID: "kid", Parent: "source", Content: "Kid"},
 	}))
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-merge", aiMeta("merge"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g-merge", aiMeta("merge"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "target", Content: "Target+Source"},
 		{Kind: knowledge.OpMove, BlockID: "kid", Parent: "target"},
 		{Kind: knowledge.OpDelete, BlockID: "source"},
@@ -167,13 +167,13 @@ func TestApplyOpsMovesChildBeforeDeletingItsOldParent(t *testing.T) {
 
 func TestApplyMoveWithAfterLandsOnTheMidpoint(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("setup"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("setup"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"},
 		{Kind: knowledge.OpAdd, BlockID: "mover", Content: "Mover"}, // a lone topic root to reparent in
 	}))
 	seedChildren(t, repo, "root", "a", "b") // 0, 65536
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-move", aiMeta("move"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "g-move", aiMeta("move"), []knowledge.Op{
 		{Kind: knowledge.OpMove, BlockID: "mover", Parent: "root", After: "a-id"},
 	}), "anchored move")
 
@@ -184,7 +184,7 @@ func TestApplyMoveWithAfterLandsOnTheMidpoint(t *testing.T) {
 
 func TestInsertBeforeIntoExhaustedGapRespaces(t *testing.T) {
 	repo := testRepo(t)
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-init", aiMeta("root"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-init", aiMeta("root"),
 		[]knowledge.Op{{Kind: knowledge.OpAdd, BlockID: "root", Content: "Root"}}))
 	seedChildren(t, repo, "root", "a", "b", "c") // 0, 65536, 131072
 	for id, pos := range map[string]int{"a-id": 0, "b-id": 1, "c-id": 2} {
@@ -193,7 +193,7 @@ func TestInsertBeforeIntoExhaustedGapRespaces(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, repo.ApplyOps(t.Context(), "g-ins", aiMeta("insert"),
+	require.NoError(t, applyOps(t.Context(), repo, "g-ins", aiMeta("insert"),
 		[]knowledge.Op{{
 			Kind: knowledge.OpAdd, BlockID: "mid", Parent: "root",
 			Before: "c-id", Content: "squeezed",
@@ -223,12 +223,12 @@ func TestRenumberKeepsEveryRevisionAlignedForRollback(t *testing.T) {
 		Source: knowledge.SourceGUIManual,
 		Title:  "setup",
 	}
-	require.NoError(t, repo.ApplyOps(ctx, "g-rollback-setup", owner, []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "g-rollback-setup", owner, []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "rollback-root", Content: "root"},
 		{Kind: knowledge.OpAdd, BlockID: "rollback-first", Parent: "rollback-root", Content: "first"},
 		{Kind: knowledge.OpAdd, BlockID: "rollback-bystander", Parent: "rollback-root", Content: "before"},
 	}))
-	require.NoError(t, repo.ApplyOps(ctx, "g-rollback-edit", aiMeta("edit bystander"), []knowledge.Op{
+	require.NoError(t, applyOps(ctx, repo, "g-rollback-edit", aiMeta("edit bystander"), []knowledge.Op{
 		{Kind: knowledge.OpEdit, BlockID: "rollback-bystander", Content: "pending"},
 	}), "edit bystander")
 

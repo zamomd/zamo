@@ -74,7 +74,7 @@ func TestBacklinksCarryTheSourceBlocksUnreviewedFlag(t *testing.T) {
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01RUST", Content: "Rust"},
 		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ZIG", Content: "Zig"},
 	), "setup")
-	require.NoError(t, repo.ApplyOps(t.Context(), "01G2", aiMeta("test"), []knowledge.Op{
+	require.NoError(t, applyOps(t.Context(), repo, "01G2", aiMeta("test"), []knowledge.Op{
 		{Kind: knowledge.OpAdd, BlockID: "01NOTE", Parent: "01ZIG", Content: "Unlike [[Rust]]."},
 	}), "setup AI write")
 

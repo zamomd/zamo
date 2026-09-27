@@ -72,8 +72,12 @@ func (s *Service) ApplyOps(ctx context.Context, meta WriteMeta, ops []Op) (Appli
 		return Applied{}, err
 	}
 	groupID := s.newID()
-	if err := s.repo.ApplyOps(ctx, groupID, meta, resolved); err != nil {
+	changed, err := s.repo.ApplyOps(ctx, groupID, meta, resolved)
+	if err != nil {
 		return Applied{}, err
+	}
+	if !changed {
+		return Applied{}, nil
 	}
 	return Applied{GroupID: groupID, IDs: ids}, nil
 }
