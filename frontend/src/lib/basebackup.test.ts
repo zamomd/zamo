@@ -53,6 +53,15 @@ vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/basebackup", () 
 	},
 }));
 
+vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/gitsnapshot", () => ({
+	Module: {
+		Status: async () => ({ Dir: "", CommitTemplate: "", LatestCommit: null }),
+		PickDirectory: async () => "",
+		SetCommitTemplate: async () => {},
+		ExportAndCommit: async () => ({ Committed: false, Commit: null }),
+	},
+}));
+
 beforeEach(() => {
 	backend.pending = "";
 	backend.chosen = "";

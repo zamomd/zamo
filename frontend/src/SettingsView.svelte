@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import type { GitSnapshotStatus } from "../bindings/github.com/zamomd/zamo/internal/host/models.js";
 	import { Module as BaseBackup } from "../bindings/github.com/zamomd/zamo/internal/modules/basebackup";
 	import { Module as Export } from "../bindings/github.com/zamomd/zamo/internal/modules/export";
+	import { Module as GitSnapshot } from "../bindings/github.com/zamomd/zamo/internal/modules/gitsnapshot";
 	import { Module as VaultImport } from "../bindings/github.com/zamomd/zamo/internal/modules/vaultimport";
 	import type { Plan } from "../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models";
 	import type { In, View } from "../bindings/github.com/zamomd/zamo/internal/settings/models.js";
@@ -124,6 +126,72 @@
 			await BaseBackup.CancelRestore();
 			pendingRestore = "";
 			baseStatus = "The pending restore was dropped.";
+		});
+	}
+
+	// A Markdown snapshot committed into a folder you choose, inside a git
+	// repository of your own. gitStatus.latestCommit is read fresh from the
+	// repository on every load, never cached, so it survives a restart.
+	let gitStatus = $state<GitSnapshotStatus | null>(null);
+	let gitCommitTemplate = $state("");
+	let gitTemplateDirty = $state(false);
+	let gitRunStatus = $state("");
+	let gitError = $state("");
+	let gitBusy = $state(false);
+
+	onMount(() => {
+		void loadGitSnapshot();
+	});
+
+	async function loadGitSnapshot(): Promise<void> {
+		try {
+			const s = await GitSnapshot.Status();
+			gitStatus = s;
+			gitCommitTemplate = s.CommitTemplate;
+			gitTemplateDirty = false;
+		} catch (err: unknown) {
+			gitError = messageFor(err);
+		}
+	}
+
+	async function runGit(action: () => Promise<void>): Promise<void> {
+		gitBusy = true;
+		gitRunStatus = "";
+		gitError = "";
+		try {
+			await action();
+		} catch (err: unknown) {
+			gitError = messageFor(err);
+		} finally {
+			gitBusy = false;
+		}
+	}
+
+	function pickGitDirectory(): Promise<void> {
+		return runGit(async () => {
+			const dir = await GitSnapshot.PickDirectory();
+			// An empty path is the directory dialog being dismissed, not a failure.
+			if (dir === "") return;
+			await loadGitSnapshot();
+			gitRunStatus = `Managed folder set to ${dir}`;
+		});
+	}
+
+	function saveGitCommitTemplate(): Promise<void> {
+		return runGit(async () => {
+			await GitSnapshot.SetCommitTemplate(gitCommitTemplate);
+			gitTemplateDirty = false;
+			gitRunStatus = "Commit message template saved.";
+		});
+	}
+
+	function exportGitSnapshot(): Promise<void> {
+		return runGit(async () => {
+			const result = await GitSnapshot.ExportAndCommit();
+			if (gitStatus) gitStatus = { ...gitStatus, LatestCommit: result.Commit };
+			gitRunStatus = result.Committed
+				? `Committed ${(result.Commit?.Hash ?? "").slice(0, 8)}.`
+				: "Nothing changed — no commit made.";
 		});
 	}
 
@@ -488,6 +556,47 @@
 
 		{#if baseStatus !== ""}<p><code>{baseStatus}</code></p>{/if}
 		{#if baseError !== ""}<p><code>error: {baseError}</code></p>{/if}
+
+		<h2>Git Snapshot</h2>
+		<p class="hint">
+			Exports the base to Markdown inside a folder you choose and commits it there when the
+			export actually changed something. Nothing outside that folder is ever staged or
+			committed, and Zamo never pushes.
+		</p>
+
+		<div class="field">
+			<span class="field-label">Managed folder</span>
+			<code>{gitStatus?.Dir || "not set"}</code>
+			<button type="button" onclick={pickGitDirectory} disabled={gitBusy}>Choose folder…</button>
+			{#if gitStatus?.Dir === ""}
+				<small>If the folder isn't already inside a git repository, Zamo creates one there.</small>
+			{/if}
+		</div>
+
+		<label>
+			Commit message template
+			<input bind:value={gitCommitTemplate} oninput={() => (gitTemplateDirty = true)} disabled={gitBusy} />
+		</label>
+		<div class="actions">
+			<button type="button" onclick={saveGitCommitTemplate} disabled={gitBusy || !gitTemplateDirty}>
+				Save template
+			</button>
+			<button type="button" onclick={exportGitSnapshot} disabled={gitBusy || !gitStatus?.Dir}>
+				Export and commit now
+			</button>
+		</div>
+
+		{#if gitStatus?.LatestCommit}
+			<p class="hint">
+				Last commit <code>{gitStatus.LatestCommit.Hash.slice(0, 8)}</code> at
+				{new Date(gitStatus.LatestCommit.At).toLocaleString()}
+			</p>
+		{:else if gitStatus}
+			<p class="hint">No snapshot commit yet.</p>
+		{/if}
+
+		{#if gitRunStatus !== ""}<p><code>{gitRunStatus}</code></p>{/if}
+		{#if gitError !== ""}<p><code>error: {gitError}</code></p>{/if}
 	</section>
 {/if}
 
