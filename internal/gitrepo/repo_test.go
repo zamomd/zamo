@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,6 +132,37 @@ func TestCommitIsANoOpWhenNothingChangedUnderTheManagedDirectory(t *testing.T) {
 	head, err := repo.Head()
 	require.NoError(t, err)
 	assert.Equal(t, first.Commit.Hash, head.Hash().String(), "a no-op run must not move HEAD")
+}
+
+// TestCommitLeavesTheRepositoryUnchangedWhenStagingFails forces the
+// underlying object write to fail (a read-only objects directory) and
+// checks the repository comes back exactly as it went in: no new commit,
+// the on-disk index untouched, because a failing Add never reaches the
+// SetIndex call that would persist it, and the same restore branch also
+// covers a Commit failure after a successful Add.
+func TestCommitLeavesTheRepositoryUnchangedWhenStagingFails(t *testing.T) {
+	root := t.TempDir()
+	managed := filepath.Join(root, "snapshots")
+	require.NoError(t, os.MkdirAll(managed, 0o755))
+	writeFile(t, managed, "topic.md", "# Topic")
+
+	repo, relDir, err := openOrInitRepo(managed)
+	require.NoError(t, err)
+
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	objects := filepath.Join(wt.Filesystem.Root(), ".git", "objects")
+	require.NoError(t, os.Chmod(objects, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(objects, 0o755) })
+
+	_, err = commit(repo, relDir, "snapshot", time.Now())
+	require.Error(t, err)
+
+	_, err = repo.Head()
+	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "no commit means no HEAD yet")
+	idx, err := repo.Storer.Index()
+	require.NoError(t, err)
+	assert.Empty(t, idx.Entries, "a failed Add must never reach SetIndex")
 }
 
 func writeFile(t *testing.T, dir, name, content string) {
