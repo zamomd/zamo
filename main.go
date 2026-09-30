@@ -19,12 +19,14 @@ import (
 	"github.com/zamomd/zamo/internal/backup"
 	"github.com/zamomd/zamo/internal/config"
 	"github.com/zamomd/zamo/internal/fsexport"
+	"github.com/zamomd/zamo/internal/gitrepo"
 	"github.com/zamomd/zamo/internal/jobs"
 	"github.com/zamomd/zamo/internal/knowledge"
 	"github.com/zamomd/zamo/internal/llm"
 	"github.com/zamomd/zamo/internal/mcp"
 	"github.com/zamomd/zamo/internal/modules/basebackup"
 	"github.com/zamomd/zamo/internal/modules/export"
+	"github.com/zamomd/zamo/internal/modules/gitsnapshot"
 	"github.com/zamomd/zamo/internal/modules/vaultimport"
 	"github.com/zamomd/zamo/internal/modules/vaultimport/logseq"
 	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
@@ -95,7 +97,8 @@ func run() error {
 	switch mode {
 	case "gui":
 		reg := jobs.New(ctx, ulid.New, time.Now)
-		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), reg, base)
+		snapshot := gitrepo.NewBase(settingsPath, time.Now)
+		return runGUI(svc, settings.New(holder, livePolicy, settingsPath), reg, base, snapshot)
 	case "mcp":
 		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
 	default:
@@ -137,11 +140,12 @@ func buildService(
 //
 // Feature modules are assembled here, each from the host capabilities it
 // names, and bound as their own Wails services next to the core bindings.
-func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base) error {
+func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base, snapshot gitrepo.Base) error {
 	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
 	importer := vaultimport.New(svc, svc, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
+	gitsnap := gitsnapshot.New(svc, fsexport.Writer{}, snapshot)
 	app := application.New(application.Options{
 		Name:        "Zamo",
 		Description: "Living knowledge base",
@@ -150,6 +154,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 			application.NewServiceWithOptions(exporter, wailsbind.ServiceOptions()),
 			application.NewServiceWithOptions(archive, wailsbind.ServiceOptions()),
 			application.NewServiceWithOptions(importer, wailsbind.ServiceOptions()),
+			application.NewServiceWithOptions(gitsnap, wailsbind.ServiceOptions()),
 		},
 		// Binding errors cross to the frontend as {code, message}, mapped
 		// from the domain sentinels in one place; the GUI switches on the
@@ -168,6 +173,7 @@ func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, b
 	basebackup.SetPicker(archive, dialogPicker{app})
 	export.SetPicker(exporter, dialogPicker{app})
 	vaultimport.SetPicker(importer, dialogPicker{app})
+	gitsnapshot.SetPicker(gitsnap, dialogPicker{app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Zamo",
