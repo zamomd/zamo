@@ -140,7 +140,9 @@ func buildService(
 //
 // Feature modules are assembled here, each from the host capabilities it
 // names, and bound as their own Wails services next to the core bindings.
-func runGUI(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base, snapshot gitrepo.Base) error {
+func runGUI(
+	svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry, base backup.Base, snapshot gitrepo.Base,
+) error {
 	bind := wailsbind.New(svc, mgr, reg)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
