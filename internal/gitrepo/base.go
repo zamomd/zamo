@@ -74,7 +74,9 @@ func (b Base) Status() (host.GitSnapshotStatus, error) {
 
 // ExportAndCommit renders the base into the managed directory via export
 // and commits it if that render actually changed something there.
-func (b Base) ExportAndCommit(ctx context.Context, export func(ctx context.Context, dir string) error) (host.GitSnapshotResult, error) {
+func (b Base) ExportAndCommit(
+	ctx context.Context, export func(ctx context.Context, dir string) error,
+) (host.GitSnapshotResult, error) {
 	p, err := loadPreferences(b.settingsPath)
 	if err != nil {
 		return host.GitSnapshotResult{}, err

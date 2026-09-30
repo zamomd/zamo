@@ -28,7 +28,7 @@ func TestStatusWithoutAManagedDirectorySet(t *testing.T) {
 	status, err := base.Status()
 
 	require.NoError(t, err)
-	assert.Equal(t, "", status.Dir)
+	assert.Empty(t, status.Dir)
 	assert.Nil(t, status.LatestCommit)
 }
 
@@ -87,7 +87,7 @@ func TestSetCommitTemplateRejectsAnInvalidTemplate(t *testing.T) {
 
 	err := base.SetCommitTemplate("{{.Unclosed")
 
-	assert.Error(t, err)
+	require.Error(t, err)
 	status, statusErr := base.Status()
 	require.NoError(t, statusErr)
 	assert.Equal(t, DefaultCommitTemplate, status.CommitTemplate, "a rejected template must not become the effective one")

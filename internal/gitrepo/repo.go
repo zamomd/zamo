@@ -109,7 +109,9 @@ func commit(repo *git.Repository, relDir, message string, when time.Time) (host.
 		return host.GitSnapshotResult{}, fmt.Errorf("read the worktree status: %w", err)
 	}
 	if outside := stagedOutside(status, relDir); len(outside) > 0 {
-		return host.GitSnapshotResult{}, fmt.Errorf("refusing to commit: %d file(s) already staged outside the managed directory", len(outside))
+		return host.GitSnapshotResult{}, fmt.Errorf(
+			"refusing to commit: %d file(s) already staged outside the managed directory", len(outside),
+		)
 	}
 	if !changedUnder(status, relDir) {
 		return host.GitSnapshotResult{}, nil
@@ -123,14 +125,16 @@ func commit(repo *git.Repository, relDir, message string, when time.Time) (host.
 	result, err := stageAndCommit(repo, wt, relDir, message, when)
 	if err != nil {
 		if restoreErr := repo.Storer.SetIndex(idx); restoreErr != nil {
-			return host.GitSnapshotResult{}, fmt.Errorf("%w (and the index could not be restored: %v)", err, restoreErr)
+			return host.GitSnapshotResult{}, fmt.Errorf("%w (and the index could not be restored: %w)", err, restoreErr)
 		}
 		return host.GitSnapshotResult{}, err
 	}
 	return result, nil
 }
 
-func stageAndCommit(repo *git.Repository, wt *git.Worktree, relDir, message string, when time.Time) (host.GitSnapshotResult, error) {
+func stageAndCommit(
+	repo *git.Repository, wt *git.Worktree, relDir, message string, when time.Time,
+) (host.GitSnapshotResult, error) {
 	if _, err := wt.Add(relDir); err != nil {
 		return host.GitSnapshotResult{}, fmt.Errorf("stage %s: %w", relDir, err)
 	}

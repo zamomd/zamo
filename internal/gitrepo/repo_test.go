@@ -109,7 +109,8 @@ func TestCommitStagesOnlyTheManagedDirectory(t *testing.T) {
 
 	status, err := wt.Status()
 	require.NoError(t, err)
-	assert.Equal(t, git.Modified, status.File("existing.txt").Worktree, "the unrelated edit must stay an uncommitted working-tree change")
+	assert.Equal(t, git.Modified, status.File("existing.txt").Worktree,
+		"the unrelated edit must stay an uncommitted working-tree change")
 }
 
 func TestCommitIsANoOpWhenNothingChangedUnderTheManagedDirectory(t *testing.T) {
@@ -159,7 +160,7 @@ func TestCommitLeavesTheRepositoryUnchangedWhenStagingFails(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = repo.Head()
-	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "no commit means no HEAD yet")
+	require.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "no commit means no HEAD yet")
 	idx, err := repo.Storer.Index()
 	require.NoError(t, err)
 	assert.Empty(t, idx.Entries, "a failed Add must never reach SetIndex")

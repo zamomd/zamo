@@ -56,6 +56,7 @@ const readable: Record<string, string> = {
 	import_unknown_format: "That folder is neither an Obsidian vault nor a Logseq graph.",
 	import_stale_preview: "The preview is out of date. Run it again.",
 	import_nothing: "Nothing to import: every page is already in the base or cannot be named.",
+	git_snapshot_dir_not_set: "Choose a folder for the Git snapshot in Settings first.",
 };
 
 // messageFor turns a binding error into the sentence to show the user: a mapped,

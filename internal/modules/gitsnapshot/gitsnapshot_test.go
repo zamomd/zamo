@@ -47,7 +47,9 @@ type fakeSnapshot struct {
 
 func (f *fakeSnapshot) Status() (host.GitSnapshotStatus, error) { return f.status, nil }
 
-func (f *fakeSnapshot) ExportAndCommit(ctx context.Context, export func(context.Context, string) error) (host.GitSnapshotResult, error) {
+func (f *fakeSnapshot) ExportAndCommit(
+	ctx context.Context, export func(context.Context, string) error,
+) (host.GitSnapshotResult, error) {
 	f.exportFn = export
 	if err := export(ctx, "/managed"); err != nil {
 		return host.GitSnapshotResult{}, err
