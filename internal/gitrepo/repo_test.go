@@ -61,7 +61,9 @@ func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheManagedDirectory(t *te
 			assert.Equal(t, wantRel, relDir)
 			wt, err := repo.Worktree()
 			require.NoError(t, err)
-			assert.Equal(t, wantRoot, wt.Filesystem.Root())
+			resolvedWantRoot, err := filepath.EvalSymlinks(wantRoot)
+			require.NoError(t, err)
+			assert.Equal(t, resolvedWantRoot, wt.Filesystem.Root())
 		})
 	}
 }
