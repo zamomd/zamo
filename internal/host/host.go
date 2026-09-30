@@ -10,6 +10,7 @@ package host
 
 import (
 	"context"
+	"time"
 
 	"github.com/zamomd/zamo/internal/knowledge"
 )
@@ -49,6 +50,38 @@ type BaseArchive interface {
 	PendingRestore() string
 	// CancelRestore drops a pending restore.
 	CancelRestore() error
+}
+
+// GitCommitInfo describes one commit under the managed directory.
+type GitCommitInfo struct {
+	Hash, Message string
+	At            time.Time
+}
+
+// GitSnapshotStatus is what the settings screen renders.
+type GitSnapshotStatus struct {
+	Dir            string
+	CommitTemplate string
+	LatestCommit   *GitCommitInfo // nil when there is no commit yet
+}
+
+// GitSnapshotResult reports one export-and-commit run. Commit is nil exactly
+// when Committed is false — a no-op run creates no commit.
+type GitSnapshotResult struct {
+	Committed bool
+	Commit    *GitCommitInfo
+}
+
+// GitSnapshot exports the base into a managed directory inside a local git
+// repository and commits the change there when it actually changed
+// something. export renders the base into dir; the caller supplies it, since
+// only it holds BaseReader/FileWriter — GitSnapshot owns everything about
+// the repository itself and never reaches into the base.
+type GitSnapshot interface {
+	Status() (GitSnapshotStatus, error)
+	ExportAndCommit(ctx context.Context, export func(ctx context.Context, dir string) error) (GitSnapshotResult, error)
+	SetDirectory(dir string) error
+	SetCommitTemplate(tmpl string) error
 }
 
 // BatchWriter applies one write batch through the single write path: every
