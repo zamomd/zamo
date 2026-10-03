@@ -33,6 +33,9 @@
 	let baseStatus = $state("");
 	let baseError = $state("");
 	let baseBusy = $state(false);
+	// The section whose action reported last, so its outcome reads next to it.
+	type BaseArea = "transfer" | "backup";
+	let baseArea = $state<BaseArea>("transfer");
 	let restoreConfirming = $state(false);
 
 	// An import previewed and not yet applied or dropped. The backend holds
@@ -51,7 +54,8 @@
 		}
 	}
 
-	async function runBase(action: () => Promise<void>): Promise<void> {
+	async function runBase(area: BaseArea, action: () => Promise<void>): Promise<void> {
+		baseArea = area;
 		baseBusy = true;
 		baseStatus = "";
 		baseError = "";
@@ -65,7 +69,7 @@
 	}
 
 	function exportMarkdown(): Promise<void> {
-		return runBase(async () => {
+		return runBase("transfer", async () => {
 			const dir = await Export.Export();
 			// An empty path is the directory dialog being dismissed, not a failure.
 			baseStatus = dir === "" ? "" : `Exported to ${dir}`;
@@ -73,7 +77,7 @@
 	}
 
 	function previewImport(): Promise<void> {
-		return runBase(async () => {
+		return runBase("transfer", async () => {
 			const plan = await VaultImport.Preview();
 			// An empty token is the directory dialog being dismissed, not a failure.
 			importPlan = plan.token === "" ? null : plan;
@@ -85,7 +89,7 @@
 		if (plan === null) {
 			return Promise.resolve();
 		}
-		return runBase(async () => {
+		return runBase("transfer", async () => {
 			const result = await VaultImport.Apply(plan.token);
 			importPlan = null;
 			baseStatus = `Imported ${count(result.pages, "page")} as ${count(result.blocks, "block")}`;
@@ -93,14 +97,14 @@
 	}
 
 	function discardImport(): Promise<void> {
-		return runBase(async () => {
+		return runBase("transfer", async () => {
 			await VaultImport.Discard();
 			importPlan = null;
 		});
 	}
 
 	function backUp(): Promise<void> {
-		return runBase(async () => {
+		return runBase("backup", async () => {
 			const dest = await BaseBackup.Backup();
 			// An empty path is the file dialog being dismissed, not a failure.
 			baseStatus = dest === "" ? "" : `Backed up to ${dest}`;
@@ -109,7 +113,7 @@
 
 	function chooseRestore(): Promise<void> {
 		restoreConfirming = false;
-		return runBase(async () => {
+		return runBase("backup", async () => {
 			const archive = await BaseBackup.Restore();
 			if (archive === "") {
 				return;
@@ -120,7 +124,7 @@
 	}
 
 	function cancelRestore(): Promise<void> {
-		return runBase(async () => {
+		return runBase("backup", async () => {
 			await BaseBackup.CancelRestore();
 			pendingRestore = "";
 			baseStatus = "The pending restore was dropped.";
@@ -146,31 +150,14 @@
 		resetConfirming = false;
 	}
 
-	function fieldNote(field: { origin: string }): string {
-		if (field.origin === "env") return "set from the environment; it cannot be changed here";
-		if (field.origin === "config") return "set in config.toml";
-		if (field.origin === "gui") return "overridden here";
-		return "";
-	}
-	let providerNote = $derived(view ? fieldNote(view.provider) : "");
-	let modelNote = $derived(view ? fieldNote(view.model) : "");
-	let baseUrlNote = $derived(view ? fieldNote(view.baseUrl) : "");
-
-	let apiKeyNote = $derived.by((): string => {
-		if (!view) return "";
-		switch (view.apiKey.origin) {
-			case "env":
-				return "set from the environment; it cannot be changed here";
-			case "api_key_file":
-				return "read from the api_key_file in config.toml";
-			case "config":
-				return "set in config.toml";
-			case "gui":
-				return "overridden here";
-			default:
-				return ro ? "set api_key_file in config.toml, or the provider's API key environment variable" : "";
-		}
-	});
+	// Where a value comes from, as the short tag beside its field and the
+	// sentence behind it.
+	const sources: Record<string, { tag: string; detail: string }> = {
+		env: { tag: "environment", detail: "Set from the environment; it cannot be changed here." },
+		config: { tag: "config.toml", detail: "Set in config.toml." },
+		api_key_file: { tag: "api_key_file", detail: "Read from the api_key_file in config.toml." },
+		gui: { tag: "set here", detail: "Set on this screen, over config.toml." },
+	};
 
 	let providerFallbackNote = $derived.by((): string => {
 		if (!view) return "";
@@ -183,19 +170,6 @@
 		return "";
 	});
 
-	let aiEnabledNote = $derived.by((): string => {
-		if (!view) return "";
-		switch (view.aiEnabled.origin) {
-			case "env":
-				return "set from ZAMO_AI_ENABLED; it cannot be changed here";
-			case "config":
-				return "set in config.toml";
-			case "gui":
-				return "overridden here";
-			default:
-				return "";
-		}
-	});
 	let aiLocked = $derived(ro || view?.aiEnabled.origin === "env");
 
 	function submittedAIEnabled(): boolean | null {
@@ -260,6 +234,29 @@
 		}, "GUI key override removed.");
 	}
 
+	type Overridable = "aiEnabled" | "provider" | "model" | "baseUrl";
+
+	// resetField drops one override and leaves the others as stored, so it
+	// never saves an edit still sitting unsaved in another field.
+	function resetField(field: Overridable): Promise<void> {
+		const v = view;
+		if (v === null) {
+			return Promise.resolve();
+		}
+		return submit(async () => {
+			await App.SaveSettings({
+				aiEnabled: v.aiEnabled.override,
+				provider: v.provider.override,
+				model: v.model.override,
+				baseUrl: v.baseUrl.override,
+				apiKey: "",
+				clearApiKey: false,
+				[field]: null,
+			});
+			await load();
+		}, "Override removed.");
+	}
+
 	function requestReset(): void {
 		resetConfirming = true;
 	}
@@ -290,101 +287,133 @@
 	});
 </script>
 
+{#snippet source(origin: string, reset: () => Promise<void>)}
+	{@const src = sources[origin]}
+	<span class="source">
+		{#if src}
+			<span title={src.detail}>{src.tag}</span>
+			{#if origin === "gui"}
+				<button type="button" class="link" onclick={reset} disabled={ro || busy}>reset</button>
+			{/if}
+		{/if}
+	</span>
+{/snippet}
+
 {#if view}
-	<section>
+	<section class="settings">
 		{#if ro}
 			<p class="banner">
 				Settings are managed by <code>config.toml</code>. This screen is read-only; Check still works.
 			</p>
 		{/if}
 
-		<div class="field switch">
-			<label class="switch-label">
+		<h2>AI</h2>
+
+		<div class="row">
+			<label class="name" for="ai-enabled">Enable AI features</label>
+			<div class="control">
 				<input
+					id="ai-enabled"
 					type="checkbox"
 					bind:checked={aiEnabled}
 					disabled={aiLocked}
 					onchange={() => (aiEnabledDirty = true)}
 				/>
-				Enable AI features
-			</label>
-			{#if aiEnabledNote !== ""}<small>{aiEnabledNote}</small>{/if}
-			{#if !aiEnabled}
-				<small>
-					Every AI control is hidden and nothing is sent to a provider. Blocks written earlier stay
-					where they are and unreviewed ones stay reviewable. Your provider settings below are kept.
-				</small>
+				{#if !aiEnabled}
+					<p class="note">
+						Every AI control is hidden and nothing is sent to a provider. Blocks written earlier stay
+						where they are and unreviewed ones stay reviewable. Your provider settings below are kept.
+					</p>
+				{/if}
+			</div>
+			{@render source(view.aiEnabled.origin, () => resetField("aiEnabled"))}
+		</div>
+
+		<div class="provider" class:off={!aiEnabled}>
+			<div class="row">
+				<label class="name" for="provider">Provider</label>
+				<div class="control">
+					<select
+						id="provider"
+						bind:value={provider}
+						disabled={ro || view.provider.origin === "env"}
+						onchange={() => (providerDirty = true)}
+					>
+						<option value="">None</option>
+						<option value="anthropic">Anthropic</option>
+						<option value="openai-compatible">OpenAI-compatible</option>
+					</select>
+					{#if providerFallbackNote !== ""}<p class="note warning">{providerFallbackNote}</p>{/if}
+					{#if noProvider}
+						<p class="note">
+							Choose a provider to set a model, an API key, and (for OpenAI-compatible) a base URL.
+							There is nothing to check until then.
+						</p>
+					{/if}
+				</div>
+				{@render source(view.provider.origin, () => resetField("provider"))}
+			</div>
+
+			{#if !noProvider}
+				<div class="row">
+					<label class="name" for="model">Model</label>
+					<div class="control">
+						<input
+							id="model"
+							bind:value={model}
+							disabled={ro || view.model.origin === "env"}
+							placeholder="provider default"
+							oninput={() => (modelDirty = true)}
+						/>
+					</div>
+					{@render source(view.model.origin, () => resetField("model"))}
+				</div>
+
+				{#if provider === "openai-compatible"}
+					<div class="row">
+						<label class="name" for="base-url">Base URL</label>
+						<div class="control">
+							<input
+								id="base-url"
+								bind:value={baseUrl}
+								disabled={ro || view.baseUrl.origin === "env"}
+								placeholder="http://localhost:11434/v1"
+								oninput={() => (baseUrlDirty = true)}
+							/>
+						</div>
+						{@render source(view.baseUrl.origin, () => resetField("baseUrl"))}
+					</div>
+				{/if}
+
+				<div class="row">
+					<label class="name" for="api-key">API key</label>
+					<div class="control">
+						<input
+							id="api-key"
+							type="password"
+							bind:value={apiKey}
+							disabled={ro || view.apiKey.origin === "env"}
+							placeholder={view.apiKey.set ? "set — type to replace" : "not set"}
+						/>
+						{#if ro && view.apiKey.origin === "default"}
+							<p class="note">
+								Set api_key_file in config.toml, or the provider's API key environment variable.
+							</p>
+						{/if}
+					</div>
+					{@render source(view.apiKey.origin, clearKey)}
+				</div>
 			{/if}
 		</div>
 
-		<label>
-			Provider
-			<select bind:value={provider} disabled={ro || view.provider.origin === "env"} onchange={() => (providerDirty = true)}>
-				<option value="">None — no provider configured</option>
-				<option value="anthropic">Anthropic</option>
-				<option value="openai-compatible">OpenAI-compatible</option>
-			</select>
-			{#if providerNote !== ""}<small>{providerNote}</small>{/if}
-			{#if providerFallbackNote !== ""}<small class="warning">{providerFallbackNote}</small>{/if}
-		</label>
-
-		{#if noProvider}
-			<p class="hint">
-				No provider is configured. Choose one above to set a model, an API key, and (for
-				OpenAI-compatible) a base URL. There is nothing to check until then.
-			</p>
-		{:else}
-			<label>
-				Model
-				<input
-					bind:value={model}
-					disabled={ro || view.model.origin === "env"}
-					placeholder="provider default"
-					oninput={() => (modelDirty = true)}
-				/>
-				{#if modelNote !== ""}<small>{modelNote}</small>{/if}
-			</label>
-
-			{#if provider === "openai-compatible"}
-				<label>
-					Base URL
-					<input
-						bind:value={baseUrl}
-						disabled={ro || view.baseUrl.origin === "env"}
-						placeholder="http://localhost:11434/v1"
-						oninput={() => (baseUrlDirty = true)}
-					/>
-					{#if baseUrlNote !== ""}<small>{baseUrlNote}</small>{/if}
-				</label>
-			{/if}
-
-			<div class="field">
-				<label class="field-label" for="api-key">API key</label>
-				<input
-					id="api-key"
-					type="password"
-					bind:value={apiKey}
-					disabled={ro || view.apiKey.origin === "env"}
-					placeholder={view.apiKey.set ? "set — type to replace" : "not set"}
-				/>
-				{#if apiKeyNote !== ""}<small>{apiKeyNote}</small>{/if}
-				<button
-					type="button"
-					class="link"
-					onclick={clearKey}
-					disabled={ro || busy || view.apiKey.origin !== "gui"}
-				>
-					Clear key
-				</button>
-			</div>
-		{/if}
-
 		<div class="actions">
-			<button type="button" onclick={save} disabled={ro || busy}>Save</button>
+			<button type="button" class="primary" onclick={save} disabled={ro || busy}>Save</button>
 			<button type="button" onclick={check} disabled={busy || noProvider || !aiEnabled}>Check</button>
+			{#if status !== ""}<span class="status" role="status">{status}</span>{/if}
+			{#if error !== ""}<span class="status error" role="alert">error: {error}</span>{/if}
 			{#if !resetConfirming}
-				<button type="button" onclick={requestReset} disabled={ro || busy}>
-					Reset to config (clears key too)
+				<button type="button" class="link reset-all" onclick={requestReset} disabled={ro || busy}>
+					Reset all to config.toml
 				</button>
 			{/if}
 		</div>
@@ -398,28 +427,28 @@
 			</p>
 		{/if}
 
-		{#if status !== ""}<p><code>{status}</code></p>{/if}
-		{#if error !== ""}<p><code>error: {error}</code></p>{/if}
+		<h2>Import &amp; export</h2>
 
-		<h2>The base</h2>
-		<p class="hint">
-			Export writes one Markdown file per topic, readable by Obsidian and Logseq, into a
-			directory you choose; files named after topics already there are overwritten. Import
-			brings an Obsidian vault, a Logseq graph or a Zamo export back in as topics of your own.
-			A backup holds what Markdown leaves out: stable ids, revisions, review state and
-			references. Neither carries an API key.
-		</p>
-
-		<div class="actions">
+		<div class="item">
+			<div class="about">
+				<span class="title">Markdown export</span>
+				<p class="note">
+					One Markdown file per topic, readable by Obsidian and Logseq, into a directory you choose.
+					Files named after topics already there are overwritten.
+				</p>
+			</div>
 			<button type="button" onclick={exportMarkdown} disabled={baseBusy}>Export as Markdown…</button>
+		</div>
+
+		<div class="item">
+			<div class="about">
+				<span class="title">Vault import</span>
+				<p class="note">
+					Brings an Obsidian vault, a Logseq graph or a Zamo export in as topics of your own.
+				</p>
+			</div>
 			{#if importPlan === null}
 				<button type="button" onclick={previewImport} disabled={baseBusy}>Import a vault…</button>
-			{/if}
-			<button type="button" onclick={backUp} disabled={baseBusy}>Back up now…</button>
-			{#if !restoreConfirming && pendingRestore === ""}
-				<button type="button" onclick={() => (restoreConfirming = true)} disabled={baseBusy}>
-					Restore from a backup…
-				</button>
 			{/if}
 		</div>
 
@@ -465,6 +494,37 @@
 			</div>
 		{/if}
 
+		{#if baseArea === "transfer"}
+			{#if baseStatus !== ""}<p class="status" role="status">{baseStatus}</p>{/if}
+			{#if baseError !== ""}<p class="status error" role="alert">error: {baseError}</p>{/if}
+		{/if}
+
+		<h2>Backup</h2>
+		<p class="note lead">
+			A backup holds what Markdown leaves out: stable ids, revisions, review state and references.
+			Neither a backup nor an export carries an API key.
+		</p>
+
+		<div class="item">
+			<div class="about">
+				<span class="title">Back up</span>
+				<p class="note">Writes the whole base into one archive file.</p>
+			</div>
+			<button type="button" onclick={backUp} disabled={baseBusy}>Back up now…</button>
+		</div>
+
+		<div class="item">
+			<div class="about">
+				<span class="title">Restore</span>
+				<p class="note">Replaces this base with the one in a backup, the next time Zamo starts.</p>
+			</div>
+			{#if !restoreConfirming && pendingRestore === ""}
+				<button type="button" onclick={() => (restoreConfirming = true)} disabled={baseBusy}>
+					Restore from a backup…
+				</button>
+			{/if}
+		</div>
+
 		{#if restoreConfirming}
 			<p class="confirm">
 				Restoring replaces this base with the one in the backup. The base you have now is kept
@@ -486,12 +546,145 @@
 			</p>
 		{/if}
 
-		{#if baseStatus !== ""}<p><code>{baseStatus}</code></p>{/if}
-		{#if baseError !== ""}<p><code>error: {baseError}</code></p>{/if}
+		{#if baseArea === "backup"}
+			{#if baseStatus !== ""}<p class="status" role="status">{baseStatus}</p>{/if}
+			{#if baseError !== ""}<p class="status error" role="alert">error: {baseError}</p>{/if}
+		{/if}
 	</section>
 {/if}
 
 <style>
+	.settings {
+		max-width: 44rem;
+	}
+	h2 {
+		margin: calc(var(--unit) * 4) 0 var(--unit);
+		padding-bottom: calc(var(--unit) / 2);
+		border-bottom: 1px solid var(--hairline);
+		font-size: var(--size-heading);
+		font-weight: bold;
+	}
+	h2:first-of-type {
+		margin-top: 0;
+	}
+
+	/* One grid for every field, so names, controls and sources each line up
+	   down the section. */
+	.row {
+		display: grid;
+		grid-template-columns: 11rem minmax(0, 1fr) 9rem;
+		column-gap: calc(var(--unit) * 2);
+		align-items: baseline;
+		padding: calc(var(--unit) / 2) 0;
+	}
+	.name {
+		color: var(--text-dim);
+	}
+	.control input:not([type="checkbox"]),
+	.control select {
+		width: 100%;
+	}
+	.control input[type="checkbox"] {
+		margin: 0;
+		accent-color: var(--accent);
+		vertical-align: middle;
+	}
+	.source {
+		display: flex;
+		gap: var(--unit);
+		color: var(--text-faint);
+		font-size: var(--size-small);
+		line-height: var(--row-height);
+		white-space: nowrap;
+	}
+	/* Kept visible while AI is off: the values are still stored, only unused. */
+	.provider.off {
+		opacity: 0.55;
+	}
+
+	.note {
+		margin: calc(var(--unit) / 2) 0 0;
+		color: var(--text-dim);
+		font-size: var(--size-small);
+		line-height: 1.6;
+	}
+	.note.warning {
+		color: var(--text);
+		font-weight: bold;
+	}
+	.note.lead {
+		margin: 0 0 var(--unit);
+		max-width: 36rem;
+	}
+
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: var(--unit);
+		margin-top: calc(var(--unit) * 1.5);
+	}
+	.primary {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+	.primary:disabled {
+		border-color: var(--hairline-strong);
+	}
+	.reset-all {
+		margin-left: auto;
+	}
+	.status {
+		margin: 0;
+		color: var(--text-dim);
+		font-size: var(--size-small);
+	}
+	p.status {
+		margin-top: var(--unit);
+	}
+	.status.error {
+		color: var(--danger);
+	}
+
+	.item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: calc(var(--unit) * 2);
+		padding: var(--unit) 0;
+	}
+	.item + .item {
+		border-top: 1px solid var(--hairline);
+	}
+	.item .note {
+		margin-top: 0;
+	}
+	.item button {
+		flex: none;
+	}
+
+	.banner {
+		margin: 0 0 calc(var(--unit) * 2);
+		padding: var(--unit);
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
+	}
+	.confirm {
+		display: flex;
+		align-items: center;
+		gap: var(--unit);
+		flex-wrap: wrap;
+		margin: var(--unit) 0 0;
+		padding: var(--unit);
+		border: 1px solid var(--hairline);
+		border-radius: var(--radius);
+		font-size: var(--size-small);
+	}
+	.plan {
+		display: block;
+	}
+	.plan p {
+		margin: 0;
+	}
 	.plan ul {
 		margin: 0.25rem 0 0.5rem 1.25rem;
 		padding: 0;
@@ -499,78 +692,20 @@
 	.plan summary {
 		cursor: pointer;
 	}
-	label {
-		display: block;
-		margin-bottom: 0.75rem;
-	}
-	.field {
-		margin-bottom: 0.75rem;
-	}
-	.field-label {
-		margin-bottom: 0.25rem;
-	}
-	.switch {
-		padding-bottom: 0.75rem;
-		border-bottom: 1px solid var(--hairline);
-	}
-	.switch-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 0.25rem;
-	}
-	.switch-label input {
-		width: auto;
-		margin: 0;
-	}
-	small {
-		display: block;
-		opacity: 0.7;
-	}
-	small.warning {
-		opacity: 1;
-		color: currentColor;
-		font-weight: bold;
-	}
-	.hint {
-		opacity: 0.8;
-		max-width: 32rem;
-	}
-	.banner {
-		padding: 0.5rem;
-		border: 1px solid var(--hairline);
-		border-radius: var(--radius);
-	}
-	.actions {
-		display: flex;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
-	}
-	.confirm {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.5rem;
-		padding: 0.5rem;
-		border: 1px solid var(--hairline);
-		border-radius: var(--radius);
-	}
 	button.link {
 		border: none;
 		background: none;
 		padding: 0;
-		color: inherit;
-		text-decoration: underline;
-		cursor: pointer;
+		color: var(--text-dim);
 		font-size: var(--size-small);
-		opacity: 0.7;
-		display: block;
-		margin-top: 0.25rem;
+		text-decoration: underline;
+	}
+	button.link:hover:not(:disabled) {
+		background: none;
+		color: var(--text);
 	}
 	button.link:disabled {
-		cursor: default;
-		opacity: 0.35;
+		color: var(--text-faint);
 		text-decoration: none;
 	}
 </style>
