@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { graph } from "../stores/graph.svelte";
-	import { circleBox, clampPad, radiusOf, reducedLayout, scaleFor, truncateLabel, viewBox } from "./graph";
+	import { circleBox, clampPad, radiusOf, scaleFor, truncateLabel, viewBox } from "./graph";
 	import { openTopic } from "./navigate";
 
 	const PAD_PX = 24;
@@ -86,20 +86,11 @@
 				</g>
 			{/each}
 		</svg>
-		<!-- Independent facts about the base, not alternatives: a base can be both
-		     link-free and above the reduced-layout threshold at once, and each
-		     needs its own line rather than one hiding the other. Neither <p>
-		     renders when its condition is false, rather than one empty <p> always
-		     present — .graph's gap only applies between existing children, so an
-		     absent note reserves no space of its own. -->
 		{#if graph.edges.length === 0 && graph.topics.length > 1}
 			<p class="note">
 				No links between topics yet — an edge appears once a block references another topic, by name in
 				[[brackets]] or by block id.
 			</p>
-		{/if}
-		{#if reducedLayout(graph.topics.length)}
-			<p class="note">Large base: the layout ran fewer passes, so the arrangement is rougher.</p>
 		{/if}
 	{/if}
 </div>

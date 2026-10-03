@@ -1,4 +1,4 @@
-// Topic-map geometry is deterministic so layouts remain stable across renders.
+import { forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationNodeDatum } from "d3-force";
 
 export type Point = { x: number; y: number };
 
@@ -6,120 +6,40 @@ export type Point = { x: number; y: number };
 export type LayoutTopic = { ID: string };
 export type LayoutEdge = { From: string; To: string };
 
-// Golden-angle seeding spreads nodes evenly while preserving their input order.
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-const SPIRAL_STEP = 40;
+// Repulsion separates topics, links cluster them, and the pull toward the
+// origin bounds disconnected components.
+const REPULSION = -220;
+const LINK_DISTANCE = 90;
+const CENTERING = 0.04;
+const TICKS = 300;
 
-// Repulsion separates topics, springs cluster links, and centering bounds
-// disconnected components.
-const ITERATIONS = 300;
-const REPULSION = 9000;
-const SPRING = 0.1;
-const REST_LENGTH = 90;
-const CENTERING = 0.006;
-const COOLING = 0.985;
-const INITIAL_STEP = 1;
+type SimNode = SimulationNodeDatum & { id: string };
 
-// Avoid singular repulsion while retaining deterministic output.
-const MIN_DISTANCE = 1;
-const MAX_MOVE = 20;
-
-// Repulsion is quadratic, so large maps use fewer iterations.
-const FULL_ITERATION_MAX = 200;
-const REDUCED_ITERATIONS = 60;
-
-export function reducedLayout(topicCount: number): boolean {
-	return topicCount > FULL_ITERATION_MAX;
-}
-
+// layout is deterministic, so a map stays put across renders: d3-force seeds
+// positions from the input order and draws its jitter from a fixed-seed
+// generator.
 export function layout(topics: LayoutTopic[], edges: LayoutEdge[]): Map<string, Point> {
-	const n = topics.length;
-	const xs = new Float64Array(n);
-	const ys = new Float64Array(n);
-	for (let i = 0; i < n; i++) {
-		const angle = i * GOLDEN_ANGLE;
-		const radius = SPIRAL_STEP * Math.sqrt(i);
-		xs[i] = radius * Math.cos(angle);
-		ys[i] = radius * Math.sin(angle);
-	}
+	const nodes: SimNode[] = topics.map((t) => ({ id: t.ID }));
+	const known = new Set(nodes.map((n) => n.id));
+	// forceLink throws on an endpoint it cannot find.
+	const links = edges
+		.filter((e) => e.From !== e.To && known.has(e.From) && known.has(e.To))
+		.map((e) => ({ source: e.From, target: e.To }));
 
-	const index = new Map(topics.map((t, i) => [t.ID, i]));
-	const links: Array<[number, number]> = [];
-	for (const e of edges) {
-		const a = index.get(e.From);
-		const b = index.get(e.To);
-		if (a !== undefined && b !== undefined && a !== b) {
-			links.push([a, b]);
-		}
-	}
+	forceSimulation(nodes)
+		.force("charge", forceManyBody().strength(REPULSION))
+		.force(
+			"link",
+			forceLink<SimNode, { source: string; target: string }>(links)
+				.id((n) => n.id)
+				.distance(LINK_DISTANCE),
+		)
+		.force("x", forceX().strength(CENTERING))
+		.force("y", forceY().strength(CENTERING))
+		.stop()
+		.tick(TICKS);
 
-	const fx = new Float64Array(n);
-	const fy = new Float64Array(n);
-	const iterations = reducedLayout(n) ? REDUCED_ITERATIONS : ITERATIONS;
-	let step = INITIAL_STEP;
-
-	for (let it = 0; it < iterations; it++) {
-		fx.fill(0);
-		fy.fill(0);
-
-		for (let a = 0; a < n; a++) {
-			for (let b = a + 1; b < n; b++) {
-				let dx = xs[a] - xs[b];
-				let dy = ys[a] - ys[b];
-				let d = Math.hypot(dx, dy);
-				if (d < MIN_DISTANCE) {
-					dx = MIN_DISTANCE;
-					dy = 0;
-					d = MIN_DISTANCE;
-				}
-				const f = REPULSION / (d * d);
-				const ux = (dx / d) * f;
-				const uy = (dy / d) * f;
-				fx[a] += ux;
-				fy[a] += uy;
-				fx[b] -= ux;
-				fy[b] -= uy;
-			}
-		}
-
-		for (const [a, b] of links) {
-			const dx = xs[b] - xs[a];
-			const dy = ys[b] - ys[a];
-			const d = Math.max(Math.hypot(dx, dy), MIN_DISTANCE);
-			const f = SPRING * (d - REST_LENGTH);
-			const ux = (dx / d) * f;
-			const uy = (dy / d) * f;
-			fx[a] += ux;
-			fy[a] += uy;
-			fx[b] -= ux;
-			fy[b] -= uy;
-		}
-
-		for (let i = 0; i < n; i++) {
-			fx[i] -= xs[i] * CENTERING;
-			fy[i] -= ys[i] * CENTERING;
-			const [dx, dy] = clampMagnitude(fx[i] * step, fy[i] * step, MAX_MOVE);
-			xs[i] += dx;
-			ys[i] += dy;
-		}
-		step *= COOLING;
-	}
-
-	const out = new Map<string, Point>();
-	for (let i = 0; i < n; i++) {
-		out.set(topics[i].ID, { x: xs[i], y: ys[i] });
-	}
-	return out;
-}
-
-// clampMagnitude bounds a vector without changing its direction.
-function clampMagnitude(dx: number, dy: number, limit: number): [number, number] {
-	const magnitude = Math.hypot(dx, dy);
-	if (magnitude <= limit) {
-		return [dx, dy];
-	}
-	const scale = limit / magnitude;
-	return [dx * scale, dy * scale];
+	return new Map(nodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
 }
 
 // Radius scales area with block count and stays within visible bounds.

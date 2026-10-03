@@ -1,15 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	circleBox,
-	clampPad,
-	layout,
-	type Point,
-	radiusOf,
-	reducedLayout,
-	scaleFor,
-	truncateLabel,
-	viewBox,
-} from "./graph";
+import { circleBox, clampPad, layout, type Point, radiusOf, scaleFor, truncateLabel, viewBox } from "./graph";
 
 function topics(n: number): { ID: string }[] {
 	return Array.from({ length: n }, (_, i) => ({ ID: `t${i}` }));
@@ -103,14 +93,12 @@ describe("layout", () => {
 		}
 	});
 
-	it("completes on a base larger than the full-iteration threshold", () => {
-		const result = layout(topics(250), []);
-		expect(result.size).toBe(250);
+	it("completes on a large base", () => {
+		const result = layout(topics(2000), []);
+		expect(result.size).toBe(2000);
 		for (const p of result.values()) {
 			expect(Number.isFinite(p.x)).toBe(true);
 		}
-		expect(reducedLayout(250)).toBe(true);
-		expect(reducedLayout(10)).toBe(false);
 	});
 });
 
