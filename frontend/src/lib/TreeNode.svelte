@@ -527,6 +527,28 @@
 			background: transparent;
 		}
 	}
+	/* Same indent and quiet styling as HistoryPanel's .history: a small panel
+	   hanging off this row, not a competing block. */
+	.ref-create {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.1rem 0 0.25rem 1.25rem;
+		padding: 0.2rem 0.4rem;
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
+	}
+	.ref-create button {
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		background: none;
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		color: inherit;
+	}
+	.ref-create button:hover:not(:disabled) {
+		background: var(--hover);
+	}
 	/* The actions reserve their lane whether or not they are visible: fading
 	   them with opacity rather than removing them keeps a long block's text from
 	   reflowing under the pointer.
@@ -547,6 +569,10 @@
 		color: inherit;
 		opacity: 0;
 	}
+	/* Preserve the lane width without leaving its controls focusable. */
+	.gutter.reserved button {
+		visibility: hidden;
+	}
 	.row:hover .gutter button,
 	.row:focus-within .gutter button {
 		opacity: 0.6;
@@ -561,10 +587,6 @@
 	.row.targeted .gutter button.target,
 	.gutter button.open {
 		opacity: 1;
-	}
-	/* Preserve the lane width without leaving its controls focusable. */
-	.gutter.reserved button {
-		visibility: hidden;
 	}
 	/* A scheduled block shows its glyph without hovering: it is the marker.
 	   Dim when the schedule is off, accented when its last attempt needs a
@@ -676,28 +698,6 @@
 		flex: 1;
 		padding: 0.1rem 0.3rem;
 		text-decoration: line-through;
-	}
-	/* Same indent and quiet styling as HistoryPanel's .history: a small panel
-	   hanging off this row, not a competing block. */
-	.ref-create {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin: 0.1rem 0 0.25rem 1.25rem;
-		padding: 0.2rem 0.4rem;
-		font-size: var(--size-small);
-		border-left: 2px solid var(--hairline);
-	}
-	.ref-create button {
-		border: 1px solid var(--hairline-strong);
-		border-radius: var(--radius);
-		background: none;
-		padding: 0.1rem 0.5rem;
-		cursor: pointer;
-		color: inherit;
-	}
-	.ref-create button:hover:not(:disabled) {
-		background: var(--hover);
 	}
 	/* accept/reject are a per-row status action, not a hover affordance like
 	   .target: always visible while a block is unreviewed, so the decision is
