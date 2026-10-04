@@ -1,43 +1,39 @@
 // The Import card's own logic: what a plan lets the user do and how its
 // findings are shown. Pure functions, so the card stays a thin view.
-import type {
-	Conflict,
-	Plan,
-	Warning,
-} from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models";
+import type { Conflict, Plan, Warning } from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport"
 
 export interface Group<T> {
-	kind: string;
-	count: number;
-	items: T[];
+	kind: string
+	count: number
+	items: T[]
 }
 
 /** Groups findings by kind, kinds in first-seen order. */
 export function groupByKind<T extends Warning | Conflict>(items: T[] | null): Group<T>[] {
-	const groups: Group<T>[] = [];
+	const groups: Group<T>[] = []
 	for (const item of items ?? []) {
-		const g = groups.find((g) => g.kind === item.kind);
+		const g = groups.find((g) => g.kind === item.kind)
 		if (g) {
-			g.count++;
-			g.items.push(item);
+			g.count++
+			g.items.push(item)
 		} else {
-			groups.push({ kind: item.kind, count: 1, items: [item] });
+			groups.push({ kind: item.kind, count: 1, items: [item] })
 		}
 	}
-	return groups;
+	return groups
 }
 
 /** A plan can be applied when at least one page survived the conflicts. */
 export function canApply(plan: Plan | null): boolean {
-	return plan !== null && plan.pages > 0;
+	return plan !== null && plan.pages > 0
 }
 
 export function summaryLine(plan: Plan): string {
-	return `${plan.format} at ${plan.dir}: ${count(plan.pages, "page")}, ${count(plan.blocks, "block")}, ${count(plan.links, "link")}`;
+	return `${plan.format} at ${plan.dir}: ${count(plan.pages, "page")}, ${count(plan.blocks, "block")}, ${count(plan.links, "link")}`
 }
 
 export function count(n: number, noun: string): string {
-	return `${n} ${noun}${n === 1 ? "" : "s"}`;
+	return `${n} ${noun}${n === 1 ? "" : "s"}`
 }
 
 const kinds: Record<string, string> = {
@@ -55,9 +51,9 @@ const kinds: Record<string, string> = {
 	unnamed: "The name cannot be a topic name",
 	exists: "A topic of this name is already in the base",
 	duplicate: "Another page of the vault has the same name",
-};
+}
 
 /** A reader's label for a warning or conflict kind. */
 export function describeKind(kind: string): string {
-	return kinds[kind] ?? kind;
+	return kinds[kind] ?? kind
 }

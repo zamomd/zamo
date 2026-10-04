@@ -1,24 +1,62 @@
-import { base } from "./base.svelte";
+import { base } from "./base.svelte"
 
 // Mode is what the main area shows. The rail owns all four: putting a second
 // switch anywhere else (a tab bar, a clickable counter) means one destination
 // with two doors, which is how the tab bar and the sidebar footer ended up
 // competing in the first place.
-export type Mode = "tree" | "graph" | "changes" | "settings";
+export type Mode = "tree" | "graph" | "changes" | "settings"
+
+const SIDEBAR_KEY = "zamo.sidebar"
+
+interface SidebarPrefs {
+	width: number | null
+	hidden: boolean
+}
+
+// Storage can be unavailable or hold anything; the layout must come up anyway.
+function loadSidebar(): SidebarPrefs {
+	try {
+		const raw: unknown = JSON.parse(localStorage.getItem(SIDEBAR_KEY) ?? "null")
+		if (typeof raw === "object" && raw !== null) {
+			const { width, hidden } = raw as Record<string, unknown>
+			return {
+				width: typeof width === "number" && Number.isFinite(width) ? width : null,
+				hidden: hidden === true,
+			}
+		}
+	} catch {}
+	return { width: null, hidden: false }
+}
 
 class ShellStore {
-	mode = $state<Mode>("tree");
+	mode = $state<Mode>("tree")
+	// null until the user drags the edge: the stylesheet's proportional width.
+	sidebarWidth = $state<number | null>(null)
+	sidebarHidden = $state(false)
+
+	constructor() {
+		const prefs = loadSidebar()
+		this.sidebarWidth = prefs.width
+		this.sidebarHidden = prefs.hidden
+	}
+
+	saveSidebar(): void {
+		const prefs: SidebarPrefs = { width: this.sidebarWidth, hidden: this.sidebarHidden }
+		try {
+			localStorage.setItem(SIDEBAR_KEY, JSON.stringify(prefs))
+		} catch {}
+	}
 
 	async setMode(m: Mode): Promise<void> {
 		if (base.busy) {
-			return;
+			return
 		}
 		if (!(await base.commitEdit())) {
-			return;
+			return
 		}
-		this.mode = m;
+		this.mode = m
 	}
 }
 
 // One instance for the window's lifetime; module state outlives the views.
-export const shell = new ShellStore();
+export const shell = new ShellStore()

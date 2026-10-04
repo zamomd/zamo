@@ -1,19 +1,19 @@
-import { base } from "../stores/base.svelte";
-import { shell } from "../stores/shell.svelte";
+import { base } from "../stores/base.svelte"
+import { shell } from "../stores/shell.svelte"
 
 // jumpToBlock commits before revealing because reveal may switch topics.
 export async function jumpToBlock(id: string): Promise<void> {
 	if (base.busy) {
-		return;
+		return
 	}
-	await shell.setMode("tree");
+	await shell.setMode("tree")
 	if (!(await base.commitEdit())) {
-		return;
+		return
 	}
-	base.reveal(id);
+	base.reveal(id)
 }
 
 export function openTopic(id: string): void {
-	void shell.setMode("tree");
-	void base.selectTopic(id);
+	void shell.setMode("tree")
+	void base.selectTopic(id)
 }

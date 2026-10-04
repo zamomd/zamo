@@ -1,25 +1,25 @@
-import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
-import { base } from "./base.svelte";
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
+import { base } from "./base.svelte"
 
 // AIStore holds the effective AI policy for the window.
 class AIStore {
-	enabled = $state(false);
+	enabled = $state(false)
 
 	async load(): Promise<void> {
 		try {
-			const v = await App.Settings();
-			this.enabled = v.aiEnabled.value;
+			const v = await App.Settings()
+			this.enabled = v.aiEnabled.value
 		} catch {
 			// Keep AI controls hidden when the policy is unavailable.
 		}
 	}
 
 	set(enabled: boolean): void {
-		this.enabled = enabled;
+		this.enabled = enabled
 		if (!enabled) {
-			base.clearScope();
+			base.clearScope()
 		}
 	}
 }
 
-export const ai = new AIStore();
+export const ai = new AIStore()

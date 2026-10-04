@@ -5,29 +5,29 @@
 // message is the envelope's JSON body, while newer runtimes promise a
 // RuntimeError carrying the parsed payload in `cause`. callError accepts
 // both, never throws, and downgrades anything unrecognised to "internal".
-export type CallError = { code: string; message: string };
+export type CallError = { code: string; message: string }
 
 function payload(v: unknown): CallError | null {
-	if (typeof v !== "object" || v === null) return null;
-	const o = v as Record<string, unknown>;
-	return typeof o.code === "string" && typeof o.message === "string" ? { code: o.code, message: o.message } : null;
+	if (typeof v !== "object" || v === null) return null
+	const o = v as Record<string, unknown>
+	return typeof o.code === "string" && typeof o.message === "string" ? { code: o.code, message: o.message } : null
 }
 
 export function callError(err: unknown): CallError {
 	if (err instanceof Error) {
-		const direct = payload(err.cause);
-		if (direct) return direct;
+		const direct = payload(err.cause)
+		if (direct) return direct
 		try {
-			const envelope = JSON.parse(err.message) as { message?: unknown; cause?: unknown };
-			const p = payload(envelope.cause);
-			if (p) return p;
+			const envelope = JSON.parse(err.message) as { message?: unknown; cause?: unknown }
+			const p = payload(envelope.cause)
+			if (p) return p
 			if (typeof envelope.message === "string") {
-				return { code: "internal", message: envelope.message };
+				return { code: "internal", message: envelope.message }
 			}
 		} catch {}
-		return { code: "internal", message: err.message };
+		return { code: "internal", message: err.message }
 	}
-	return { code: "internal", message: String(err) };
+	return { code: "internal", message: String(err) }
 }
 
 // readable maps each wire code (assigned in internal/wailsbind MarshalError) to
@@ -60,10 +60,10 @@ const readable: Record<string, string> = {
 	import_unknown_format: "That folder is neither an Obsidian vault nor a Logseq graph.",
 	import_stale_preview: "The preview is out of date. Run it again.",
 	import_nothing: "Nothing to import: every page is already in the base or cannot be named.",
-};
+}
 
 // messageFor turns a binding error into the sentence to show the user: a mapped,
 // actionable message by code, never the raw developer/driver text.
 export function messageFor(err: unknown): string {
-	return readable[callError(err).code] ?? "Something went wrong. Please try again.";
+	return readable[callError(err).code] ?? "Something went wrong. Please try again."
 }
