@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
+	import { Mode } from '../../bindings/github.com/zamomd/zamo/internal/knowledge';
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
 	import { search } from "../stores/search.svelte";
+	import { shell } from "../stores/shell.svelte";
 	import { jumpToBlock, openTopic } from "./navigate";
 	import { plainText } from "./plaintext";
 	import SearchBox from "./SearchBox.svelte";
+	import { SIDEBAR_MIN, SIDEBAR_STEP, sidebarMax, sidebarSize } from "./sidebarsize";
 	import { topicRows } from "./tree";
 
 	const rows = $derived(topicRows(base.forest, base.selectedTopicID));
@@ -35,9 +37,81 @@
 		creatingTopic = false;
 		await base.createTopic(name, newTopicMode);
 	}
+
+	let aside: HTMLElement | undefined = $state();
+	let dragging = $state(false);
+	// Left edge of the sidebar and the width to return to if the drag ends hidden.
+	let dragOrigin = 0;
+	let dragStartWidth: number | null = null;
+
+	function currentWidth(): number {
+		return aside?.offsetWidth ?? 0;
+	}
+
+	function resize(desired: number): void {
+		const size = sidebarSize(desired, sidebarMax(window.innerWidth));
+		shell.sidebarHidden = size.hidden;
+		if (!size.hidden) {
+			shell.sidebarWidth = size.width;
+		}
+	}
+
+	function toggle(): void {
+		shell.sidebarHidden = !shell.sidebarHidden;
+		shell.saveSidebar();
+	}
+
+	function startDrag(e: PointerEvent): void {
+		if (e.button !== 0) {
+			return;
+		}
+		e.preventDefault();
+		const handle = e.currentTarget as HTMLElement;
+		handle.setPointerCapture(e.pointerId);
+		dragOrigin = handle.getBoundingClientRect().left - currentWidth();
+		dragStartWidth = shell.sidebarWidth;
+		dragging = true;
+	}
+
+	function drag(e: PointerEvent): void {
+		if (dragging) {
+			resize(e.clientX - dragOrigin);
+		}
+	}
+
+	function endDrag(): void {
+		if (!dragging) {
+			return;
+		}
+		dragging = false;
+		if (shell.sidebarHidden) {
+			shell.sidebarWidth = dragStartWidth;
+		}
+		shell.saveSidebar();
+	}
+
+	function onHandleKey(e: KeyboardEvent): void {
+		if (e.key === "Enter") {
+			toggle();
+		} else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+			const step = e.key === "ArrowLeft" ? -SIDEBAR_STEP : SIDEBAR_STEP;
+			// From hidden, one step right lands on the minimum width rather than
+			// a step past nothing.
+			resize(shell.sidebarHidden ? (step > 0 ? SIDEBAR_MIN : 0) : currentWidth() + step);
+			shell.saveSidebar();
+		} else {
+			return;
+		}
+		e.preventDefault();
+	}
 </script>
 
-<aside>
+<aside
+	hidden={shell.sidebarHidden}
+	bind:this={aside}
+	style:width={shell.sidebarWidth === null ? undefined : `${shell.sidebarWidth}px`}
+	style:min-width="{SIDEBAR_MIN}px"
+>
 	<SearchBox />
 
 	<div class="list">
@@ -144,17 +218,85 @@
 	<footer>{changes.count} unreviewed</footer>
 </aside>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<!-- biome-ignore lint/a11y/useSemanticElements: a focusable separator is a window splitter, which <hr> cannot be -->
+<div
+	class="resizer"
+	class:dragging
+	role="separator"
+	aria-orientation="vertical"
+	aria-label="sidebar width"
+	aria-valuemin={0}
+	aria-valuemax={sidebarMax(window.innerWidth)}
+	aria-valuenow={shell.sidebarHidden ? 0 : (shell.sidebarWidth ?? aside?.offsetWidth ?? SIDEBAR_MIN)}
+	title={shell.sidebarHidden ? "drag to show topics" : "drag to resize, drag to the rail to hide"}
+	tabindex="0"
+	onpointerdown={startDrag}
+	onpointermove={drag}
+	onpointerup={endDrag}
+	onpointercancel={endDrag}
+	ondblclick={toggle}
+	onkeydown={onHandleKey}
+></div>
+
 <style>
 	aside {
 		flex: none;
 		width: 22%;
-		min-width: 12rem;
+		max-width: 60%;
 		display: flex;
 		flex-direction: column;
 		gap: var(--unit);
 		padding: calc(var(--unit) * 2) var(--unit);
 		border-right: 1px solid var(--hairline);
 		overflow: hidden;
+	}
+	/* Zero-width in the layout, so the hairline it sits on stays the only
+	   visible edge; the grab area is the pseudo-element straddling it. */
+	.resizer {
+		flex: none;
+		position: relative;
+		z-index: 1;
+		width: 0;
+		user-select: none;
+		touch-action: none;
+	}
+	.resizer::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -4px;
+		width: 7px;
+		cursor: col-resize;
+	}
+	.resizer::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -1px;
+		width: 1px;
+		background: transparent;
+	}
+	.resizer:hover::after,
+	.resizer:focus-visible::after,
+	.resizer.dragging::after {
+		background: var(--accent);
+	}
+	.resizer:focus-visible {
+		outline: none;
+	}
+	/* Covers the window for the length of a drag: the cursor holds and nothing
+	   underneath gets hovered or selected. */
+	.resizer.dragging::before {
+		position: fixed;
+		inset: 0;
+		width: auto;
+	}
+	/* display: flex above outranks the attribute's own display: none. */
+	aside[hidden] {
+		display: none;
 	}
 	.list {
 		flex: 1;
