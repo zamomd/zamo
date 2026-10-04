@@ -10,8 +10,11 @@ package host
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"time"
 
 	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/scheduler"
 )
 
 // BaseReader is read access to the shape of the base: its topics and the
@@ -56,6 +59,65 @@ type BaseArchive interface {
 // as the batch's WriteMeta decides.
 type BatchWriter interface {
 	ApplyOps(ctx context.Context, meta knowledge.WriteMeta, ops []knowledge.Op) (knowledge.Applied, error)
+}
+
+// AIEditor runs an AI edit command over a scope through the one edit path the
+// app itself uses: the model's answer becomes an AI-authored batch awaiting
+// review. A module running without the owner watching sets AIEdit.Unattended,
+// and the edit then refuses to land over content still awaiting review.
+type AIEditor interface {
+	EditWithAI(ctx context.Context, e knowledge.AIEdit) (knowledge.Applied, error)
+}
+
+// Schedule is a module's view of one of its scheduled records.
+type Schedule = scheduler.Schedule
+
+// ScheduleHandler runs one record when its time comes.
+type ScheduleHandler = scheduler.Handler
+
+// ScheduleOptions is the policy a handler is registered with.
+type ScheduleOptions = scheduler.HandlerOptions
+
+// RunResult is a handler's report of one run.
+type RunResult = scheduler.RunResult
+
+// Outcome is how a run ended.
+type Outcome = scheduler.Outcome
+
+// The outcomes a handler reports.
+const (
+	OutcomeOK       = scheduler.OutcomeOK
+	OutcomeNoChange = scheduler.OutcomeNoChange
+	OutcomeSkipped  = scheduler.OutcomeSkipped
+	OutcomeFailed   = scheduler.OutcomeFailed
+)
+
+// The scheduler's errors a module acts on.
+var (
+	ErrScheduleNotFound = scheduler.ErrNotFound
+	ErrInvalidSpec      = scheduler.ErrInvalidSpec
+	ErrScheduleBusy     = scheduler.ErrBusy
+)
+
+// Scheduler is timed work, bound to the module it was handed to: the module
+// registers one handler and manages its own records by key; it sees nobody
+// else's. The scheduler persists the records, runs them while the app is
+// running, collapses the slots a sleeping machine missed into one run, drops
+// those that passed while the app was not running at all, and keeps two
+// processes on one base from running the same record.
+type Scheduler interface {
+	Handle(h ScheduleHandler, opts ScheduleOptions)
+	// Put creates or replaces the record for key; the next run counts from
+	// now, so saving never runs it. Disabling cancels a run in flight.
+	Put(ctx context.Context, key, spec string, enabled bool, payload jsontext.Value) (Schedule, error)
+	Get(ctx context.Context, key string) (Schedule, error)
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]Schedule, error)
+	// RunNow runs the record at once through the same path as a timed run.
+	RunNow(ctx context.Context, key string) error
+	Cancel(ctx context.Context, key string) bool
+	// Preview validates spec and returns its next n firing times.
+	Preview(spec string, n int) ([]time.Time, error)
 }
 
 // Coded is an error that carries a stable wire code, so the frontend can

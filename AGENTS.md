@@ -56,6 +56,8 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
   not grow a method per feature; a module must be deletable without
   breaking the core build. Long-running work runs under
   `internal/jobs` so it can be cancelled and ends with the process.
+  Timed work goes through `internal/scheduler`, handed to a module as
+  `host.Scheduler`.
 
 ## Gotchas
 

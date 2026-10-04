@@ -36,6 +36,16 @@ linters:
               desc: entry points must not depend on the storage adapter
             - pkg: github.com/zamomd/zamo/internal/modules
               desc: modules reach entry points through registration in app
+        # The scheduler knows nothing about blocks, AI or storage: it runs
+        # what modules register and persists through its own Store contract.
+        scheduler-standalone:
+          files:
+            - "**/internal/scheduler/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/zamomd/zamo/internal/jobs
+            - github.com/adhocore/gronx
         # A feature module sees the host capability layer, domain types and
         # its own subpackages only.
         modules-host-only:

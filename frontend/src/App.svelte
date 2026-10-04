@@ -9,13 +9,19 @@
 	import { ai } from "./stores/ai.svelte";
 	import { base } from "./stores/base.svelte";
 	import { changes } from "./stores/changes.svelte";
+	import { schedules } from "./stores/schedules.svelte";
 	import { shell } from "./stores/shell.svelte";
 	import TopicView from "./TopicView.svelte";
 
 	onMount(() => {
 		base.activate();
 		void ai.load();
-		return changes.start();
+		const stopChanges = changes.start();
+		const stopSchedules = schedules.start();
+		return () => {
+			stopChanges();
+			stopSchedules();
+		};
 	});
 </script>
 

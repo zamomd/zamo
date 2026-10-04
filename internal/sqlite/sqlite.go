@@ -255,6 +255,9 @@ func (r *Repo) ApplyOps(
 	if err := guard(ctx, tx, ops); err != nil {
 		return false, err
 	}
+	if err := refuseOverUnreviewed(ctx, tx, meta.RefuseOverUnreviewedIn); err != nil {
+		return false, fmt.Errorf("apply ops group %s: %w", groupID, err)
+	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO revision_groups (id, title, source, atomic, created_at) VALUES (?, ?, ?, ?, ?)`,

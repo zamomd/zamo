@@ -3,12 +3,14 @@
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
+	import { schedules } from "../stores/schedules.svelte";
 	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
 	import { makeResolver, refClick } from "./resolve";
+	import SchedulePanel from "./SchedulePanel.svelte";
 	import TreeNode from "./TreeNode.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
@@ -23,6 +25,8 @@
 	const editing = $derived(base.editingID === node.block.ID);
 	const backlinksOpen = $derived(base.openBacklinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
+	const scheduleOpen = $derived(base.openSchedules.has(node.block.ID));
+	const schedule = $derived(schedules.byKey.get(node.block.ID));
 	const unreviewed = $derived(node.block.Unreviewed);
 	const atomic = $derived(changes.atomic.has(node.block.ID));
 	const ghost = $derived(base.ghosts.has(node.block.ID));
@@ -225,6 +229,21 @@
 			>
 				⌚︎
 			</button>
+			<button
+				type="button"
+				class="schedule-toggle"
+				class:open={scheduleOpen}
+				class:scheduled={schedule !== undefined}
+				class:off={schedule !== undefined && !schedule.enabled}
+				class:attention={schedule?.outcome === "failed" || schedule?.outcome === "skipped"}
+				title={schedule ? "this block runs on a schedule" : "refresh this block on a schedule"}
+				aria-expanded={scheduleOpen}
+				aria-label="toggle this block's schedule"
+				disabled={base.busy}
+				onclick={() => base.toggleSchedule(node.block.ID)}
+			>
+				◷
+			</button>
 		</span>
 
 		{#if unreviewed && atomic}
@@ -298,6 +317,9 @@
 	{/if}
 	{#if historyOpen}
 		<HistoryPanel block={node.block} />
+	{/if}
+	{#if scheduleOpen}
+		<SchedulePanel block={node.block} />
 	{/if}
 	{#if pendingTopic}
 		<!-- confirm() is a no-op in the Wails webview, so this row is the
@@ -543,6 +565,19 @@
 	/* Preserve the lane width without leaving its controls focusable. */
 	.gutter.reserved button {
 		visibility: hidden;
+	}
+	/* A scheduled block shows its glyph without hovering: it is the marker.
+	   Dim when the schedule is off, accented when its last attempt needs a
+	   look. */
+	.gutter button.schedule-toggle.scheduled {
+		opacity: 0.6;
+	}
+	.gutter button.schedule-toggle.off {
+		opacity: 0.3;
+	}
+	.gutter button.schedule-toggle.attention {
+		opacity: 1;
+		color: var(--accent);
 	}
 	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
 	   reach it — style it through :global under .content. */
