@@ -59,7 +59,6 @@ export interface Block {
     "ParentID": ID;
     "Position": number;
     "Content": string;
-    "Meta": Metadata;
 
     /**
      * Mode is the shape of the topic this block roots. Meaningful only when
@@ -68,6 +67,12 @@ export interface Block {
     "Mode": Mode;
     "CreatedAt": string;
     "UpdatedAt": string;
+
+    /**
+     * CreatedBy is who wrote the block's first revision. Derived by storage on
+     * read; never written by callers.
+     */
+    "CreatedBy": Author;
 
     /**
      * Unreviewed reports that the block has revisions awaiting review.
@@ -82,12 +87,6 @@ export interface Block {
  * ID generation lives outside the domain and is injected into Service.
  */
 export type ID = string;
-
-/**
- * Metadata holds extensible block metadata: authorship (human/AI),
- * provenance, model, etc. Stored in the database as JSON.
- */
-export type Metadata = { [_ in string]?: any } | null;
 
 /**
  * Mode is the shape a topic takes: a tree of blocks, or a single block holding
@@ -213,6 +212,14 @@ export enum Source {
 };
 
 /**
+ * TopicAlias is one alias with the topic it resolves to.
+ */
+export interface TopicAlias {
+    "TopicID": ID;
+    "Alias": string;
+}
+
+/**
  * TopicEdge is an undirected connection between two topics. Multiplicity
  * collapses — many connections between two topics are one edge — and so does
  * direction, so From is always the smaller id. A topic never edges to itself:
@@ -248,6 +255,32 @@ export interface TopicNode {
     "ID": ID;
     "Title": string;
     "Blocks": number;
+}
+
+/**
+ * TopicProps are what a topic carries beside its text: the other names it
+ * answers to and the labels it is found by. They are the owner's to set and
+ * sit outside revisions, so no batch — the AI's included — changes them.
+ */
+export interface TopicProps {
+    /**
+     * Aliases are extra names a [[Topic]] reference may use, as written.
+     */
+    "Aliases": string[] | null;
+
+    /**
+     * Tags are labels for finding and grouping topics, as written. A tag is
+     * not a topic and resolves no reference.
+     */
+    "Tags": string[] | null;
+}
+
+/**
+ * TopicTag is one tag with the topic that carries it.
+ */
+export interface TopicTag {
+    "TopicID": ID;
+    "Tag": string;
 }
 
 /**

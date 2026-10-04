@@ -63,6 +63,33 @@ type fakeRepo struct {
 	unreviewedErr error
 
 	searchErr error
+
+	aliases     []TopicAlias      // what ListTopicAliases returns
+	props       map[ID]TopicProps // what SetTopicProps stored, by topic
+	setPropsErr error
+}
+
+func (f *fakeRepo) GetTopicProps(_ context.Context, topic ID) (TopicProps, error) {
+	return f.props[topic], nil
+}
+
+func (f *fakeRepo) SetTopicProps(_ context.Context, topic ID, props TopicProps) error {
+	if f.setPropsErr != nil {
+		return f.setPropsErr
+	}
+	if f.props == nil {
+		f.props = map[ID]TopicProps{}
+	}
+	f.props[topic] = props
+	return nil
+}
+
+func (f *fakeRepo) ListTopicAliases(context.Context) ([]TopicAlias, error) {
+	return f.aliases, nil
+}
+
+func (f *fakeRepo) ListTopicTags(context.Context) ([]TopicTag, error) {
+	return nil, nil
 }
 
 func (f *fakeRepo) GetTopics(context.Context) ([]Block, error) { return f.topics, f.topicsErr }

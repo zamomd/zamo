@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { Author } from "../../bindings/github.com/zamomd/zamo/internal/knowledge";
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
@@ -19,14 +20,14 @@
 	// AI scope all take it unchanged; only the layout differs.
 	const block = $derived(node.block);
 	const editing = $derived(base.editingID === block.ID);
-	const resolveRef = $derived(makeResolver(base.forest));
+	const resolveRef = $derived(makeResolver(base.forest, base.aliases));
 	const html = $derived(renderMarkdown(block.Content, resolveRef));
 
 	// The tree says this with a hollow dot, whose meaning comes from the filled
 	// dots around it. A document is one block with nothing to contrast against,
 	// so it says it in words instead, in the same channel as the lane's other
 	// small dim labels.
-	const byAI = $derived(block.Meta?.author === "ai");
+	const byAI = $derived(block.CreatedBy === Author.AuthorAI);
 	const backlinksOpen = $derived(base.openBacklinks.has(block.ID));
 	const historyOpen = $derived(base.historyID === block.ID);
 	const scheduleOpen = $derived(base.openSchedules.has(block.ID));
@@ -61,7 +62,7 @@
 	let pendingTopic: { name: string } | null = $state(null);
 
 	function clickRef(el: HTMLElement): void {
-		const action = refClick(base.forest, el);
+		const action = refClick(base.forest, base.aliases, el);
 		if (action === null) {
 			return;
 		}

@@ -2,7 +2,7 @@
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
-import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Author, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { base } from "../stores/base.svelte"
 import TreeNode from "./TreeNode.svelte"
 
@@ -35,7 +35,7 @@ function block(overrides: Partial<Block> = {}): Block {
 		ParentID: "root",
 		Position: 1,
 		Content: "a claim",
-		Meta: null,
+		CreatedBy: Author.AuthorOwner,
 		Mode: Mode.ModeOutline,
 		CreatedAt: "",
 		UpdatedAt: "",
@@ -53,6 +53,36 @@ beforeEach(() => {
 })
 
 describe("TreeNode", () => {
+	it("marks a block the AI created, and no other", () => {
+		const ai = render(TreeNode, { node: { block: block({ CreatedBy: Author.AuthorAI }), children: [] } })
+		expect(ai.container.querySelector(".dot.ai")).not.toBeNull()
+		const owner = render(TreeNode, { node: { block: block(), children: [] } })
+		expect(owner.container.querySelector(".dot.ai")).toBeNull()
+	})
+
+	it("offers a place to write under a title with no blocks", async () => {
+		const spy = vi.spyOn(base, "insertFirstChild").mockResolvedValue()
+		const { container } = render(TreeNode, {
+			node: { block: block({ ID: "root", ParentID: "" }), children: [] },
+			title: true,
+		})
+		const placeholder = container.querySelector(".first-block") as HTMLElement
+		await fireEvent.click(placeholder)
+		expect(spy).toHaveBeenCalledWith("root")
+		spy.mockRestore()
+	})
+
+	it("offers no such place once the title has blocks, or on an ordinary row", () => {
+		const child = { block: block(), children: [] }
+		const withChild = render(TreeNode, {
+			node: { block: block({ ID: "root", ParentID: "" }), children: [child] },
+			title: true,
+		})
+		expect(withChild.container.querySelector(".first-block")).toBeNull()
+		const row = render(TreeNode, { node: child })
+		expect(row.container.querySelector(".first-block")).toBeNull()
+	})
+
 	it("renders the block's markdown", () => {
 		const { container } = render(TreeNode, {
 			node: { block: block({ Content: "a **bold** claim" }), children: [] },

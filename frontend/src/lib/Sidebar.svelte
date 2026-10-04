@@ -8,9 +8,19 @@
 	import { plainText } from "./plaintext";
 	import SearchBox from "./SearchBox.svelte";
 	import { SIDEBAR_MIN, SIDEBAR_STEP, sidebarMax, sidebarSize } from "./sidebarsize";
+	import { hasTag, tagCounts } from "./topicprops"
 	import { topicRows } from "./tree";
 
-	const rows = $derived(topicRows(base.forest, base.selectedTopicID));
+	const tags = $derived(tagCounts(base.tags));
+	// A filter naming a tag no topic carries any more is no filter: otherwise
+	// removing the last such tag would leave the list empty with nothing on
+	// screen to undo it.
+	const activeTag = $derived(tags.some((t) => t.key === base.tagFilter) ? base.tagFilter : null);
+	const rows = $derived(
+		topicRows(base.forest, base.selectedTopicID).filter(
+			(row) => activeTag === null || hasTag(base.tags, row.id, activeTag),
+		),
+	);
 	const searching = $derived(search.query.trim() !== "");
 
 	// The new-topic form is a real element, not prompt(): confirm()/alert()/
@@ -114,6 +124,23 @@
 >
 	<SearchBox />
 
+	{#if tags.length > 0 && !searching}
+		<div class="tags">
+			{#each tags as tag (tag.key)}
+				<button
+					type="button"
+					class="tag"
+					class:active={activeTag === tag.key}
+					aria-pressed={activeTag === tag.key}
+					title="{tag.topics} {tag.topics === 1 ? 'topic' : 'topics'}"
+					onclick={() => (base.tagFilter = activeTag === tag.key ? null : tag.key)}
+				>
+					#{tag.name}
+				</button>
+			{/each}
+		</div>
+	{/if}
+
 	<div class="list">
 		{#if searching}
 			{#if search.error !== ""}
@@ -135,7 +162,7 @@
 				</ul>
 			{/if}
 		{:else if rows.length === 0}
-			<p class="note">no topics yet</p>
+			<p class="note">{activeTag === null ? "no topics yet" : "no topics with this tag"}</p>
 		{:else}
 			<ul>
 				{#each rows as row (row.id)}
@@ -297,6 +324,32 @@
 	/* display: flex above outranks the attribute's own display: none. */
 	aside[hidden] {
 		display: none;
+	}
+	.tags {
+		flex: none;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 var(--unit);
+		padding: 0 var(--unit);
+		max-height: calc(var(--row-height) * 3);
+		overflow-y: auto;
+		font-size: var(--size-small);
+	}
+	/* Unframed: a row of boxed chips would outweigh the topic list it filters. */
+	.tag {
+		border: none;
+		background: none;
+		padding: 0;
+		line-height: var(--row-height);
+		color: var(--text-faint);
+		cursor: pointer;
+	}
+	.tag:hover {
+		color: var(--text);
+		background: none;
+	}
+	.tag.active {
+		color: var(--accent);
 	}
 	.list {
 		flex: 1;

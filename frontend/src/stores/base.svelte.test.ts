@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import { Author, type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
 
 vi.mock("@wailsio/runtime", () => ({
 	Events: { On: () => () => {} },
@@ -8,6 +8,8 @@ vi.mock("@wailsio/runtime", () => ({
 
 const reloadFixture = vi.hoisted(() => ({
 	topics: [] as Block[],
+	aliases: [] as { TopicID: string; Alias: string }[],
+	tags: [] as { TopicID: string; Tag: string }[],
 	subtrees: {} as Record<string, Block[]>,
 	topicMapError: null as Error | null,
 	gate: null as Promise<void> | null,
@@ -76,7 +78,10 @@ vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 		}),
 		DeleteBlock: vi.fn(async () => change("grp")),
 		SplitBlock: vi.fn(async () => change("grp", "new")),
+		TopicAliases: vi.fn(async () => reloadFixture.aliases),
+		TopicTags: vi.fn(async () => reloadFixture.tags),
 		InsertBlockBefore: vi.fn(async () => change("grp", "above")),
+		InsertFirstChild: vi.fn(async () => change("grp", "child")),
 		IndentBlock: vi.fn(async () => change("grp")),
 		OutdentBlock: vi.fn(async () => change("grp")),
 		MergeBlocks: vi.fn(async () => change("grp")),
@@ -107,7 +112,7 @@ function block(id: string, parent: string, content = id): Block {
 		Position: 0,
 		Content: content,
 		Mode: Mode.ModeOutline,
-		Meta: {},
+		CreatedBy: Author.AuthorOwner,
 		CreatedAt: "",
 		UpdatedAt: "",
 		Unreviewed: false,
@@ -151,6 +156,8 @@ beforeEach(() => {
 	reloadFixture.expandByIDError = null
 	reloadFixture.topicMapError = null
 	reloadFixture.gate = null
+	reloadFixture.aliases = []
+	reloadFixture.tags = []
 	reloadFixture.writeGate = null
 	reloadFixture.onSubtree = null
 	reloadFixture.subtreeGate = null
@@ -282,6 +289,27 @@ describe("reveal", () => {
 })
 
 describe("reload's fan-out", () => {
+	it("groups the tags the base holds by topic, in the order given", async () => {
+		reloadFixture.topics = [block("go", ""), block("sqlite", "")]
+		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] }
+		reloadFixture.tags = [
+			{ TopicID: "go", Tag: "Languages" },
+			{ TopicID: "go", Tag: "Draft" },
+			{ TopicID: "sqlite", Tag: "draft" },
+		]
+		await base.reload()
+		expect(base.tags.get("go")).toEqual(["Languages", "Draft"])
+		expect(base.tags.get("sqlite")).toEqual(["draft"])
+	})
+
+	it("indexes the aliases the base holds by their normalized key", async () => {
+		reloadFixture.topics = [block("go", "")]
+		reloadFixture.subtrees = { go: [block("go", "")] }
+		reloadFixture.aliases = [{ TopicID: "go", Alias: "Go  Lang" }]
+		await base.reload()
+		expect(base.aliases.get("go lang")).toEqual({ topicID: "go", alias: "Go  Lang" })
+	})
+
 	beforeEach(() => {
 		reloadFixture.topics = [block("go", ""), block("sqlite", ""), block("wails", "")]
 		reloadFixture.subtrees = {
@@ -1235,18 +1263,40 @@ describe("Enter", () => {
 		expect(App.SplitBlock).toHaveBeenCalledWith("done", "typed", " more")
 	})
 
-	it("refuses to split the page's own title row", async () => {
+	it("opens a first child rather than splitting the page's own title row", async () => {
+		reloadFixture.subtrees.go = [block("go", ""), block("child", "go", "")]
 		await base.startEdit(block("go", "", "go"), 1)
 		await base.splitAtCaret("go", 1)
 		expect(App.SplitBlock).not.toHaveBeenCalled()
+		expect(App.InsertFirstChild).toHaveBeenCalledWith("go", "")
+		expect(base.editingID).toBe("child")
+		expect(base.editText).toBe("")
 		expect(base.error).toBe("")
 	})
 
-	it("refuses to insert above the page's own title row", async () => {
+	it("opens a first child rather than inserting above the page's own title row", async () => {
+		reloadFixture.subtrees.go = [block("go", ""), block("child", "go", "")]
 		await base.startEdit(block("go", "", "go"), 0)
 		await base.insertAbove("go")
 		expect(App.InsertBlockBefore).not.toHaveBeenCalled()
-		expect(base.error).toBe("")
+		expect(App.InsertFirstChild).toHaveBeenCalledWith("go", "")
+		expect(base.editingID).toBe("child")
+	})
+
+	it("writes a renamed title before opening its first child", async () => {
+		reloadFixture.subtrees.go = [block("go", "", "golang"), block("child", "go", "")]
+		await base.startEdit(block("go", "", "go"), 2)
+		base.editText = "golang"
+		await base.splitAtCaret("go", 6)
+		expect(App.EditBlockContent).toHaveBeenCalledWith("go", "golang")
+		expect(App.InsertFirstChild).toHaveBeenCalledWith("go", "")
+	})
+
+	it("opens a first child from a title that is not being edited", async () => {
+		reloadFixture.subtrees.go = [block("go", ""), block("child", "go", "")]
+		await base.insertFirstChild("go")
+		expect(App.InsertFirstChild).toHaveBeenCalledWith("go", "")
+		expect(base.editingID).toBe("child")
 	})
 })
 
@@ -1317,6 +1367,20 @@ describe("undo and redo", () => {
 		expect(App.UndoGroup).toHaveBeenCalledWith("above-1")
 		expect(base.editingID).toBe("done")
 		expect(base.editCaret).toBe(0)
+	})
+
+	it("takes a first child back and lands on the title again", async () => {
+		vi.mocked(App.InsertFirstChild).mockResolvedValueOnce(change("child-1", "child"))
+		reloadFixture.subtrees.go = [block("go", ""), block("child", "go", "")]
+		await base.startEdit(block("go", "", "go"), 2)
+		await base.splitAtCaret("go", 2)
+
+		reloadFixture.subtrees.go = [block("go", "")]
+		await base.undo()
+
+		expect(App.UndoGroup).toHaveBeenCalledWith("child-1")
+		expect(base.editingID).toBe("go")
+		expect(base.editCaret).toBe(2)
 	})
 
 	it("leaves undo of uncommitted typing to the textarea", async () => {

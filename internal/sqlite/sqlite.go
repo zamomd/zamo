@@ -5,7 +5,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -462,23 +461,16 @@ func (r *Repo) applyAdd(ctx context.Context, tx *sql.Tx, op knowledge.Op, b batc
 	if err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
 	}
-	stamp := knowledge.Metadata{"author": string(b.meta.Author), "source": string(b.meta.Source)}
-	if op.Origin != "" {
-		stamp["origin"] = op.Origin
-	}
-	// Deterministic keeps the stored key order stable: v2 iterates maps in
-	// random order, and metadata is at-rest text a person may diff.
-	payload, err := json.Marshal(stamp, json.Deterministic(true))
-	if err != nil {
-		return fmt.Errorf("apply add %s: metadata: %w", op.BlockID, err)
-	}
 	key := titleKey(parent, op.Content)
+	if err := requireNameFree(ctx, tx, op.BlockID, key); err != nil {
+		return fmt.Errorf("apply add %s: %w", op.BlockID, err)
+	}
 	mode := storedMode(parent, "", op.Mode)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO blocks (id, parent_id, position, content, title_key, mode, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(op.BlockID), parent, pos, op.Content, key, string(mode),
-		string(payload), b.now, b.now); err != nil {
+		b.now, b.now); err != nil {
 		return fmt.Errorf("apply add %s: %w", op.BlockID, translate(err))
 	}
 	rev := b.revision(r.newID(), op, 1, knowledge.Revision{
@@ -544,6 +536,9 @@ func (r *Repo) applyEdit(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, translate(err))
 	}
 	key := titleKey(parentArg, op.Content)
+	if err := requireNameFree(ctx, tx, op.BlockID, key); err != nil {
+		return false, fmt.Errorf("apply edit %s: %w", op.BlockID, err)
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE blocks SET content = ?, title_key = ?, mode = ?, updated_at = ? WHERE id = ?`,
 		op.Content, key, string(mode), b.now, string(op.BlockID)); err != nil {
@@ -586,6 +581,9 @@ func (r *Repo) applyMove(ctx context.Context, tx *sql.Tx, op knowledge.Op, b bat
 	}
 	mode := storedMode(parent, current, op.Mode)
 	key := titleKey(parent, content)
+	if err := requireNameFree(ctx, tx, op.BlockID, key); err != nil {
+		return fmt.Errorf("apply move %s: %w", op.BlockID, err)
+	}
 	seq, err := nextSeq(ctx, tx, string(op.BlockID))
 	if err != nil {
 		return fmt.Errorf("apply move %s: next seq: %w", op.BlockID, translate(err))

@@ -153,6 +153,14 @@ export function InsertBlockBefore(id: knowledge$0.ID, content: string): $Cancell
 }
 
 /**
+ * InsertFirstChild is Enter on the block the view is rooted at: an empty block
+ * opens its children. It is how an empty topic gets its first block.
+ */
+export function InsertFirstChild(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
+    return $Call.ByID(3531137792, id, content);
+}
+
+/**
  * ListSchedules returns every module's scheduled work, for the Changes
  * screen's scheduled tab. Without a scheduler (headless) the list is empty.
  */
@@ -222,6 +230,13 @@ export function SetTopicMode(id: knowledge$0.ID, mode: knowledge$0.Mode): $Cance
 }
 
 /**
+ * SetTopicProps replaces a topic's aliases and tags, both as written.
+ */
+export function SetTopicProps(id: knowledge$0.ID, aliases: string[] | null, tags: string[] | null): $CancellablePromise<knowledge$0.TopicProps> {
+    return $Call.ByID(3303681992, id, aliases, tags);
+}
+
+/**
  * Settings passes the call to settings.Manager: the effective provider
  * configuration and the origin of each field. The API key is never part of the
  * result — only whether one is set.
@@ -239,6 +254,13 @@ export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $Can
 }
 
 /**
+ * TopicAliases returns every alias in the base with the topic it resolves to.
+ */
+export function TopicAliases(): $CancellablePromise<knowledge$0.TopicAlias[] | null> {
+    return $Call.ByID(1358738504);
+}
+
+/**
  * TopicGraph passes the call to knowledge.Service.
  */
 export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
@@ -250,6 +272,21 @@ export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(1755291030);
+}
+
+/**
+ * TopicProps returns what a topic carries beside its text: its aliases and its
+ * tags.
+ */
+export function TopicProps(id: knowledge$0.ID): $CancellablePromise<knowledge$0.TopicProps> {
+    return $Call.ByID(3187238454, id);
+}
+
+/**
+ * TopicTags returns every tag in the base with the topic that carries it.
+ */
+export function TopicTags(): $CancellablePromise<knowledge$0.TopicTag[] | null> {
+    return $Call.ByID(2165251913);
 }
 
 /**

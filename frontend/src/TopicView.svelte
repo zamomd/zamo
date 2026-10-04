@@ -3,6 +3,7 @@
 	import CommandBox from './lib/CommandBox.svelte'
 	import DocView from './lib/DocView.svelte'
 	import StatusLine from './lib/StatusLine.svelte'
+	import TopicProps from './lib/TopicProps.svelte'
 	import TreeNode from './lib/TreeNode.svelte'
 	import { ai } from './stores/ai.svelte'
 	import { base } from './stores/base.svelte'
@@ -21,6 +22,9 @@
 		</p>
 	{:else}
 		<Breadcrumbs />
+		{#if base.focusID === null}
+			<TopicProps id={tree.block.ID} />
+		{/if}
 		{#if base.topicMode === "doc"}
 			<div class="tree">
 				<DocView node={tree} />

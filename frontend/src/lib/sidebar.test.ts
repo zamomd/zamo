@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { fireEvent, render } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { Author, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { base } from "../stores/base.svelte"
 import { shell } from "../stores/shell.svelte"
 import Sidebar from "./Sidebar.svelte"
 import { SIDEBAR_MIN } from "./sidebarsize"
@@ -34,7 +36,31 @@ async function drag(handle: HTMLElement, from: number, to: number): Promise<void
 	await fireEvent.pointerUp(handle, { pointerId: 1, clientX: to })
 }
 
+function topic(id: string, content: string) {
+	return {
+		block: {
+			ID: id,
+			ParentID: "",
+			Position: 0,
+			Content: content,
+			CreatedBy: Author.AuthorOwner,
+			Mode: Mode.ModeOutline,
+			CreatedAt: "",
+			UpdatedAt: "",
+			Unreviewed: false,
+		},
+		children: [],
+	}
+}
+
+function topicTitles(container: HTMLElement): (string | undefined)[] {
+	return [...container.querySelectorAll(".row.topic")].map((r) => r.textContent?.replace(/^[▤☰]\s*/u, "").trim())
+}
+
 beforeEach(() => {
+	base.forest = []
+	base.tags = new Map()
+	base.tagFilter = null
 	localStorage.clear()
 	shell.sidebarWidth = null
 	shell.sidebarHidden = false
@@ -83,5 +109,39 @@ describe("Sidebar resizer", () => {
 		await fireEvent.keyDown(handle, { key: "ArrowRight" })
 		expect(aside.hidden).toBe(false)
 		expect(aside.style.width).toBe(`${SIDEBAR_MIN}px`)
+	})
+})
+
+describe("Sidebar tag filter", () => {
+	function seed(): void {
+		base.forest = [topic("go", "Go"), topic("zig", "Zig"), topic("sql", "SQLite")]
+		base.tags = new Map([
+			["go", ["Languages", "Draft"]],
+			["zig", ["languages"]],
+		])
+	}
+
+	it("lists each tag once and narrows the topics to the one chosen", async () => {
+		seed()
+		const { container } = render(Sidebar)
+		const chips = [...container.querySelectorAll(".tags .tag")] as HTMLElement[]
+		expect(chips.map((c) => c.textContent?.trim())).toEqual(["#Draft", "#Languages"])
+		expect(topicTitles(container)).toEqual(["Go", "Zig", "SQLite"])
+
+		await fireEvent.click(chips[1])
+		expect(topicTitles(container)).toEqual(["Go", "Zig"])
+		await fireEvent.click(chips[1])
+		expect(topicTitles(container)).toEqual(["Go", "Zig", "SQLite"])
+	})
+
+	it("shows every topic again once the filtered tag is gone from the base", async () => {
+		seed()
+		base.tagFilter = "draft"
+		const { container } = render(Sidebar)
+		expect(topicTitles(container)).toEqual(["Go"])
+
+		base.tags = new Map([["zig", ["languages"]]])
+		await Promise.resolve()
+		expect(topicTitles(container)).toEqual(["Go", "Zig", "SQLite"])
 	})
 })

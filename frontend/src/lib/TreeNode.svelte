@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { Author } from "../../bindings/github.com/zamomd/zamo/internal/knowledge";
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
@@ -34,7 +35,7 @@
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
 	const straddling = $derived(changes.straddling.has(node.block.ID));
 	const writtenOver = $derived(changes.writtenOverPages.has(node.block.ID));
-	const byAI = $derived(node.block.Meta?.author === "ai");
+	const byAI = $derived(node.block.CreatedBy === Author.AuthorAI);
 	const hasHidden = $derived(hasChildren && !expanded);
 
 	let rowEl: HTMLElement | undefined;
@@ -52,7 +53,7 @@
 		});
 	});
 
-	const resolveRef = $derived(makeResolver(base.forest));
+	const resolveRef = $derived(makeResolver(base.forest, base.aliases));
 
 	// pendingTopic holds the unresolved [[Topic]] name a click just asked to
 	// create. confirm()/alert()/prompt() are no-ops in the Wails webview (see
@@ -65,7 +66,7 @@
 	// unresolved block reference — nothing points at a gone or not-yet-synced
 	// block — does nothing.
 	function clickRef(el: HTMLElement): void {
-		const action = refClick(base.forest, el);
+		const action = refClick(base.forest, base.aliases, el);
 		if (action === null) {
 			return;
 		}
@@ -330,6 +331,11 @@
 			<button type="button" onclick={cancelCreateTopic}>cancel</button>
 		</div>
 	{/if}
+	{#if title && !hasChildren && !ghost}
+		<button type="button" class="first-block" disabled={base.busy} onclick={() => base.insertFirstChild(node.block.ID)}>
+			write here, or press Enter on the title
+		</button>
+	{/if}
 	{#if hasChildren && expanded}
 		<ul class="children">
 			{#each node.children as child (child.block.ID)}
@@ -340,6 +346,21 @@
 </li>
 
 <style>
+	/* The empty body of a page: unframed and faint, so it reads as a place
+	   to write rather than as a control. */
+	.first-block {
+		display: block;
+		border: none;
+		background: none;
+		padding: 0;
+		line-height: var(--row-height);
+		color: var(--text-faint);
+		cursor: text;
+	}
+	.first-block:hover:not(:disabled) {
+		color: var(--text-dim);
+		background: none;
+	}
 	/* The forest is a plain nested list. Indentation and the rails carry the
 	   hierarchy: each item draws a vertical segment for its own level and a
 	   horizontal tick into its row, so a run of siblings reads as the box-

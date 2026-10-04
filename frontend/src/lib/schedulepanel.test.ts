@@ -2,7 +2,7 @@
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
-import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Author, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { ai } from "../stores/ai.svelte"
 import SchedulePanel from "./SchedulePanel.svelte"
 
@@ -49,7 +49,7 @@ const block: Block = {
 	ParentID: "root",
 	Position: 1,
 	Content: "Go releases",
-	Meta: null,
+	CreatedBy: Author.AuthorOwner,
 	Mode: Mode.ModeOutline,
 	CreatedAt: "",
 	UpdatedAt: "",

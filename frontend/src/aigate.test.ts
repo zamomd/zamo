@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { Mode } from "../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Author, Mode } from "../bindings/github.com/zamomd/zamo/internal/knowledge"
 import type { View } from "../bindings/github.com/zamomd/zamo/internal/settings"
 import TreeNode from "./lib/TreeNode.svelte"
 import SettingsView from "./SettingsView.svelte"
@@ -46,7 +46,7 @@ const row = {
 		ParentID: "root",
 		Position: 1,
 		Content: "a claim",
-		Meta: null,
+		CreatedBy: Author.AuthorOwner,
 		Mode: Mode.ModeOutline,
 		CreatedAt: "",
 		UpdatedAt: "",

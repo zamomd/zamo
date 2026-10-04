@@ -91,7 +91,8 @@ ORDER BY r.root`
 // topicEdges reads the undirected topic-level edge set from the reference
 // index. A reference contributes an edge between the root of the block that
 // carries it and the root it points at: a block reference resolves through
-// its target's root, a topic reference resolves against title_key. MIN/MAX
+// its target's root, a topic reference resolves against every name a topic
+// answers to. MIN/MAX
 // collapse direction so each pair appears once, and the inequality drops
 // references that stay inside one topic — they say nothing about the map.
 func (r *Repo) topicEdges(ctx context.Context) ([]knowledge.TopicEdge, error) {
@@ -104,10 +105,10 @@ resolved(source_root, target_root) AS (
     JOIN roots tr ON tr.id = tb.id
     WHERE f.kind = 'block'
     UNION
-    SELECT sr.root, t.id
+    SELECT sr.root, n.topic_id
     FROM refs f
     JOIN roots sr ON sr.id = f.source_id
-    JOIN blocks t ON t.title_key = f.target_key AND t.parent_id IS NULL
+    JOIN ` + topicNames + ` n ON n.name_key = f.target_key
     WHERE f.kind = 'topic'
 )
 SELECT DISTINCT MIN(source_root, target_root), MAX(source_root, target_root)

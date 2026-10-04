@@ -88,7 +88,7 @@ func (s *Server) mcpServer() *mcpsdk.Server {
 }
 
 // blockView is the block shape exposed over MCP: the fields a reader needs,
-// without internal timestamps or metadata.
+// without internal timestamps or derived state.
 type blockView struct {
 	ID      string `json:"id"`
 	Parent  string `json:"parent,omitempty"`

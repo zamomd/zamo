@@ -103,6 +103,32 @@ func (s *Service) InsertBefore(ctx context.Context, id ID, content string) (Outl
 	return OutlineChange{GroupID: applied.GroupID, BlockID: applied.IDs["head"]}, nil
 }
 
+// InsertFirstChild is Enter on the block a view is rooted at: nothing can be
+// its sibling inside that view, so the new block opens its children instead.
+// Unlike the sibling gestures it is defined on a topic root, which is how an
+// empty topic gets its first block.
+func (s *Service) InsertFirstChild(ctx context.Context, id ID, content string) (OutlineChange, error) {
+	if _, err := s.blockByID(ctx, id); err != nil {
+		return OutlineChange{}, err
+	}
+	subtree, err := s.repo.GetSubtree(ctx, id)
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	add := Op{Kind: OpAdd, TempID: "child", Parent: string(id), Content: content}
+	for _, b := range subtree {
+		if b.ParentID == id {
+			add.Before = string(b.ID)
+			break
+		}
+	}
+	applied, err := s.ApplyOps(ctx, ownerMeta(), []Op{add})
+	if err != nil {
+		return OutlineChange{}, err
+	}
+	return OutlineChange{GroupID: applied.GroupID, BlockID: applied.IDs["child"]}, nil
+}
+
 // siblingsOf returns the ordered children of b's parent together with b's
 // index among them. The parent's subtree comes back in pre-order with each
 // parent's children already sorted by position (see the Repository contract),

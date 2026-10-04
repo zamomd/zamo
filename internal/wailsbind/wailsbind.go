@@ -140,6 +140,29 @@ func (a *App) Backlinks(ctx context.Context, id knowledge.ID) ([]knowledge.Backl
 	return a.svc.Backlinks(ctx, id)
 }
 
+// TopicProps returns what a topic carries beside its text: its aliases and its
+// tags.
+func (a *App) TopicProps(ctx context.Context, id knowledge.ID) (knowledge.TopicProps, error) {
+	return a.svc.TopicProps(ctx, id)
+}
+
+// SetTopicProps replaces a topic's aliases and tags, both as written.
+func (a *App) SetTopicProps(
+	ctx context.Context, id knowledge.ID, aliases, tags []string,
+) (knowledge.TopicProps, error) {
+	return a.svc.SetTopicProps(ctx, id, aliases, tags)
+}
+
+// TopicAliases returns every alias in the base with the topic it resolves to.
+func (a *App) TopicAliases(ctx context.Context) ([]knowledge.TopicAlias, error) {
+	return a.svc.TopicAliases(ctx)
+}
+
+// TopicTags returns every tag in the base with the topic that carries it.
+func (a *App) TopicTags(ctx context.Context) ([]knowledge.TopicTag, error) {
+	return a.svc.TopicTags(ctx)
+}
+
 // EditBlockContent passes the call to knowledge.Service. A manual edit by the
 // owner applies directly, without the review queue.
 func (a *App) EditBlockContent(ctx context.Context, id knowledge.ID, content string) error {
@@ -156,6 +179,12 @@ func (a *App) SplitBlock(ctx context.Context, id knowledge.ID, head, tail string
 // appears above and the block keeps its id and history.
 func (a *App) InsertBlockBefore(ctx context.Context, id knowledge.ID, content string) (knowledge.OutlineChange, error) {
 	return a.svc.InsertBefore(ctx, id, content)
+}
+
+// InsertFirstChild is Enter on the block the view is rooted at: an empty block
+// opens its children. It is how an empty topic gets its first block.
+func (a *App) InsertFirstChild(ctx context.Context, id knowledge.ID, content string) (knowledge.OutlineChange, error) {
+	return a.svc.InsertFirstChild(ctx, id, content)
 }
 
 // IndentBlock is Tab: the block becomes the last child of the sibling above.

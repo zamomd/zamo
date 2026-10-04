@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Author, type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import {
 	crumbTrail,
 	findNode,
@@ -19,7 +19,7 @@ function block(id: string, parent: string): Block {
 		Position: 0,
 		Content: id,
 		Mode: Mode.ModeOutline,
-		Meta: {},
+		CreatedBy: Author.AuthorOwner,
 		CreatedAt: "",
 		UpdatedAt: "",
 		Unreviewed: false,

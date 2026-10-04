@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,10 +11,18 @@ import (
 	"github.com/zamomd/zamo/internal/knowledge"
 )
 
+// createdBy derives Block.CreatedBy for the blocks row aliased as the name
+// spliced between its two halves: the author of the block's first revision.
+const (
+	createdByOpen  = `COALESCE((SELECT a.author FROM block_revisions a WHERE a.block_id = `
+	createdByClose = `.id ORDER BY a.seq LIMIT 1), '')`
+)
+
 // blockColumns is the block projection every read shares, in the order
-// scanBlock expects. The trailing EXISTS subquery derives Unreviewed: never
-// stored, always computed from whether the block has any pending revision.
-const blockColumns = `id, parent_id, position, content, mode, metadata, created_at, updated_at,
+// scanBlock expects. CreatedBy and Unreviewed are never stored: both are
+// computed from the block's revisions.
+const blockColumns = `id, parent_id, position, content, mode, ` + createdByOpen + `blocks` + createdByClose + `,
+	created_at, updated_at,
 	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = blocks.id AND r.reviewed = 0)`
 
 // GetTopics implements knowledge.Repository: the root topics plus their first
@@ -149,7 +156,8 @@ func (r *Repo) Search(ctx context.Context, query string) ([]knowledge.SearchHit,
 	}
 
 	const q = `
-SELECT b.id, b.parent_id, b.position, b.content, b.mode, b.metadata, b.created_at, b.updated_at,
+SELECT b.id, b.parent_id, b.position, b.content, b.mode, ` + createdByOpen + `b` + createdByClose + `,
+	b.created_at, b.updated_at,
 	EXISTS(SELECT 1 FROM block_revisions r WHERE r.block_id = b.id AND r.reviewed = 0),
 	snippet(blocks_fts, 0, '', '', '…', 24)
 FROM blocks_fts
@@ -169,15 +177,14 @@ LIMIT ?`
 		var (
 			b                knowledge.Block
 			parent           sql.NullString
-			meta             string
 			created, updated string
 			snippet          string
 		)
-		if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &b.Mode, &meta,
+		if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &b.Mode, &b.CreatedBy,
 			&created, &updated, &b.Unreviewed, &snippet); err != nil {
 			return nil, translate(err)
 		}
-		if err := decodeBlockFields(&b, parent, meta, created, updated); err != nil {
+		if err := decodeBlockFields(&b, parent, created, updated); err != nil {
 			return nil, translate(err)
 		}
 		hits = append(hits, knowledge.SearchHit{Block: b, Snippet: snippet})
@@ -220,35 +227,31 @@ func scanBlocks(rows *sql.Rows) ([]knowledge.Block, error) {
 }
 
 // scanBlock maps one row (blockColumns order) into a domain block: a NULL
-// parent_id becomes an empty ID (a topic root), metadata JSON is decoded, and
-// the TEXT timestamps are parsed via parseTime.
+// parent_id becomes an empty ID (a topic root) and the TEXT timestamps are
+// parsed via parseTime.
 func scanBlock(rows *sql.Rows) (knowledge.Block, error) {
 	var (
 		b                knowledge.Block
 		parent           sql.NullString
-		meta             string
 		created, updated string
 	)
-	if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &b.Mode, &meta,
+	if err := rows.Scan(&b.ID, &parent, &b.Position, &b.Content, &b.Mode, &b.CreatedBy,
 		&created, &updated, &b.Unreviewed); err != nil {
 		return knowledge.Block{}, err
 	}
-	if err := decodeBlockFields(&b, parent, meta, created, updated); err != nil {
+	if err := decodeBlockFields(&b, parent, created, updated); err != nil {
 		return knowledge.Block{}, err
 	}
 	return b, nil
 }
 
 // decodeBlockFields fills in the fields the blockColumns projection carries
-// beyond id/position/content — ParentID, Meta, CreatedAt, UpdatedAt — shared
+// beyond what scans directly — ParentID, CreatedAt, UpdatedAt — shared
 // by every reader that scans that projection, including ones (like
 // GetBacklinks) that cannot use blockColumns' literal SQL because it joins
 // blocks under an alias.
-func decodeBlockFields(b *knowledge.Block, parent sql.NullString, meta, created, updated string) error {
+func decodeBlockFields(b *knowledge.Block, parent sql.NullString, created, updated string) error {
 	b.ParentID = knowledge.ID(parent.String)
-	if err := json.Unmarshal([]byte(meta), &b.Meta); err != nil {
-		return fmt.Errorf("decode metadata for block %s: %w", b.ID, err)
-	}
 	var err error
 	if b.CreatedAt, err = parseTime(created); err != nil {
 		return fmt.Errorf("parse created_at for block %s: %w", b.ID, err)

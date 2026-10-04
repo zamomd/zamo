@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Author, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { base } from "../stores/base.svelte"
 import { schedules } from "../stores/schedules.svelte"
 import ScheduledTab from "./ScheduledTab.svelte"
@@ -39,7 +39,7 @@ beforeEach(() => {
 				ParentID: "",
 				Position: 0,
 				Content: "Networking",
-				Meta: null,
+				CreatedBy: Author.AuthorOwner,
 				Mode: Mode.ModeOutline,
 				CreatedAt: "",
 				UpdatedAt: "",
@@ -52,7 +52,7 @@ beforeEach(() => {
 						ParentID: "root",
 						Position: 0,
 						Content: "# Go releases\nlist",
-						Meta: null,
+						CreatedBy: Author.AuthorOwner,
 						Mode: Mode.ModeOutline,
 						CreatedAt: "",
 						UpdatedAt: "",

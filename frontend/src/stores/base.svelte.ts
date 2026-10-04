@@ -1,14 +1,16 @@
 import { SvelteMap, SvelteSet } from "svelte/reactivity"
-import type {
-	Backlink,
-	Block,
-	Mode,
-	OutlineChange,
-	Revision,
+import {
+	Author,
+	type Backlink,
+	type Block,
+	type Mode,
+	type OutlineChange,
+	type Revision,
 } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 import { callError, messageFor } from "../lib/callerror"
 import { lineCount, offsetAtLine } from "../lib/caret"
+import { type AliasIndex, aliasIndex } from "../lib/resolve"
 import {
 	buildTree,
 	findBlock,
@@ -25,6 +27,7 @@ import { changes } from "./changes.svelte"
 type Gesture =
 	| { kind: "split"; id: string; caret: number; end: number }
 	| { kind: "insertAbove"; id: string }
+	| { kind: "insertFirstChild"; id: string }
 	| { kind: "indent"; id: string }
 	| { kind: "outdent"; id: string }
 	| { kind: "mergeIntoPrevious"; id: string }
@@ -57,6 +60,11 @@ class BaseStore {
 	forest = $state<TreeNodeData[]>([])
 
 	selectedTopicID = $state<string | null>(null)
+	aliases = $state<AliasIndex>(new Map())
+	// tags holds each topic's tags as written, by topic id.
+	tags = $state<ReadonlyMap<string, string[]>>(new Map())
+	// tagFilter is the key of the tag the sidebar is narrowed to, if any.
+	tagFilter = $state<string | null>(null)
 
 	focusID = $state<string | null>(null)
 
@@ -125,7 +133,7 @@ class BaseStore {
 				Position: u.Head.Position,
 				Content: u.Head.Content,
 				Mode: u.Head.Mode,
-				Meta: {},
+				CreatedBy: Author.$zero,
 				CreatedAt: "",
 				UpdatedAt: "",
 				Unreviewed: true,
@@ -135,7 +143,18 @@ class BaseStore {
 	}
 
 	async reload(): Promise<void> {
-		const [topics] = await Promise.all([App.TopicMap(), changes.refresh()])
+		const [topics, aliases, tags] = await Promise.all([
+			App.TopicMap(),
+			App.TopicAliases(),
+			App.TopicTags(),
+			changes.refresh(),
+		])
+		this.aliases = aliasIndex(aliases ?? [])
+		const byTopic = new Map<string, string[]>()
+		for (const t of tags ?? []) {
+			byTopic.set(t.TopicID, [...(byTopic.get(t.TopicID) ?? []), t.Tag])
+		}
+		this.tags = byTopic
 		const roots = (topics ?? []).filter((b) => b.ParentID === "")
 		// One round trip per topic, all in flight at once: a sequential loop made
 		// reload time grow linearly with the number of topics.
@@ -563,7 +582,11 @@ class BaseStore {
 	}
 
 	async splitAtCaret(id: string, caret: number, end: number = caret): Promise<void> {
-		if (this.busy || this.isViewRoot(id)) {
+		if (this.isViewRoot(id)) {
+			await this.insertFirstChild(id)
+			return
+		}
+		if (this.busy) {
 			return
 		}
 		const topic = topicOf(this.forest, id)
@@ -677,6 +700,9 @@ class BaseStore {
 			case "insertAbove":
 				await this.insertAbove(gesture.id)
 				return
+			case "insertFirstChild":
+				await this.insertFirstChild(gesture.id)
+				return
 			case "indent":
 				await this.indent(gesture.id)
 				return
@@ -727,7 +753,11 @@ class BaseStore {
 	}
 
 	async insertAbove(id: string): Promise<void> {
-		if (this.busy || this.isViewRoot(id)) {
+		if (this.isViewRoot(id)) {
+			await this.insertFirstChild(id)
+			return
+		}
+		if (this.busy) {
 			return
 		}
 		const topic = topicOf(this.forest, id)
@@ -741,6 +771,38 @@ class BaseStore {
 			}
 		} catch (err: unknown) {
 			this.error = messageFor(err)
+		} finally {
+			this.busy = false
+		}
+	}
+
+	// insertFirstChild is Enter on the row the view is rooted at — a topic's
+	// title, or the block zoomed into. Nothing can be its sibling there, so the
+	// new block opens its children. Left empty, it is discarded like any other
+	// empty leaf when the edit commits.
+	async insertFirstChild(id: string): Promise<void> {
+		if (this.busy) {
+			return
+		}
+		const topic = topicOf(this.forest, id)
+		const caret = this.editingID === id ? this.editCaret : 0
+		this.busy = true
+		this.error = ""
+		try {
+			let change: OutlineChange
+			try {
+				if (this.editingID === id) {
+					await this.writeIfChanged(id)
+				}
+				change = await App.InsertFirstChild(id, "")
+			} catch (err: unknown) {
+				this.error = messageFor(err)
+				return
+			}
+			this.record(change, topic, { id, caret }, { kind: "insertFirstChild", id })
+			this.collapsed.delete(id)
+			await this.refresh(topic)
+			this.land({ id: change.BlockID, caret: 0 })
 		} finally {
 			this.busy = false
 		}
