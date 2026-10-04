@@ -36,6 +36,10 @@ export function callError(err: unknown): CallError {
 // be shown directly; anything unmapped, including "internal", gets a generic
 // line rather than leaking that text.
 const readable: Record<string, string> = {
+	schedule_empty_instruction: "Write what the AI should do to this block.",
+	schedule_invalid_spec: "That cron expression is not valid.",
+	schedule_busy: "A scheduled run is already in progress — wait for it to finish.",
+	schedule_missing: "This block has no schedule any more — reload and try again.",
 	not_found: "That block no longer exists — reload and try again.",
 	cycle: "That move would put a block inside its own subtree.",
 	invalid_ops: "That change is malformed and can't be applied.",

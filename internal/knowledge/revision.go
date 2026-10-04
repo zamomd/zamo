@@ -59,6 +59,13 @@ type WriteMeta struct {
 	// born reviewed has no whole-batch revert at all. AI batches always await
 	// review and ignore this.
 	AwaitsReview bool
+	// RefuseOverUnreviewedIn, when set, refuses the batch if anything under
+	// that block still awaits review — a pending edit or a pending deletion.
+	// Unattended writers set it: the owner has not seen what is there, and a
+	// second AI change on top would make the first impossible to judge alone.
+	// Checked inside the write transaction, so nothing reviewed or written
+	// while the model was thinking slips through.
+	RefuseOverUnreviewedIn ID
 }
 
 // BornReviewed reports whether the batch's revisions need no review decision.

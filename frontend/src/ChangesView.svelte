@@ -2,16 +2,27 @@
 	import type { ID, UnreviewedBlock } from "../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
 	import { App } from "../bindings/github.com/zamomd/zamo/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
+	import ScheduledTab from "./lib/ScheduledTab.svelte";
 	import StatusLine from "./lib/StatusLine.svelte";
 	import { findBlock } from "./lib/tree";
 	import { base } from "./stores/base.svelte";
 	import { changes } from "./stores/changes.svelte";
+	import { schedules } from "./stores/schedules.svelte";
 
 	let { onjump }: { onjump: (id: ID) => void } = $props();
+
+	let tab = $state<"review" | "scheduled">("review");
+	let onlyTopic = $state<ID | null>(null);
+
+	function reviewTopic(topicID: ID): void {
+		onlyTopic = topicID;
+		tab = "review";
+	}
 
 	const groups = $derived.by(() => {
 		const map = new Map<ID, UnreviewedBlock[]>();
 		for (const b of changes.blocks) {
+			if (onlyTopic !== null && b.TopicID !== onlyTopic) continue;
 			const list = map.get(b.TopicID) ?? [];
 			list.push(b);
 			map.set(b.TopicID, list);
@@ -64,9 +75,33 @@
 	<h1>Changes</h1>
 	<StatusLine status={base.status} error={base.error} />
 
-	{#if changes.count === 0}
+	<div class="tabs" role="tablist">
+		<button type="button" role="tab" aria-selected={tab === "review"} class:active={tab === "review"} onclick={() => (tab = "review")}>
+			awaiting review {changes.count}
+		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={tab === "scheduled"}
+			class:active={tab === "scheduled"}
+			class:attention={schedules.failing > 0}
+			onclick={() => (tab = "scheduled")}
+		>
+			scheduled {schedules.count}
+		</button>
+	</div>
+
+	{#if tab === "scheduled"}
+		<ScheduledTab {onjump} onreview={reviewTopic} />
+	{:else if changes.count === 0}
 		<p>(nothing awaiting review)</p>
 	{:else}
+		{#if onlyTopic !== null}
+			<p class="filter">
+				showing {topicLabel(onlyTopic)} only
+				<button type="button" class="link" onclick={() => (onlyTopic = null)}>show all</button>
+			</p>
+		{/if}
 		{#if batches.length > 0}
 			<section class="group">
 				<h2>Batches</h2>
@@ -224,5 +259,40 @@
 	}
 	.row button:hover:not(:disabled) {
 		opacity: 1;
+	}
+	.tabs {
+		display: flex;
+		gap: 0.25rem;
+		margin-bottom: 0.75rem;
+		border-bottom: 1px solid var(--hairline);
+	}
+	.tabs button {
+		border: none;
+		border-bottom: 2px solid transparent;
+		background: none;
+		padding: 0.2rem 0.6rem;
+		cursor: pointer;
+		color: var(--text-dim);
+		font: inherit;
+	}
+	.tabs button.active {
+		color: var(--text);
+		border-bottom-color: var(--accent);
+	}
+	.tabs button.attention {
+		color: var(--accent);
+	}
+	.filter {
+		margin: 0 0 0.5rem;
+		font-size: var(--size-small);
+		color: var(--text-dim);
+	}
+	.link {
+		border: none;
+		background: none;
+		padding: 0 0.3rem;
+		cursor: pointer;
+		color: var(--accent);
+		font: inherit;
 	}
 </style>

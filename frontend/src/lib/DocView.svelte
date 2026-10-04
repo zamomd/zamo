@@ -3,11 +3,13 @@
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
+	import { schedules } from "../stores/schedules.svelte";
 	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import { renderMarkdown } from "./markdown";
 	import { makeResolver, refClick } from "./resolve";
+	import SchedulePanel from "./SchedulePanel.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	let { node }: { node: TreeNodeData } = $props();
@@ -27,6 +29,8 @@
 	const byAI = $derived(block.Meta?.author === "ai");
 	const backlinksOpen = $derived(base.openBacklinks.has(block.ID));
 	const historyOpen = $derived(base.historyID === block.ID);
+	const scheduleOpen = $derived(base.openSchedules.has(block.ID));
+	const schedule = $derived(schedules.byKey.get(block.ID));
 	const unreviewed = $derived(block.Unreviewed);
 	const atomic = $derived(changes.atomic.has(block.ID));
 	// The page carries the tombstones of whatever a conversion removed as well
@@ -193,6 +197,21 @@
 	>
 		⌚︎
 	</button>
+	<button
+		type="button"
+		class="schedule-toggle"
+		class:open={scheduleOpen}
+		class:scheduled={schedule !== undefined}
+		class:off={schedule !== undefined && !schedule.enabled}
+		class:attention={schedule?.outcome === "failed" || schedule?.outcome === "skipped"}
+		title={schedule ? "this document runs on a schedule" : "refresh this document on a schedule"}
+		aria-expanded={scheduleOpen}
+		aria-label="toggle this document's schedule"
+		disabled={base.busy}
+		onclick={() => base.toggleSchedule(block.ID)}
+	>
+		◷
+	</button>
 
 	{#if unreviewed && atomic}
 		<!-- Part of a conversion or a rename: the backend refuses a decision on
@@ -296,6 +315,9 @@
 {/if}
 {#if historyOpen}
 	<HistoryPanel {block} />
+{/if}
+{#if scheduleOpen}
+	<SchedulePanel {block} />
 {/if}
 
 {#if pendingTopic}

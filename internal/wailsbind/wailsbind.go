@@ -35,6 +35,8 @@ type App struct {
 	settings *settings.Manager
 	jobs     *jobs.Registry
 	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless (see SetEmitter)
+
+	schedules ScheduleLister // set via SetScheduler; nil when headless
 }
 
 // New wraps the service, the settings manager and the job registry for
@@ -125,7 +127,7 @@ func (a *App) ExpandTopicByID(ctx context.Context, id knowledge.ID, hint string)
 func (a *App) EditWithAI(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Applied, error) {
 	ctx, done := a.generation(ctx)
 	defer done()
-	return a.svc.EditWithAI(ctx, scope, instruction)
+	return a.svc.EditWithAI(ctx, knowledge.AIEdit{Scope: scope, Instruction: instruction, Source: knowledge.SourceGUIEdit})
 }
 
 // GetSubtree passes the call to knowledge.Service.

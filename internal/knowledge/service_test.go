@@ -16,9 +16,10 @@ type fakeRepo struct {
 	graphErr   error
 	subtrees   map[ID][]Block // per-root subtree GetSubtree returns
 	subtreeErr error
-	gotSubtree ID // the root GetSubtree was asked for
 
-	applyNothing bool // ApplyOps reports that nothing changed
+	unreviewedUnder int  // what CountUnreviewedUnder returns
+	applyNothing    bool // ApplyOps reports that nothing changed
+	gotSubtree      ID   // the root GetSubtree was asked for
 
 	backlinks    []Backlink // what GetBacklinks returns
 	backlinksErr error
@@ -101,6 +102,10 @@ func (f *fakeRepo) GetBlocks(_ context.Context, ids []ID) (map[ID]Block, error) 
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) CountUnreviewedUnder(context.Context, ID) (int, error) {
+	return f.unreviewedUnder, nil
 }
 
 func (f *fakeRepo) ApplyOps(_ context.Context, groupID ID, meta WriteMeta, ops []Op) (bool, error) {
@@ -333,7 +338,7 @@ func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
 	svc := NewService(llm, repo, seqIDs())
 
-	got, err := svc.EditWithAI(t.Context(), "01A", "revise this block")
+	got, err := svc.EditWithAI(t.Context(), guiEdit("01A", "revise this block"))
 	require.NoError(t, err)
 	assert.Equal(t, ID("01A"), repo.gotSubtree)
 	assert.Equal(t, "revise this block", llm.gotInstruction)
@@ -351,7 +356,7 @@ func TestEditWithAISurfacesLLMError(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do a thing"))
 	require.ErrorIs(t, err, ErrLLMUnavailable)
 	assert.Zero(t, repo.applyCalls, "a batch was applied despite the LLM failure")
 }
@@ -362,7 +367,7 @@ func TestEditWithAIPropagatesReadError(t *testing.T) {
 	repo := &fakeRepo{subtreeErr: boom}
 	svc := NewService(llm, repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "01A", "do a thing")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do a thing"))
 	require.ErrorIs(t, err, boom)
 	assert.Empty(t, llm.gotInstruction, "the model was called despite a read failure")
 }
@@ -372,7 +377,7 @@ func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
 	svc := NewService(llm, repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "01A", "do nothing")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do nothing"))
 	require.ErrorIs(t, err, ErrEmptyOps)
 	assert.Zero(t, repo.applyCalls, "an empty edit was applied")
 }
@@ -418,7 +423,7 @@ func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "private"}}}}
 	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
 
-	_, err := svc.EditWithAI(t.Context(), "01A", "private instruction")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "private instruction"))
 	require.ErrorIs(t, err, ErrAIDisabled)
 	assert.Empty(t, repo.gotSubtree, "storage was called while AI was disabled")
 	assert.Empty(t, llm.gotInstruction, "the model was called while AI was disabled")
@@ -441,7 +446,7 @@ func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
 	llm := &fakeLLM{document: "# Doc\n\nNew body."}
 	svc := NewService(llm, repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "t", "rewrite the body")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("t", "rewrite the body"))
 	require.NoError(t, err)
 	assert.Zero(t, llm.editOpsCalls, "GenerateEdit was called on a document")
 	require.Len(t, repo.applyOps, 1)

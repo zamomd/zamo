@@ -196,7 +196,7 @@ func TestAIRewriteChangingTheFirstLineRewritesBacklinks(t *testing.T) {
 	llm := &fakeLLM{document: "# Contexts in Go\n\nBody."}
 	svc := NewService(llm, repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "t", "rename it")
+	_, err := svc.EditWithAI(t.Context(), guiEdit("t", "rename it"))
 	require.NoError(t, err)
 	assert.True(t, repo.applyMeta.Atomic, "a rename expansion did not make the batch atomic")
 	var rewrote bool

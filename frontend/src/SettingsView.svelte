@@ -528,7 +528,7 @@
 		{#if restoreConfirming}
 			<p class="confirm">
 				Restoring replaces this base with the one in the backup. The base you have now is kept
-				beside it, and nothing changes until you restart Zamo.
+				beside it, and nothing changes until you quit Zamo from its tray menu and open it again.
 				<button type="button" onclick={chooseRestore} disabled={baseBusy}>Choose a backup…</button>
 				<button type="button" onclick={() => (restoreConfirming = false)} disabled={baseBusy}>
 					Cancel

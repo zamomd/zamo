@@ -85,6 +85,29 @@ CREATE TABLE revision_groups (
     created_at TEXT NOT NULL
 );
 
+-- Schedules of every module, owned by internal/scheduler. Times are unix
+-- seconds so that due and lease comparisons are plain integer ones; payload
+-- belongs to the owning module and is never read here.
+CREATE TABLE schedules (
+    id           TEXT PRIMARY KEY,
+    module       TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    spec         TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    payload      TEXT NOT NULL DEFAULT '{}',
+    next_run     INTEGER,
+    last_run     INTEGER,
+    last_outcome TEXT NOT NULL DEFAULT '',
+    last_detail  TEXT NOT NULL DEFAULT '',
+    claimed_at   INTEGER,
+    claimed_by   TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    UNIQUE (module, key)
+);
+
+CREATE INDEX idx_schedules_due ON schedules(enabled, next_run);
+
 CREATE VIRTUAL TABLE blocks_fts USING fts5(
     content,
     content='blocks',
@@ -149,6 +172,7 @@ var schemaFeatures = []struct {
 	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
 	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
 	{"blocks.mode", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'mode')`},
+	{"schedules", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules')`},
 }
 
 // checkCurrent verifies that a database already at the current schema version

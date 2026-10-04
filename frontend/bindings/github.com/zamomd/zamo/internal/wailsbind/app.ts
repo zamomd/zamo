@@ -18,6 +18,10 @@ import * as knowledge$0 from "../knowledge/models.js";
 // @ts-ignore: Unused imports
 import * as settings$0 from "../settings/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * AcceptBlock passes the call to knowledge.Service.
  */
@@ -146,6 +150,14 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0
  */
 export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1463859878, id, content);
+}
+
+/**
+ * ListSchedules returns every module's scheduled work, for the Changes
+ * screen's scheduled tab. Without a scheduler (headless) the list is empty.
+ */
+export function ListSchedules(): $CancellablePromise<$models.ScheduleEntry[] | null> {
+    return $Call.ByID(1298538653);
 }
 
 /**

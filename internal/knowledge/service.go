@@ -184,26 +184,57 @@ func graftOntoTopic(ops []Op, id ID) []Op {
 	return out
 }
 
-// EditWithAI turns a user's text command into a change of the scope and applies
-// it directly, awaiting review. A document is rewritten whole; an outline gets
+// AIEdit is one AI edit command: an instruction to carry out over a scope.
+type AIEdit struct {
+	Scope       ID
+	Instruction string
+	// Source is recorded on the batch, so the Changes screen can tell a
+	// scheduled refresh from a command the owner typed.
+	Source Source
+	// Unattended marks a command nobody is watching. It refuses to land over
+	// content that still awaits review: the owner has not judged what is
+	// there, and a second change on top would bury the first.
+	Unattended bool
+}
+
+// EditWithAI turns a text command into a change of the scope and applies it
+// directly, awaiting review. A document is rewritten whole; an outline gets
 // structure edits.
-func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
+//
+// An unattended edit is checked twice against pending review: here, before
+// the model is called, because a refused call is a wasted one; and again
+// inside the write, because the model thinks long enough for the owner to
+// review or write something meanwhile.
+func (s *Service) EditWithAI(ctx context.Context, e AIEdit) (Applied, error) {
 	if err := s.requireAI(); err != nil {
 		return Applied{}, err
 	}
-	blocks, err := s.repo.GetSubtree(ctx, scope)
-	if err != nil {
-		return Applied{}, err
+	if e.Source == "" {
+		return Applied{}, fmt.Errorf("edit %s with AI: no source: %w", e.Scope, ErrInvalidOps)
 	}
-	meta := WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}
-	if blocks[0].Mode == ModeDoc {
-		text, err := s.llm.GenerateDocumentEdit(ctx, blocks[0], instruction)
+	meta := WriteMeta{Author: AuthorAI, Source: e.Source, Title: e.Instruction}
+	if e.Unattended {
+		n, err := s.repo.CountUnreviewedUnder(ctx, e.Scope)
 		if err != nil {
 			return Applied{}, err
 		}
-		return s.ApplyOps(ctx, meta, []Op{{Kind: OpEdit, BlockID: scope, Content: text}})
+		if n > 0 {
+			return Applied{}, &UnreviewedInScopeError{Scope: e.Scope, Count: n}
+		}
+		meta.RefuseOverUnreviewedIn = e.Scope
 	}
-	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
+	blocks, err := s.repo.GetSubtree(ctx, e.Scope)
+	if err != nil {
+		return Applied{}, err
+	}
+	if blocks[0].Mode == ModeDoc {
+		text, err := s.llm.GenerateDocumentEdit(ctx, blocks[0], e.Instruction)
+		if err != nil {
+			return Applied{}, err
+		}
+		return s.ApplyOps(ctx, meta, []Op{{Kind: OpEdit, BlockID: e.Scope, Content: text}})
+	}
+	ops, err := s.llm.GenerateEdit(ctx, blocks, e.Instruction)
 	if err != nil {
 		return Applied{}, err
 	}
@@ -414,10 +445,6 @@ func referencesTopic(content, key string) bool {
 // batch — never one per op, which would rewrite the backlinks to a name only an
 // intermediate op held. A root taken back to the name it started with changes
 // nothing and is no rename at all.
-//
-// A name a reference cannot carry — one holding a bracket — keys as empty, so
-// taking a topic to such a name is the same transition as unnaming it: there is
-// nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var changed []ID
 	seen := make(map[ID]bool)

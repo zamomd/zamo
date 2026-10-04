@@ -112,7 +112,7 @@ describe("backing up and restoring the base", () => {
 
 		await fireEvent.click(restoreButton(container) as Element);
 
-		expect(container.textContent).toContain("nothing changes until you restart");
+		expect(container.textContent).toContain("nothing changes until you quit Zamo");
 		expect(chooseButton(container)).toBeDefined();
 	});
 

@@ -86,6 +86,8 @@ class BaseStore {
 	historyID = $state<string | null>(null);
 	revisions = $state<Revision[]>([]);
 
+	openSchedules = new SvelteSet<string>();
+
 	private pendingReveal: string | null = null;
 
 	private historySeq = 0;
@@ -967,6 +969,14 @@ class BaseStore {
 
 	rejectPage(id: string): Promise<void> {
 		return this.review(() => App.RejectPage(id), "rejected page");
+	}
+
+	toggleSchedule(id: string): void {
+		if (this.openSchedules.has(id)) {
+			this.openSchedules.delete(id);
+		} else {
+			this.openSchedules.add(id);
+		}
 	}
 
 	async toggleBacklinks(id: string): Promise<void> {
