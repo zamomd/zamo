@@ -1,82 +1,81 @@
 <script lang="ts">
-	import type { ID, UnreviewedBlock } from "../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
-	import { App } from "../bindings/github.com/zamomd/zamo/internal/wailsbind";
-	import { messageFor } from "./lib/callerror";
-	import ScheduledTab from "./lib/ScheduledTab.svelte";
-	import StatusLine from "./lib/StatusLine.svelte";
-	import { findBlock } from "./lib/tree";
-	import { base } from "./stores/base.svelte";
-	import { changes } from "./stores/changes.svelte";
-	import { schedules } from "./stores/schedules.svelte";
+	import type { ID, UnreviewedBlock } from '../bindings/github.com/zamomd/zamo/internal/knowledge'
+	import { App } from '../bindings/github.com/zamomd/zamo/internal/wailsbind'
+	import { messageFor } from './lib/callerror'
+	import ScheduledTab from './lib/ScheduledTab.svelte'
+	import StatusLine from './lib/StatusLine.svelte'
+	import { findBlock } from './lib/tree'
+	import { base } from './stores/base.svelte'
+	import { changes } from './stores/changes.svelte'
+	import { schedules } from './stores/schedules.svelte'
 
-	let { onjump }: { onjump: (id: ID) => void } = $props();
+	let { onjump }: { onjump: (id: ID) => void } = $props()
 
-	let tab = $state<"review" | "scheduled">("review");
-	let onlyTopic = $state<ID | null>(null);
+	let tab = $state<'review' | 'scheduled'>('review')
+	let onlyTopic = $state<ID | null>(null)
 
 	function reviewTopic(topicID: ID): void {
-		onlyTopic = topicID;
-		tab = "review";
+		onlyTopic = topicID
+		tab = 'review'
 	}
 
 	const groups = $derived.by(() => {
-		const map = new Map<ID, UnreviewedBlock[]>();
+		const map = new Map<ID, UnreviewedBlock[]>()
 		for (const b of changes.blocks) {
-			if (onlyTopic !== null && b.TopicID !== onlyTopic) continue;
-			const list = map.get(b.TopicID) ?? [];
-			list.push(b);
-			map.set(b.TopicID, list);
+			if (onlyTopic !== null && b.TopicID !== onlyTopic) continue
+			const list = map.get(b.TopicID) ?? []
+			list.push(b)
+			map.set(b.TopicID, list)
 		}
-		return [...map.entries()];
-	});
+		return [...map.entries()]
+	})
 
 	const batches = $derived.by(() => {
-		const map = new Map<ID, { title: string; count: number; atomic: boolean }>();
+		const map = new Map<ID, { title: string; count: number; atomic: boolean }>()
 		for (const b of changes.blocks) {
-			const groupID = b.GroupID;
-			if (!groupID) continue;
-			const entry = map.get(groupID);
+			const groupID = b.GroupID
+			if (!groupID) continue
+			const entry = map.get(groupID)
 			if (entry) {
-				entry.count++;
+				entry.count++
 			} else {
-				map.set(groupID, { title: b.GroupTitle, count: 1, atomic: b.Atomic });
+				map.set(groupID, { title: b.GroupTitle, count: 1, atomic: b.Atomic })
 			}
 		}
-		return [...map.entries()];
-	});
+		return [...map.entries()]
+	})
 
 	// Accepting and rejecting a whole batch share everything but the call: both
 	// touch every block in it, so the screen and the tree are re-read after.
 	// Rejecting is UndoGroup — dropping an unreviewed batch's revisions is
 	// exactly what rolling the group back does.
-	async function reviewBatch(op: () => Promise<void>, done: string): Promise<void> {
-		if (base.busy) return;
-		base.busy = true;
-		base.error = "";
+	async function reviewBatch(op: () => Promise<void>): Promise<void> {
+		if (base.busy) return
+		base.busy = true
+		base.error = ''
 		try {
-			await op();
-			await base.reload();
-			await changes.refresh();
-			base.status = done;
+			await op()
+			await base.reload()
+			await changes.refresh()
 		} catch (err: unknown) {
-			base.error = messageFor(err);
-			base.status = "";
+			base.error = messageFor(err)
 		} finally {
-			base.busy = false;
+			base.busy = false
 		}
 	}
 
 	function topicLabel(topicID: ID): string {
-		return findBlock(base.forest, topicID)?.Content ?? topicID;
+		return findBlock(base.forest, topicID)?.Content ?? topicID
 	}
 </script>
 
 <section>
 	<h1>Changes</h1>
-	<StatusLine status={base.status} error={base.error} />
+	<StatusLine error={base.error} />
 
 	<div class="tabs" role="tablist">
-		<button type="button" role="tab" aria-selected={tab === "review"} class:active={tab === "review"} onclick={() => (tab = "review")}>
+		<button type="button" role="tab" aria-selected={tab === "review"} class:active={tab === "review"}
+				onclick={() => (tab = "review")}>
 			awaiting review {changes.count}
 		</button>
 		<button
@@ -118,7 +117,7 @@
 								class="accept"
 								title="accept every change in this batch"
 								disabled={base.busy}
-								onclick={() => reviewBatch(() => App.AcceptGroup(groupID), "accepted batch")}
+								onclick={() => reviewBatch(() => App.AcceptGroup(groupID))}
 							>
 								Accept batch
 							</button>
@@ -126,8 +125,9 @@
 								<!-- A later change was saved over this batch, so undoing it
 								     would have to discard that change; the backend refuses
 								     (ErrGroupWrittenOver) and the button could only fail. -->
-								<span class="meta" title="a later edit was saved on top of this batch, so it can only be accepted now"
-									>accept only</span
+								<span class="meta"
+									  title="a later edit was saved on top of this batch, so it can only be accepted now"
+								>accept only</span
 								>
 							{:else}
 								<button
@@ -135,7 +135,7 @@
 									class="reject"
 									title="reject every change in this batch"
 									disabled={base.busy}
-									onclick={() => reviewBatch(() => App.UndoGroup(groupID), "rejected batch")}
+									onclick={() => reviewBatch(() => App.UndoGroup(groupID))}
 								>
 									Reject batch
 								</button>
@@ -159,11 +159,12 @@
 										{b.GroupTitle}
 										{#if b.Head.Deleted}<mark class="deleted-tag">deleted</mark>{/if}
 									</span>
-								<button
-									type="button"
-									title="jump to this block in the base"
-									disabled={base.busy}
-									onclick={() => onjump(b.Head.BlockID)}>show</button>
+									<button
+										type="button"
+										title="jump to this block in the base"
+										disabled={base.busy}
+										onclick={() => onjump(b.Head.BlockID)}>show
+									</button>
 									{#if b.Atomic}
 										<!-- Deciding on this block alone is refused below, so the
 										     buttons that would do it are not offered. -->
@@ -204,19 +205,23 @@
 		line-height: calc(var(--row-height) * 1.5);
 		margin: 0 0 0.75rem;
 	}
+
 	.group {
 		margin-bottom: 1.25rem;
 	}
+
 	.group h2 {
 		font-size: var(--size-heading);
 		margin: 0 0 0.35rem;
 		opacity: 0.85;
 	}
+
 	ul {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 	}
+
 	.row {
 		display: flex;
 		align-items: center;
@@ -224,9 +229,11 @@
 		padding: 0.25rem 0;
 		border-bottom: 1px solid var(--hairline);
 	}
+
 	.row.deleted {
 		opacity: 0.6;
 	}
+
 	.snippet {
 		flex: 1;
 		min-width: 0;
@@ -234,11 +241,13 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+
 	.meta {
 		flex: none;
 		font-size: var(--size-small);
 		opacity: 0.7;
 	}
+
 	.atomic-tag,
 	.deleted-tag {
 		border: 1px solid var(--hairline);
@@ -248,6 +257,7 @@
 		margin-left: 0.4em;
 		border-radius: var(--radius);
 	}
+
 	.row button {
 		flex: none;
 		border: none;
@@ -257,15 +267,18 @@
 		color: inherit;
 		opacity: 0.75;
 	}
+
 	.row button:hover:not(:disabled) {
 		opacity: 1;
 	}
+
 	.tabs {
 		display: flex;
 		gap: 0.25rem;
 		margin-bottom: 0.75rem;
 		border-bottom: 1px solid var(--hairline);
 	}
+
 	.tabs button {
 		border: none;
 		border-bottom: 2px solid transparent;
@@ -275,18 +288,22 @@
 		color: var(--text-dim);
 		font: inherit;
 	}
+
 	.tabs button.active {
 		color: var(--text);
 		border-bottom-color: var(--accent);
 	}
+
 	.tabs button.attention {
 		color: var(--accent);
 	}
+
 	.filter {
 		margin: 0 0 0.5rem;
 		font-size: var(--size-small);
 		color: var(--text-dim);
 	}
+
 	.link {
 		border: none;
 		background: none;

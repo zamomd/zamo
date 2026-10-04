@@ -1,4 +1,3 @@
-import { Events } from "@wailsio/runtime"
 import { SvelteMap, SvelteSet } from "svelte/reactivity"
 import type {
 	Backlink,
@@ -6,7 +5,7 @@ import type {
 	Mode,
 	OutlineChange,
 	Revision,
-} from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+} from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 import { callError, messageFor } from "../lib/callerror"
 import { lineCount, offsetAtLine } from "../lib/caret"
@@ -22,14 +21,6 @@ import {
 	topicOf,
 } from "../lib/tree"
 import { changes } from "./changes.svelte"
-
-const generationProgressEvent = "generation:progress"
-
-const generationPhaseLabels: Record<string, string> = {
-	requesting: "sending the request…",
-	awaiting: "the model is working…",
-	parsing: "applying the response…",
-}
 
 type Gesture =
 	| { kind: "split"; id: string; caret: number; end: number }
@@ -53,7 +44,11 @@ type Command = {
 class BaseStore {
 	command = $state("")
 	scopeID = $state<string | null>(null)
-	status = $state("")
+	// cancelling is true from the cancel gesture until the generation settles.
+	cancelling = $state(false)
+	// unchanged marks that the last targeted AI edit came back with nothing to
+	// apply; without it such a request would end with no visible outcome.
+	unchanged = $state(false)
 	error = $state("")
 	busy = $state(false)
 	// generating is the subset of busy spent waiting on the model: the only
@@ -110,14 +105,6 @@ class BaseStore {
 	// reads as an outline, which is what an empty screen renders as anyway.
 	get topicMode(): "outline" | "doc" {
 		return this.viewRoot?.block.Mode === "doc" ? "doc" : "outline"
-	}
-
-	constructor() {
-		Events.On(generationProgressEvent, (e) => {
-			if (!this.busy) return
-			const data = e.data as { phase?: string } | undefined
-			this.status = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…"
-		})
 	}
 
 	activate(): void {
@@ -360,6 +347,7 @@ class BaseStore {
 			return
 		}
 		this.scopeID = this.scopeID === block.ID ? null : block.ID
+		this.unchanged = false
 		this.busy = false
 	}
 
@@ -368,15 +356,13 @@ class BaseStore {
 	}
 
 	// generationFailed reports a failed generation. A cancellation is the
-	// user's own doing, so it lands in the status line, not as an error.
+	// user's own doing, so it is not an error.
 	private generationFailed(err: unknown): void {
 		if (callError(err).code === "cancelled") {
-			this.status = "cancelled"
 			this.error = ""
 			return
 		}
 		this.error = messageFor(err)
-		this.status = ""
 	}
 
 	// cancelAI stops the generation in flight; the awaiting call then fails
@@ -385,7 +371,7 @@ class BaseStore {
 		if (!this.generating) {
 			return
 		}
-		this.status = "cancelling…"
+		this.cancelling = true
 		try {
 			await App.CancelGeneration()
 		} catch (err: unknown) {
@@ -404,17 +390,17 @@ class BaseStore {
 			return
 		}
 		this.error = ""
+		this.unchanged = false
 		this.generating = true
 		try {
 			const scope = this.scopeID
 			if (scope === null) {
 				await this.expandNewTopic(text)
 			} else {
-				this.status = "asking the AI to restructure…"
 				const applied = await App.EditWithAI(scope, text)
 				await this.reload()
 				// An empty group means the model answered with what was already there.
-				this.status = applied.GroupID === "" ? "the AI found nothing to change" : "changes applied, awaiting review"
+				this.unchanged = applied.GroupID === ""
 			}
 			this.command = ""
 			this.clearScope()
@@ -422,6 +408,7 @@ class BaseStore {
 			this.generationFailed(err)
 		} finally {
 			this.generating = false
+			this.cancelling = false
 			this.busy = false
 		}
 	}
@@ -449,10 +436,8 @@ class BaseStore {
 				this.selectedTopicID = id
 				this.focusID = null
 			}
-			this.status = `created "${name}"`
 		} catch (err: unknown) {
 			this.error = messageFor(err)
-			this.status = ""
 		} finally {
 			this.busy = false
 		}
@@ -474,16 +459,16 @@ class BaseStore {
 			return
 		}
 		this.error = ""
+		this.unchanged = false
 		this.generating = true
 		try {
-			this.status = "asking the AI to write this…"
 			await App.ExpandTopicByID(id, "")
 			await this.reload()
-			this.status = "changes applied, awaiting review"
 		} catch (err: unknown) {
 			this.generationFailed(err)
 		} finally {
 			this.generating = false
+			this.cancelling = false
 			this.busy = false
 		}
 	}
@@ -507,17 +492,14 @@ class BaseStore {
 		try {
 			await App.SetTopicMode(id, mode as Mode)
 			await this.reload()
-			this.status = mode === "doc" ? "converted to a document, awaiting review" : "converted to blocks, awaiting review"
 		} catch (err: unknown) {
 			this.error = messageFor(err)
-			this.status = ""
 		} finally {
 			this.busy = false
 		}
 	}
 
 	private async expandNewTopic(name: string): Promise<void> {
-		this.status = `expanding "${name}"…`
 		await App.ExpandTopic(name, "")
 		const before = new Set(this.forest.map((t) => t.block.ID))
 		await this.reload()
@@ -526,7 +508,6 @@ class BaseStore {
 			this.selectedTopicID = fresh.block.ID
 			this.focusID = null
 		}
-		this.status = "changes applied, awaiting review"
 	}
 
 	async startEdit(block: Block, caret: number): Promise<void> {
@@ -921,7 +902,6 @@ class BaseStore {
 			}
 		} catch (err: unknown) {
 			this.error = messageFor(err)
-			this.status = ""
 			return false
 		}
 		this.clearEdit()
@@ -931,8 +911,8 @@ class BaseStore {
 
 	// review runs one review gesture: refuse while busy, commit the open edit,
 	// apply, then re-read the forest because a decision can add or remove rows
-	// anywhere. The four below differ only in the call and what they report.
-	private async review(op: () => Promise<void>, done: string): Promise<void> {
+	// anywhere. The four below differ only in the call.
+	private async review(op: () => Promise<void>): Promise<void> {
 		if (this.busy) {
 			return
 		}
@@ -945,29 +925,27 @@ class BaseStore {
 		try {
 			await op()
 			await this.reload()
-			this.status = done
 		} catch (err: unknown) {
 			this.error = messageFor(err)
-			this.status = ""
 		} finally {
 			this.busy = false
 		}
 	}
 
 	accept(id: string): Promise<void> {
-		return this.review(() => App.AcceptBlock(id), "accepted")
+		return this.review(() => App.AcceptBlock(id))
 	}
 
 	reject(id: string): Promise<void> {
-		return this.review(() => App.RejectBlock(id), "rejected")
+		return this.review(() => App.RejectBlock(id))
 	}
 
 	acceptPage(id: string): Promise<void> {
-		return this.review(() => App.AcceptPage(id), "accepted page")
+		return this.review(() => App.AcceptPage(id))
 	}
 
 	rejectPage(id: string): Promise<void> {
-		return this.review(() => App.RejectPage(id), "rejected page")
+		return this.review(() => App.RejectPage(id))
 	}
 
 	toggleSchedule(id: string): void {
@@ -1052,10 +1030,8 @@ class BaseStore {
 			}
 			await this.reload()
 			await changes.refresh()
-			this.status = "deleted revision"
 		} catch (err: unknown) {
 			this.error = messageFor(err)
-			this.status = ""
 		} finally {
 			this.busy = false
 		}

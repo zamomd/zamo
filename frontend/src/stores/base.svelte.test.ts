@@ -469,7 +469,6 @@ describe("cancelling a generation", () => {
 		base.scopeID = "go"
 		base.busy = false
 		base.editingID = null
-		base.status = ""
 		base.error = ""
 	})
 
@@ -491,19 +490,18 @@ describe("cancelling a generation", () => {
 
 		await base.cancelAI()
 		expect(App.CancelGeneration).toHaveBeenCalled()
-		expect(base.status).toBe("cancelling…")
+		expect(base.cancelling).toBe(true)
 
 		release()
 		await asking
-		expect(base.status).toBe("cancelled")
+		expect(base.cancelling).toBe(false)
 	})
 
-	it("settles a cancelled generation as a status, not an error", async () => {
+	it("settles a cancelled generation without an error", async () => {
 		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }))
 
 		await base.askAI()
 
-		expect(base.status).toBe("cancelled")
 		expect(base.error).toBe("")
 		expect(base.generating).toBe(false)
 		expect(base.busy).toBe(false)
@@ -514,7 +512,6 @@ describe("cancelling a generation", () => {
 
 		await base.askAI()
 
-		expect(base.status).toBe("")
 		expect(base.error).not.toBe("")
 	})
 })
@@ -580,6 +577,25 @@ describe("askAI's selection", () => {
 
 		expect(App.EditWithAI).toHaveBeenCalledWith("go", "restructure this")
 		expect(findNode(base.forest, "fresh")?.block.ID).toBe("fresh")
+	})
+
+	it("marks a scoped edit that changed nothing, until the next request", async () => {
+		base.forest = [node("go", "")]
+		base.selectedTopicID = "go"
+		base.scopeID = "go"
+		base.command = "restructure this"
+		reloadFixture.topics = [block("go", "")]
+		reloadFixture.subtrees = { go: [block("go", "")] }
+		vi.mocked(App.EditWithAI).mockResolvedValueOnce(change("") as never)
+
+		await base.askAI()
+		expect(base.unchanged).toBe(true)
+
+		base.scopeID = "go"
+		base.command = "again"
+		vi.mocked(App.EditWithAI).mockResolvedValueOnce(change("g1") as never)
+		await base.askAI()
+		expect(base.unchanged).toBe(false)
 	})
 })
 
@@ -837,7 +853,6 @@ describe("asking the AI to write an existing topic", () => {
 		expect(App.ExpandTopicByID).toHaveBeenCalledWith("go", "")
 		expect(App.ExpandTopic).not.toHaveBeenCalled()
 		expect(findNode(base.forest, "written")?.block.ID).toBe("written")
-		expect(base.status).toBe("changes applied, awaiting review")
 	})
 
 	it("does nothing while another write is in flight", async () => {
