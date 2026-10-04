@@ -1,4 +1,4 @@
-import type { UnreviewedBlock } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import type { UnreviewedBlock } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 
 // The unreviewed-change set shared by the whole window: the sidebar footer,

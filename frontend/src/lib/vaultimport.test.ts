@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { Plan, Warning } from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models"
+import type { Plan, Warning } from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport"
 import { canApply, describeKind, groupByKind, summaryLine } from "./vaultimport"
 
 const plan = (over: Partial<Plan> = {}): Plan => ({

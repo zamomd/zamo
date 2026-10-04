@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { render } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { Mode } from "../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
-import type { View } from "../bindings/github.com/zamomd/zamo/internal/settings/models.js"
+import { Mode } from "../bindings/github.com/zamomd/zamo/internal/knowledge"
+import type { View } from "../bindings/github.com/zamomd/zamo/internal/settings"
 import TreeNode from "./lib/TreeNode.svelte"
 import SettingsView from "./SettingsView.svelte"
 import { ai } from "./stores/ai.svelte"

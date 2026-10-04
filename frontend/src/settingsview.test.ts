@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { In, View } from "../bindings/github.com/zamomd/zamo/internal/settings/models.js"
+import type { In, View } from "../bindings/github.com/zamomd/zamo/internal/settings"
 import SettingsView from "./SettingsView.svelte"
 
 vi.mock("@wailsio/runtime", () => ({

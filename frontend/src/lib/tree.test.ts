@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import { type Block, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import {
 	crumbTrail,
 	findNode,

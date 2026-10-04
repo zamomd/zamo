@@ -1,6 +1,6 @@
 // The Import card's own logic: what a plan lets the user do and how its
 // findings are shown. Pure functions, so the card stays a thin view.
-import type { Conflict, Plan, Warning } from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport/models"
+import type { Conflict, Plan, Warning } from "../../bindings/github.com/zamomd/zamo/internal/modules/vaultimport"
 
 export interface Group<T> {
 	kind: string

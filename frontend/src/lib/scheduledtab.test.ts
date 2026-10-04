@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { base } from "../stores/base.svelte"
 import { schedules } from "../stores/schedules.svelte"
 import ScheduledTab from "./ScheduledTab.svelte"

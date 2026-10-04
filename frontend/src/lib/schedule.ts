@@ -1,4 +1,4 @@
-import type { View } from "../../bindings/github.com/zamomd/zamo/internal/modules/smartcron/models.js"
+import type { View } from "../../bindings/github.com/zamomd/zamo/internal/modules/smartcron"
 import { callError } from "./callerror"
 
 // The panel's logic lives here, out of the component, so it is testable

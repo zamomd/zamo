@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
-import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+import { Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { ai } from "../stores/ai.svelte"
 import SchedulePanel from "./SchedulePanel.svelte"
 

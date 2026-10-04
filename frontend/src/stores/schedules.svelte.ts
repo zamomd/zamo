@@ -1,7 +1,7 @@
 import { Events } from "@wailsio/runtime"
 import { SvelteSet } from "svelte/reactivity"
+import type { ScheduleEntry } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
-import type { ScheduleEntry } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind/models.js"
 import { base } from "./base.svelte"
 import { changes } from "./changes.svelte"
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { View } from "../../bindings/github.com/zamomd/zamo/internal/modules/smartcron/models.js"
+import type { View } from "../../bindings/github.com/zamomd/zamo/internal/modules/smartcron"
 import { attemptLabel, formatWhen, formProblem, invalidSpecMessage, runControl } from "./schedule"
 
 const now = new Date("2026-09-21T09:00:00")

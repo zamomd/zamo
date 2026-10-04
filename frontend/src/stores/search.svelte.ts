@@ -1,4 +1,4 @@
-import type { SearchHit } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import type { SearchHit } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 import { messageFor } from "../lib/callerror"
 
