@@ -1,15 +1,15 @@
-import { Events } from "@wailsio/runtime";
-import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import { Events } from "@wailsio/runtime"
+import { SvelteMap, SvelteSet } from "svelte/reactivity"
 import type {
 	Backlink,
 	Block,
 	Mode,
 	OutlineChange,
 	Revision,
-} from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
-import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind";
-import { callError, messageFor } from "../lib/callerror";
-import { lineCount, offsetAtLine } from "../lib/caret";
+} from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js"
+import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
+import { callError, messageFor } from "../lib/callerror"
+import { lineCount, offsetAtLine } from "../lib/caret"
 import {
 	buildTree,
 	findBlock,
@@ -20,16 +20,16 @@ import {
 	prevVisible,
 	type TreeNodeData,
 	topicOf,
-} from "../lib/tree";
-import { changes } from "./changes.svelte";
+} from "../lib/tree"
+import { changes } from "./changes.svelte"
 
-const generationProgressEvent = "generation:progress";
+const generationProgressEvent = "generation:progress"
 
 const generationPhaseLabels: Record<string, string> = {
 	requesting: "sending the request…",
 	awaiting: "the model is working…",
 	parsing: "applying the response…",
-};
+}
 
 type Gesture =
 	| { kind: "split"; id: string; caret: number; end: number }
@@ -38,99 +38,99 @@ type Gesture =
 	| { kind: "outdent"; id: string }
 	| { kind: "mergeIntoPrevious"; id: string }
 	| { kind: "pullNextInto"; id: string; caret: number }
-	| { kind: "discard"; id: string };
+	| { kind: "discard"; id: string }
 
 type Command = {
-	groupID: string;
-	topicID: string;
-	land: { id: string; caret: number };
-	gesture: Gesture;
-	createdID: string;
-};
+	groupID: string
+	topicID: string
+	land: { id: string; caret: number }
+	gesture: Gesture
+	createdID: string
+}
 
 // BaseStore is the persistent view model for browsing, editing, and reviewing
 // the knowledge tree.
 class BaseStore {
-	command = $state("");
-	scopeID = $state<string | null>(null);
-	status = $state("");
-	error = $state("");
-	busy = $state(false);
+	command = $state("")
+	scopeID = $state<string | null>(null)
+	status = $state("")
+	error = $state("")
+	busy = $state(false)
 	// generating is the subset of busy spent waiting on the model: the only
 	// work the user can cancel.
-	generating = $state(false);
-	forest = $state<TreeNodeData[]>([]);
+	generating = $state(false)
+	forest = $state<TreeNodeData[]>([])
 
-	selectedTopicID = $state<string | null>(null);
+	selectedTopicID = $state<string | null>(null)
 
-	focusID = $state<string | null>(null);
+	focusID = $state<string | null>(null)
 
-	collapsed = new SvelteSet<string>();
+	collapsed = new SvelteSet<string>()
 
-	ghosts = new SvelteSet<string>();
+	ghosts = new SvelteSet<string>()
 
-	editingID = $state<string | null>(null);
-	editText = $state("");
-	editCaret = $state(0);
-	editCaretNonce = $state(0);
+	editingID = $state<string | null>(null)
+	editText = $state("")
+	editCaret = $state(0)
+	editCaretNonce = $state(0)
 
-	private undoStack = $state<Command[]>([]);
-	private redoStack = $state<Command[]>([]);
+	private undoStack = $state<Command[]>([])
+	private redoStack = $state<Command[]>([])
 
-	highlightID = $state<string | null>(null);
-	highlightNonce = $state(0);
+	highlightID = $state<string | null>(null)
+	highlightNonce = $state(0)
 
-	openBacklinks = new SvelteSet<string>();
-	backlinksById = new SvelteMap<string, Backlink[]>();
+	openBacklinks = new SvelteSet<string>()
+	backlinksById = new SvelteMap<string, Backlink[]>()
 
-	historyID = $state<string | null>(null);
-	revisions = $state<Revision[]>([]);
+	historyID = $state<string | null>(null)
+	revisions = $state<Revision[]>([])
 
-	openSchedules = new SvelteSet<string>();
+	openSchedules = new SvelteSet<string>()
 
-	private pendingReveal: string | null = null;
+	private pendingReveal: string | null = null
 
-	private historySeq = 0;
+	private historySeq = 0
 
-	private selectSeq = 0;
+	private selectSeq = 0
 
-	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""));
+	scopeLabel = $derived(this.scopeID === null ? "" : (findBlock(this.forest, this.scopeID)?.Content ?? ""))
 
 	selectedTree = $derived(
 		this.selectedTopicID === null ? null : (this.forest.find((t) => t.block.ID === this.selectedTopicID) ?? null),
-	);
+	)
 
 	viewRoot = $derived(
 		this.focusID === null ? this.selectedTree : (findNode(this.forest, this.focusID) ?? this.selectedTree),
-	);
+	)
 
-	visibleNodes = $derived<TreeNodeData[]>(this.viewRoot === null ? [] : [this.viewRoot]);
+	visibleNodes = $derived<TreeNodeData[]>(this.viewRoot === null ? [] : [this.viewRoot])
 
 	// topicMode is the shape of the selected topic. An unloaded or missing topic
 	// reads as an outline, which is what an empty screen renders as anyway.
 	get topicMode(): "outline" | "doc" {
-		return this.viewRoot?.block.Mode === "doc" ? "doc" : "outline";
+		return this.viewRoot?.block.Mode === "doc" ? "doc" : "outline"
 	}
 
 	constructor() {
 		Events.On(generationProgressEvent, (e) => {
-			if (!this.busy) return;
-			const data = e.data as { phase?: string } | undefined;
-			this.status = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…";
-		});
+			if (!this.busy) return
+			const data = e.data as { phase?: string } | undefined
+			this.status = (data?.phase ? generationPhaseLabels[data.phase] : undefined) ?? "the model is working…"
+		})
 	}
 
 	activate(): void {
 		this.reload().catch((err: unknown) => {
-			this.error = messageFor(err);
-		});
+			this.error = messageFor(err)
+		})
 	}
 
 	private ghostsFor(topicID: string): Block[] {
-		const out: Block[] = [];
+		const out: Block[] = []
 		for (const u of changes.blocks) {
 			if (!u.Head.Deleted || u.TopicID !== topicID) {
-				continue;
+				continue
 			}
 			out.push({
 				ID: u.Head.BlockID,
@@ -142,83 +142,83 @@ class BaseStore {
 				CreatedAt: "",
 				UpdatedAt: "",
 				Unreviewed: true,
-			});
+			})
 		}
-		return out;
+		return out
 	}
 
 	async reload(): Promise<void> {
-		const [topics] = await Promise.all([App.TopicMap(), changes.refresh()]);
-		const roots = (topics ?? []).filter((b) => b.ParentID === "");
+		const [topics] = await Promise.all([App.TopicMap(), changes.refresh()])
+		const roots = (topics ?? []).filter((b) => b.ParentID === "")
 		// One round trip per topic, all in flight at once: a sequential loop made
 		// reload time grow linearly with the number of topics.
-		const subtrees = await Promise.all(roots.map((r) => App.GetSubtree(r.ID)));
+		const subtrees = await Promise.all(roots.map((r) => App.GetSubtree(r.ID)))
 
-		this.ghosts.clear();
-		const ghostTopics = new Set<string>();
+		this.ghosts.clear()
+		const ghostTopics = new Set<string>()
 		for (const u of changes.blocks) {
 			if (!u.Head.Deleted) {
-				continue;
+				continue
 			}
-			this.ghosts.add(u.Head.BlockID);
-			ghostTopics.add(u.TopicID);
+			this.ghosts.add(u.Head.BlockID)
+			ghostTopics.add(u.TopicID)
 		}
 
-		const trees: TreeNodeData[] = [];
+		const trees: TreeNodeData[] = []
 		for (const [i, r] of roots.entries()) {
-			const blocks = subtrees[i] ?? [];
-			const extra = this.ghostsFor(r.ID);
-			ghostTopics.delete(r.ID);
-			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+			const blocks = subtrees[i] ?? []
+			const extra = this.ghostsFor(r.ID)
+			ghostTopics.delete(r.ID)
+			const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra])
 			if (tree) {
-				trees.push(tree);
+				trees.push(tree)
 			}
 		}
 		for (const topicID of ghostTopics) {
-			const tree = buildTree(this.ghostsFor(topicID));
+			const tree = buildTree(this.ghostsFor(topicID))
 			if (tree) {
-				trees.push(tree);
+				trees.push(tree)
 			}
 		}
-		this.forest = trees;
-		this.clearUndoHistory();
+		this.forest = trees
+		this.clearUndoHistory()
 		if (this.selectedTopicID === null || !trees.some((t) => t.block.ID === this.selectedTopicID)) {
-			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null;
-			this.focusID = null;
+			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null
+			this.focusID = null
 		}
-		this.backlinksById.clear();
-		await this.syncBacklinks();
-		this.dropStaleHistory();
+		this.backlinksById.clear()
+		await this.syncBacklinks()
+		this.dropStaleHistory()
 		if (this.pendingReveal !== null) {
-			const id = this.pendingReveal;
-			this.pendingReveal = null;
-			this.reveal(id);
+			const id = this.pendingReveal
+			this.pendingReveal = null
+			this.reveal(id)
 		}
 	}
 
 	async reloadTopic(topicID: string): Promise<void> {
 		if (this.forest.findIndex((t) => t.block.ID === topicID) < 0) {
-			return;
+			return
 		}
-		const blocks = (await App.GetSubtree(topicID)) ?? [];
-		const i = this.forest.findIndex((t) => t.block.ID === topicID);
+		const blocks = (await App.GetSubtree(topicID)) ?? []
+		const i = this.forest.findIndex((t) => t.block.ID === topicID)
 		if (i < 0) {
-			return;
+			return
 		}
-		const extra = this.ghostsFor(topicID);
-		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra]);
+		const extra = this.ghostsFor(topicID)
+		const tree = buildTree(extra.length === 0 ? blocks : [...blocks, ...extra])
 		if (tree === null) {
-			this.forest.splice(i, 1);
+			this.forest.splice(i, 1)
 			if (this.selectedTopicID === topicID) {
-				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null;
-				this.focusID = null;
+				this.selectedTopicID = this.forest.length > 0 ? this.forest[0].block.ID : null
+				this.focusID = null
 			}
-			await this.syncBacklinks();
-			this.dropStaleHistory();
-			return;
+			await this.syncBacklinks()
+			this.dropStaleHistory()
+			return
 		}
-		this.forest[i] = tree;
-		await this.syncBacklinks();
+		this.forest[i] = tree
+		await this.syncBacklinks()
 	}
 
 	// syncBacklinks brings every open "Linked references" panel back in line
@@ -230,11 +230,11 @@ class BaseStore {
 	private async syncBacklinks(): Promise<void> {
 		for (const id of [...this.openBacklinks]) {
 			if (findBlock(this.forest, id) === null) {
-				this.openBacklinks.delete(id);
-				this.backlinksById.delete(id);
-				continue;
+				this.openBacklinks.delete(id)
+				this.backlinksById.delete(id)
+				continue
 			}
-			await this.refreshBacklinks(id);
+			await this.refreshBacklinks(id)
 		}
 	}
 
@@ -242,187 +242,187 @@ class BaseStore {
 	// forest: the panel must not outlive the block it describes.
 	private dropStaleHistory(): void {
 		if (this.historyID !== null && findBlock(this.forest, this.historyID) === null) {
-			this.historyID = null;
-			this.revisions = [];
+			this.historyID = null
+			this.revisions = []
 		}
 	}
 
 	private async refresh(topic: string | null): Promise<void> {
 		if (topic === null) {
-			return;
+			return
 		}
 		try {
-			await this.reloadTopic(topic);
+			await this.reloadTopic(topic)
 		} catch (err: unknown) {
-			this.error = messageFor(err);
+			this.error = messageFor(err)
 		}
 	}
 
 	reveal(id: string): void {
-		this.selectSeq++;
-		const path = findPath(this.forest, id);
+		this.selectSeq++
+		const path = findPath(this.forest, id)
 		if (path === null) {
-			this.pendingReveal = id;
-			return;
+			this.pendingReveal = id
+			return
 		}
-		this.pendingReveal = null;
-		this.focusID = null;
-		const topic = topicOf(this.forest, id);
+		this.pendingReveal = null
+		this.focusID = null
+		const topic = topicOf(this.forest, id)
 		if (topic !== null) {
-			this.selectedTopicID = topic;
+			this.selectedTopicID = topic
 		}
 		for (const ancestor of path) {
-			this.collapsed.delete(ancestor);
+			this.collapsed.delete(ancestor)
 		}
-		this.highlightID = id;
-		this.highlightNonce++;
+		this.highlightID = id
+		this.highlightNonce++
 	}
 
 	async toggle(id: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
 		if (!(await this.commitEdit())) {
-			return;
+			return
 		}
 		if (this.collapsed.has(id)) {
-			this.collapsed.delete(id);
+			this.collapsed.delete(id)
 		} else {
-			this.collapsed.add(id);
+			this.collapsed.add(id)
 		}
 	}
 
 	async focus(id: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
 		if (!(await this.commitEdit())) {
-			return;
+			return
 		}
 		if (findNode(this.forest, id) === null) {
-			return;
+			return
 		}
-		this.collapsed.delete(id);
-		this.focusID = id;
+		this.collapsed.delete(id)
+		this.focusID = id
 	}
 
 	clearFocus(): void {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.focusID = null;
+		this.focusID = null
 	}
 
 	async selectTopic(id: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
 		if (!(await this.commitEdit())) {
-			return;
+			return
 		}
-		const mine = ++this.selectSeq;
+		const mine = ++this.selectSeq
 		if (this.forest.some((t) => t.block.ID === id)) {
-			this.applySelection(id);
-			return;
+			this.applySelection(id)
+			return
 		}
 		try {
-			await this.reload();
+			await this.reload()
 		} catch (err: unknown) {
 			if (mine === this.selectSeq) {
-				this.error = messageFor(err);
+				this.error = messageFor(err)
 			}
-			return;
+			return
 		}
 		if (mine !== this.selectSeq) {
-			return;
+			return
 		}
 		if (this.forest.some((t) => t.block.ID === id)) {
-			this.applySelection(id);
-			return;
+			this.applySelection(id)
+			return
 		}
-		this.error = "That topic no longer exists.";
+		this.error = "That topic no longer exists."
 	}
 
 	private applySelection(id: string): void {
-		this.selectedTopicID = id;
-		this.error = "";
-		this.highlightID = null;
-		this.focusID = null;
+		this.selectedTopicID = id
+		this.error = ""
+		this.highlightID = null
+		this.focusID = null
 	}
 
 	async setScope(block: Block): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.scopeID = this.scopeID === block.ID ? null : block.ID;
-		this.busy = false;
+		this.scopeID = this.scopeID === block.ID ? null : block.ID
+		this.busy = false
 	}
 
 	clearScope(): void {
-		this.scopeID = null;
+		this.scopeID = null
 	}
 
 	// generationFailed reports a failed generation. A cancellation is the
 	// user's own doing, so it lands in the status line, not as an error.
 	private generationFailed(err: unknown): void {
 		if (callError(err).code === "cancelled") {
-			this.status = "cancelled";
-			this.error = "";
-			return;
+			this.status = "cancelled"
+			this.error = ""
+			return
 		}
-		this.error = messageFor(err);
-		this.status = "";
+		this.error = messageFor(err)
+		this.status = ""
 	}
 
 	// cancelAI stops the generation in flight; the awaiting call then fails
 	// with the "cancelled" code and its own handler settles the state.
 	async cancelAI(): Promise<void> {
 		if (!this.generating) {
-			return;
+			return
 		}
-		this.status = "cancelling…";
+		this.status = "cancelling…"
 		try {
-			await App.CancelGeneration();
+			await App.CancelGeneration()
 		} catch (err: unknown) {
-			this.error = messageFor(err);
+			this.error = messageFor(err)
 		}
 	}
 
 	async askAI(): Promise<void> {
-		const text = this.command.trim();
+		const text = this.command.trim()
 		if (text === "" || this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
-		this.generating = true;
+		this.error = ""
+		this.generating = true
 		try {
-			const scope = this.scopeID;
+			const scope = this.scopeID
 			if (scope === null) {
-				await this.expandNewTopic(text);
+				await this.expandNewTopic(text)
 			} else {
-				this.status = "asking the AI to restructure…";
-				const applied = await App.EditWithAI(scope, text);
-				await this.reload();
+				this.status = "asking the AI to restructure…"
+				const applied = await App.EditWithAI(scope, text)
+				await this.reload()
 				// An empty group means the model answered with what was already there.
-				this.status = applied.GroupID === "" ? "the AI found nothing to change" : "changes applied, awaiting review";
+				this.status = applied.GroupID === "" ? "the AI found nothing to change" : "changes applied, awaiting review"
 			}
-			this.command = "";
-			this.clearScope();
+			this.command = ""
+			this.clearScope()
 		} catch (err: unknown) {
-			this.generationFailed(err);
+			this.generationFailed(err)
 		} finally {
-			this.generating = false;
-			this.busy = false;
+			this.generating = false
+			this.busy = false
 		}
 	}
 
@@ -434,27 +434,27 @@ class BaseStore {
 	// untargeted half of askAI.
 	async createTopic(name: string, mode: "outline" | "doc" = "outline"): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
+		this.error = ""
 		try {
-			const id = await App.CreateTopic(name, mode as Mode);
-			await this.reload();
+			const id = await App.CreateTopic(name, mode as Mode)
+			await this.reload()
 			if (this.forest.some((t) => t.block.ID === id)) {
-				this.selectedTopicID = id;
-				this.focusID = null;
+				this.selectedTopicID = id
+				this.focusID = null
 			}
-			this.status = `created "${name}"`;
+			this.status = `created "${name}"`
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.error = messageFor(err)
+			this.status = ""
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
@@ -466,25 +466,25 @@ class BaseStore {
 	// setScope on the topic, then the command box.
 	async expandTopic(id: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
-		this.generating = true;
+		this.error = ""
+		this.generating = true
 		try {
-			this.status = "asking the AI to write this…";
-			await App.ExpandTopicByID(id, "");
-			await this.reload();
-			this.status = "changes applied, awaiting review";
+			this.status = "asking the AI to write this…"
+			await App.ExpandTopicByID(id, "")
+			await this.reload()
+			this.status = "changes applied, awaiting review"
 		} catch (err: unknown) {
-			this.generationFailed(err);
+			this.generationFailed(err)
 		} finally {
-			this.generating = false;
-			this.busy = false;
+			this.generating = false
+			this.busy = false
 		}
 	}
 
@@ -494,118 +494,117 @@ class BaseStore {
 	// review rail and the Changes screen's "Reject batch" all read — the one
 	// route back from a conversion.
 	async setTopicMode(mode: "outline" | "doc"): Promise<void> {
-		const id = this.selectedTopicID;
+		const id = this.selectedTopicID
 		if (this.busy || id === null) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
+		this.error = ""
 		try {
-			await App.SetTopicMode(id, mode as Mode);
-			await this.reload();
-			this.status =
-				mode === "doc" ? "converted to a document, awaiting review" : "converted to blocks, awaiting review";
+			await App.SetTopicMode(id, mode as Mode)
+			await this.reload()
+			this.status = mode === "doc" ? "converted to a document, awaiting review" : "converted to blocks, awaiting review"
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.error = messageFor(err)
+			this.status = ""
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
 	private async expandNewTopic(name: string): Promise<void> {
-		this.status = `expanding "${name}"…`;
-		await App.ExpandTopic(name, "");
-		const before = new Set(this.forest.map((t) => t.block.ID));
-		await this.reload();
-		const fresh = this.forest.find((t) => !before.has(t.block.ID));
+		this.status = `expanding "${name}"…`
+		await App.ExpandTopic(name, "")
+		const before = new Set(this.forest.map((t) => t.block.ID))
+		await this.reload()
+		const fresh = this.forest.find((t) => !before.has(t.block.ID))
 		if (fresh) {
-			this.selectedTopicID = fresh.block.ID;
-			this.focusID = null;
+			this.selectedTopicID = fresh.block.ID
+			this.focusID = null
 		}
-		this.status = "changes applied, awaiting review";
+		this.status = "changes applied, awaiting review"
 	}
 
 	async startEdit(block: Block, caret: number): Promise<void> {
 		if (this.editingID !== null && this.editingID !== block.ID) {
 			if (!(await this.commitEdit())) {
-				return;
+				return
 			}
 		}
-		const fresh = findBlock(this.forest, block.ID) ?? block;
-		this.editText = fresh.Content;
-		this.editingID = fresh.ID;
-		this.editCaret = caret;
-		this.editCaretNonce++;
+		const fresh = findBlock(this.forest, block.ID) ?? block
+		this.editText = fresh.Content
+		this.editingID = fresh.ID
+		this.editCaret = caret
+		this.editCaretNonce++
 	}
 
 	clearEdit(): void {
-		this.editingID = null;
-		this.editText = "";
-		this.editCaret = 0;
-		this.editCaretNonce++;
+		this.editingID = null
+		this.editText = ""
+		this.editCaret = 0
+		this.editCaretNonce++
 	}
 
 	syncCaret(id: string, offset: number): void {
 		if (this.editingID !== id) {
-			return;
+			return
 		}
-		this.editCaret = offset;
+		this.editCaret = offset
 	}
 
 	// acceptRef replaces [from, to) of the open edit with text and lands the
 	// caret just past it — how RefAutocomplete completes a reference.
 	acceptRef(from: number, to: number, text: string): void {
-		const before = this.editText.slice(0, from);
-		const after = this.editText.slice(to);
-		this.editText = before + text + after;
-		this.editCaret = before.length + text.length;
-		this.editCaretNonce++;
+		const before = this.editText.slice(0, from)
+		const after = this.editText.slice(to)
+		this.editText = before + text + after
+		this.editCaret = before.length + text.length
+		this.editCaretNonce++
 	}
 
 	private async writeIfChanged(id: string): Promise<boolean> {
-		const stored = findBlock(this.forest, id);
-		const text = this.editText;
+		const stored = findBlock(this.forest, id)
+		const text = this.editText
 		if (stored === null || stored.Content === text) {
-			return false;
+			return false
 		}
-		await App.EditBlockContent(id, text);
-		stored.Content = text;
-		return true;
+		await App.EditBlockContent(id, text)
+		stored.Content = text
+		return true
 	}
 
 	private isViewRoot(id: string): boolean {
-		return id === this.viewRoot?.block.ID;
+		return id === this.viewRoot?.block.ID
 	}
 
 	async splitAtCaret(id: string, caret: number, end: number = caret): Promise<void> {
 		if (this.busy || this.isViewRoot(id)) {
-			return;
+			return
 		}
-		const topic = topicOf(this.forest, id);
-		const text = this.editText;
-		const head = text.slice(0, caret);
-		const tail = text.slice(end);
-		this.busy = true;
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		const text = this.editText
+		const head = text.slice(0, caret)
+		const tail = text.slice(end)
+		this.busy = true
+		this.error = ""
 		try {
-			const change = await App.SplitBlock(id, head, tail);
-			this.record(change, topic, { id, caret }, { kind: "split", id, caret, end });
+			const change = await App.SplitBlock(id, head, tail)
+			this.record(change, topic, { id, caret }, { kind: "split", id, caret, end })
 			if (topic !== null) {
-				await this.reloadTopic(topic);
+				await this.reloadTopic(topic)
 			}
-			this.editText = tail;
-			this.editingID = change.BlockID;
-			this.editCaret = 0;
-			this.editCaretNonce++;
+			this.editText = tail
+			this.editingID = change.BlockID
+			this.editCaret = 0
+			this.editCaretNonce++
 		} catch (err: unknown) {
-			this.error = messageFor(err);
+			this.error = messageFor(err)
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
@@ -621,70 +620,70 @@ class BaseStore {
 			land,
 			gesture,
 			createdID: change.BlockID,
-		});
-		this.redoStack = [];
+		})
+		this.redoStack = []
 	}
 
 	private editIsClean(): boolean {
-		return this.editingID === null || findBlock(this.forest, this.editingID)?.Content === this.editText;
+		return this.editingID === null || findBlock(this.forest, this.editingID)?.Content === this.editText
 	}
 
 	canUndo(): boolean {
-		return !this.busy && this.undoStack.length > 0 && this.editIsClean();
+		return !this.busy && this.undoStack.length > 0 && this.editIsClean()
 	}
 
 	canRedo(): boolean {
-		return !this.busy && this.redoStack.length > 0 && this.editIsClean();
+		return !this.busy && this.redoStack.length > 0 && this.editIsClean()
 	}
 
 	async undo(): Promise<void> {
-		const command = this.undoStack.at(-1);
+		const command = this.undoStack.at(-1)
 		if (command === undefined || !this.canUndo()) {
-			return;
+			return
 		}
-		this.busy = true;
-		this.error = "";
+		this.busy = true
+		this.error = ""
 		try {
 			try {
-				await App.UndoGroup(command.groupID);
+				await App.UndoGroup(command.groupID)
 			} catch (err: unknown) {
-				this.error = messageFor(err);
-				return;
+				this.error = messageFor(err)
+				return
 			}
-			this.undoStack.pop();
-			this.redoStack.push(command);
-			await this.refresh(command.topicID);
-			this.land(command.land);
+			this.undoStack.pop()
+			this.redoStack.push(command)
+			await this.refresh(command.topicID)
+			this.land(command.land)
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
 	async redo(): Promise<void> {
-		const command = this.redoStack.at(-1);
+		const command = this.redoStack.at(-1)
 		if (command === undefined || !this.canRedo()) {
-			return;
+			return
 		}
-		const branch = this.redoStack.slice(0, -1);
-		const depth = this.undoStack.length;
-		await this.perform(command.gesture);
-		const made = this.undoStack.at(-1);
+		const branch = this.redoStack.slice(0, -1)
+		const depth = this.undoStack.length
+		await this.perform(command.gesture)
+		const made = this.undoStack.at(-1)
 		if (this.undoStack.length === depth || made === undefined) {
-			return;
+			return
 		}
-		this.redoStack = branch;
+		this.redoStack = branch
 		if (command.createdID !== "" && made.createdID !== command.createdID) {
-			this.rename(command.createdID, made.createdID);
+			this.rename(command.createdID, made.createdID)
 		}
 	}
 
 	private rename(from: string, to: string): void {
 		for (const command of this.redoStack) {
 			if (command.land.id === from) {
-				command.land.id = to;
+				command.land.id = to
 			}
 			if (command.gesture.id === from) {
-				command.gesture.id = to;
+				command.gesture.id = to
 			}
 		}
 	}
@@ -692,109 +691,109 @@ class BaseStore {
 	private async perform(gesture: Gesture): Promise<void> {
 		switch (gesture.kind) {
 			case "split":
-				await this.splitAtCaret(gesture.id, gesture.caret, gesture.end);
-				return;
+				await this.splitAtCaret(gesture.id, gesture.caret, gesture.end)
+				return
 			case "insertAbove":
-				await this.insertAbove(gesture.id);
-				return;
+				await this.insertAbove(gesture.id)
+				return
 			case "indent":
-				await this.indent(gesture.id);
-				return;
+				await this.indent(gesture.id)
+				return
 			case "outdent":
-				await this.outdent(gesture.id);
-				return;
+				await this.outdent(gesture.id)
+				return
 			case "mergeIntoPrevious":
-				await this.mergeIntoPrevious(gesture.id);
-				return;
+				await this.mergeIntoPrevious(gesture.id)
+				return
 			case "pullNextInto":
-				await this.pullNextInto(gesture.id, gesture.caret);
-				return;
+				await this.pullNextInto(gesture.id, gesture.caret)
+				return
 			case "discard":
-				await this.discard(gesture.id);
-				return;
+				await this.discard(gesture.id)
+				return
 		}
 	}
 
 	private async discard(id: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		const topic = topicOf(this.forest, id);
-		this.busy = true;
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		this.busy = true
+		this.error = ""
 		try {
-			const change = await App.DeleteBlock(id);
-			this.record(change, topic, { id, caret: 0 }, { kind: "discard", id });
+			const change = await App.DeleteBlock(id)
+			this.record(change, topic, { id, caret: 0 }, { kind: "discard", id })
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			return;
+			this.error = messageFor(err)
+			return
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
-		await this.refresh(topic);
+		await this.refresh(topic)
 	}
 
 	private land(at: { id: string; caret: number }): void {
-		this.editText = findBlock(this.forest, at.id)?.Content ?? this.editText;
-		this.editingID = at.id;
-		this.editCaret = at.caret;
-		this.editCaretNonce++;
+		this.editText = findBlock(this.forest, at.id)?.Content ?? this.editText
+		this.editingID = at.id
+		this.editCaret = at.caret
+		this.editCaretNonce++
 	}
 
 	clearUndoHistory(): void {
-		this.undoStack = [];
-		this.redoStack = [];
+		this.undoStack = []
+		this.redoStack = []
 	}
 
 	async insertAbove(id: string): Promise<void> {
 		if (this.busy || this.isViewRoot(id)) {
-			return;
+			return
 		}
-		const topic = topicOf(this.forest, id);
-		this.busy = true;
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		this.busy = true
+		this.error = ""
 		try {
-			const change = await App.InsertBlockBefore(id, "");
-			this.record(change, topic, { id, caret: 0 }, { kind: "insertAbove", id });
+			const change = await App.InsertBlockBefore(id, "")
+			this.record(change, topic, { id, caret: 0 }, { kind: "insertAbove", id })
 			if (topic !== null) {
-				await this.reloadTopic(topic);
+				await this.reloadTopic(topic)
 			}
 		} catch (err: unknown) {
-			this.error = messageFor(err);
+			this.error = messageFor(err)
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
 	async indent(id: string): Promise<void> {
 		if (this.busy || this.isViewRoot(id) || prevSibling(this.visibleNodes, id, this.ghosts) === null) {
-			return;
+			return
 		}
 		await this.structural(id, () => App.IndentBlock(id), undefined, {
 			caret: this.editCaret,
 			gesture: { kind: "indent", id },
-		});
+		})
 	}
 
 	async outdent(id: string): Promise<void> {
-		const node = findNode(this.visibleNodes, id);
-		const root = this.viewRoot;
+		const node = findNode(this.visibleNodes, id)
+		const root = this.viewRoot
 		if (this.busy || this.isViewRoot(id) || node === null || root === null || node.block.ParentID === root.block.ID) {
-			return;
+			return
 		}
 		await this.structural(id, () => App.OutdentBlock(id), undefined, {
 			caret: this.editCaret,
 			gesture: { kind: "outdent", id },
-		});
+		})
 	}
 
 	async mergeIntoPrevious(id: string): Promise<void> {
-		const target = prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+		const target = prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
 		if (this.busy || this.isViewRoot(id) || target === null || target === this.viewRoot?.block.ID) {
-			return;
+			return
 		}
-		this.collapsed.delete(target);
-		const seam = findBlock(this.forest, target)?.Content.length ?? 0;
+		this.collapsed.delete(target)
+		const seam = findBlock(this.forest, target)?.Content.length ?? 0
 		await this.structural(
 			id,
 			() => App.MergeBlocks(target, id),
@@ -803,13 +802,13 @@ class BaseStore {
 				caret: 0,
 				gesture: { kind: "mergeIntoPrevious", id },
 			},
-		);
+		)
 	}
 
 	async pullNextInto(id: string, caret: number): Promise<void> {
-		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+		const source = nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
 		if (this.busy || this.isViewRoot(id) || source === null) {
-			return;
+			return
 		}
 		await this.structural(
 			id,
@@ -819,36 +818,36 @@ class BaseStore {
 				caret,
 				gesture: { kind: "pullNextInto", id, caret },
 			},
-		);
+		)
 	}
 
 	async moveCaret(id: string, direction: "up" | "down", column: number): Promise<void> {
 		const target =
 			direction === "up"
 				? prevVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
-				: nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts);
+				: nextVisible(this.visibleNodes, id, this.collapsed, this.ghosts)
 		if (this.busy || target === null) {
-			return;
+			return
 		}
-		const topic = topicOf(this.forest, id);
-		this.busy = true;
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		this.busy = true
+		this.error = ""
 		try {
 			try {
 				if (await this.writeIfChanged(id)) {
-					await this.refresh(topic);
+					await this.refresh(topic)
 				}
 			} catch (err: unknown) {
-				this.error = messageFor(err);
-				return;
+				this.error = messageFor(err)
+				return
 			}
-			const text = findBlock(this.forest, target)?.Content ?? "";
-			this.editText = text;
-			this.editingID = target;
-			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column);
-			this.editCaretNonce++;
+			const text = findBlock(this.forest, target)?.Content ?? ""
+			this.editText = text
+			this.editingID = target
+			this.editCaret = offsetAtLine(text, direction === "up" ? lineCount(text) - 1 : 0, column)
+			this.editCaretNonce++
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
@@ -858,76 +857,76 @@ class BaseStore {
 		land?: { id: string; caret: number },
 		undo?: { caret: number; gesture: Gesture },
 	): Promise<void> {
-		const topic = topicOf(this.forest, id);
-		this.busy = true;
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		this.busy = true
+		this.error = ""
 		try {
-			let change: OutlineChange;
+			let change: OutlineChange
 			try {
-				await this.writeIfChanged(id);
-				change = await op();
+				await this.writeIfChanged(id)
+				change = await op()
 			} catch (err: unknown) {
-				this.error = messageFor(err);
-				return;
+				this.error = messageFor(err)
+				return
 			}
 			if (undo !== undefined) {
-				this.record(change, topic, { id, caret: undo.caret }, undo.gesture);
+				this.record(change, topic, { id, caret: undo.caret }, undo.gesture)
 			}
-			await this.refresh(topic);
+			await this.refresh(topic)
 			if (land !== undefined) {
-				this.land(land);
+				this.land(land)
 			}
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
-	private committing = $state<Promise<boolean> | null>(null);
+	private committing = $state<Promise<boolean> | null>(null)
 
 	get commitInFlight(): boolean {
-		return this.committing !== null;
+		return this.committing !== null
 	}
 
 	commitEdit(): Promise<boolean> {
 		if (this.committing !== null) {
-			return this.committing;
+			return this.committing
 		}
 		this.committing = this.runCommit().finally(() => {
-			this.committing = null;
-		});
-		return this.committing;
+			this.committing = null
+		})
+		return this.committing
 	}
 
 	private async runCommit(): Promise<boolean> {
-		const id = this.editingID;
+		const id = this.editingID
 		if (id === null) {
-			return true;
+			return true
 		}
-		const node = findNode(this.forest, id);
+		const node = findNode(this.forest, id)
 		if (node === null) {
-			this.clearEdit();
-			return true;
+			this.clearEdit()
+			return true
 		}
-		const topic = topicOf(this.forest, id);
-		this.error = "";
+		const topic = topicOf(this.forest, id)
+		this.error = ""
 		try {
-			const empty = this.editText.trim() === "";
-			const disposable = empty && node.children.length === 0 && node.block.ParentID !== "";
+			const empty = this.editText.trim() === ""
+			const disposable = empty && node.children.length === 0 && node.block.ParentID !== ""
 			if (disposable) {
-				const change = await App.DeleteBlock(id);
-				this.record(change, topic, { id, caret: 0 }, { kind: "discard", id });
+				const change = await App.DeleteBlock(id)
+				this.record(change, topic, { id, caret: 0 }, { kind: "discard", id })
 			} else if (!(await this.writeIfChanged(id))) {
-				this.clearEdit();
-				return true;
+				this.clearEdit()
+				return true
 			}
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
-			return false;
+			this.error = messageFor(err)
+			this.status = ""
+			return false
 		}
-		this.clearEdit();
-		await this.refresh(topic);
-		return true;
+		this.clearEdit()
+		await this.refresh(topic)
+		return true
 	}
 
 	// review runs one review gesture: refuse while busy, commit the open edit,
@@ -935,134 +934,134 @@ class BaseStore {
 	// anywhere. The four below differ only in the call and what they report.
 	private async review(op: () => Promise<void>, done: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
+		this.error = ""
 		try {
-			await op();
-			await this.reload();
-			this.status = done;
+			await op()
+			await this.reload()
+			this.status = done
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.error = messageFor(err)
+			this.status = ""
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 
 	accept(id: string): Promise<void> {
-		return this.review(() => App.AcceptBlock(id), "accepted");
+		return this.review(() => App.AcceptBlock(id), "accepted")
 	}
 
 	reject(id: string): Promise<void> {
-		return this.review(() => App.RejectBlock(id), "rejected");
+		return this.review(() => App.RejectBlock(id), "rejected")
 	}
 
 	acceptPage(id: string): Promise<void> {
-		return this.review(() => App.AcceptPage(id), "accepted page");
+		return this.review(() => App.AcceptPage(id), "accepted page")
 	}
 
 	rejectPage(id: string): Promise<void> {
-		return this.review(() => App.RejectPage(id), "rejected page");
+		return this.review(() => App.RejectPage(id), "rejected page")
 	}
 
 	toggleSchedule(id: string): void {
 		if (this.openSchedules.has(id)) {
-			this.openSchedules.delete(id);
+			this.openSchedules.delete(id)
 		} else {
-			this.openSchedules.add(id);
+			this.openSchedules.add(id)
 		}
 	}
 
 	async toggleBacklinks(id: string): Promise<void> {
 		if (this.openBacklinks.has(id)) {
-			this.openBacklinks.delete(id);
-			this.backlinksById.delete(id);
-			return;
+			this.openBacklinks.delete(id)
+			this.backlinksById.delete(id)
+			return
 		}
-		this.openBacklinks.add(id);
+		this.openBacklinks.add(id)
 		if (!this.backlinksById.has(id)) {
-			await this.refreshBacklinks(id);
+			await this.refreshBacklinks(id)
 		}
 	}
 
 	async refreshBacklinks(id: string): Promise<void> {
 		try {
-			this.backlinksById.set(id, (await App.Backlinks(id)) ?? []);
+			this.backlinksById.set(id, (await App.Backlinks(id)) ?? [])
 		} catch (err: unknown) {
-			this.error = messageFor(err);
+			this.error = messageFor(err)
 		}
 	}
 
 	async toggleHistory(id: string): Promise<void> {
-		this.historySeq++;
+		this.historySeq++
 		if (this.historyID === id) {
-			this.historyID = null;
-			this.revisions = [];
-			return;
+			this.historyID = null
+			this.revisions = []
+			return
 		}
-		this.historyID = id;
-		this.error = "";
-		const mine = this.historySeq;
+		this.historyID = id
+		this.error = ""
+		const mine = this.historySeq
 		try {
-			const revs = (await App.BlockHistory(id)) ?? [];
+			const revs = (await App.BlockHistory(id)) ?? []
 			if (mine !== this.historySeq) {
-				return;
+				return
 			}
-			this.revisions = revs;
+			this.revisions = revs
 		} catch (err: unknown) {
 			if (mine !== this.historySeq) {
-				return;
+				return
 			}
-			this.error = messageFor(err);
-			this.revisions = [];
+			this.error = messageFor(err)
+			this.revisions = []
 		}
 	}
 
 	async deleteRevision(blockID: string, revID: string): Promise<void> {
 		if (this.busy) {
-			return;
+			return
 		}
-		this.busy = true;
+		this.busy = true
 		if (!(await this.commitEdit())) {
-			this.busy = false;
-			return;
+			this.busy = false
+			return
 		}
-		this.error = "";
-		const mine = ++this.historySeq;
+		this.error = ""
+		const mine = ++this.historySeq
 		try {
-			await App.DeleteRevision(blockID, revID);
+			await App.DeleteRevision(blockID, revID)
 			try {
-				const revs = (await App.BlockHistory(blockID)) ?? [];
+				const revs = (await App.BlockHistory(blockID)) ?? []
 				if (mine === this.historySeq) {
-					this.revisions = revs;
+					this.revisions = revs
 				}
 			} catch (err: unknown) {
 				if (callError(err).code !== "not_found") {
-					throw err;
+					throw err
 				}
 				if (mine === this.historySeq) {
-					this.historyID = null;
-					this.revisions = [];
+					this.historyID = null
+					this.revisions = []
 				}
 			}
-			await this.reload();
-			await changes.refresh();
-			this.status = "deleted revision";
+			await this.reload()
+			await changes.refresh()
+			this.status = "deleted revision"
 		} catch (err: unknown) {
-			this.error = messageFor(err);
-			this.status = "";
+			this.error = messageFor(err)
+			this.status = ""
 		} finally {
-			this.busy = false;
+			this.busy = false
 		}
 	}
 }
 
 // base is the single window-wide instance; module state outlives the views
 // that render it.
-export const base = new BaseStore();
+export const base = new BaseStore()

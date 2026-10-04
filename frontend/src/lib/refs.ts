@@ -14,58 +14,58 @@
 // on both sides — recorded so the next person does not have to rediscover it.
 
 // RefKind distinguishes the two reference forms found in block content.
-export type RefKind = "topic" | "block";
+export type RefKind = "topic" | "block"
 
 // Ref is one outgoing reference parsed out of a block's content. targetKey is
 // the normalized topic name for "topic" and the upper-cased target ULID for
 // "block"; the block reference's label is a reading aid inside the text and
 // is deliberately not carried here.
-export type Ref = { kind: RefKind; targetKey: string };
+export type Ref = { kind: RefKind; targetKey: string }
 
-const ulidLen = 26;
+const ulidLen = 26
 
 // crockford is the Crockford base32 alphabet, which excludes I, L, O and U.
-const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // parseRefs extracts every reference from a block's content, in source order
 // and deduplicated. Reference syntax is independent of Markdown context.
 export function parseRefs(content: string): Ref[] {
-	const out: Ref[] = [];
-	const seen = new Set<string>();
+	const out: Ref[] = []
+	const seen = new Set<string>()
 	const add = (ref: Ref): void => {
 		if (ref.targetKey === "") {
-			return;
+			return
 		}
-		const key = `${ref.kind}:${ref.targetKey}`;
+		const key = `${ref.kind}:${ref.targetKey}`
 		if (seen.has(key)) {
-			return;
+			return
 		}
-		seen.add(key);
-		out.push(ref);
-	};
-	for (const line of content.split("\n")) {
-		scanLine(line, add);
+		seen.add(key)
+		out.push(ref)
 	}
-	return out;
+	for (const line of content.split("\n")) {
+		scanLine(line, add)
+	}
+	return out
 }
 
 // scanLine reports every reference on one line.
 function scanLine(line: string, add: (ref: Ref) => void): void {
-	const esc = new EscapeState();
+	const esc = new EscapeState()
 	for (let i = 0; i < line.length; i++) {
 		if (!esc.step(line[i])) {
-			continue;
+			continue
 		}
-		const topic = topicRefAt(line, i);
+		const topic = topicRefAt(line, i)
 		if (topic !== null) {
-			add({ kind: "topic", targetKey: normalizeTitle(topic.body) });
-			i = topic.end - 1;
-			continue;
+			add({ kind: "topic", targetKey: normalizeTitle(topic.body) })
+			i = topic.end - 1
+			continue
 		}
-		const block = blockRefAt(line, i);
+		const block = blockRefAt(line, i)
 		if (block !== null) {
-			add({ kind: "block", targetKey: block.target });
-			i = block.end - 1;
+			add({ kind: "block", targetKey: block.target })
+			i = block.end - 1
 		}
 	}
 }
@@ -76,18 +76,18 @@ function scanLine(line: string, add: (ref: Ref) => void): void {
 // the same bytes (internal/knowledge/refs.go), which is what keeps the two
 // readings of a block identical.
 class EscapeState {
-	private escaped = false;
+	private escaped = false
 
 	// step advances over c and reports whether it is active: able to open a
 	// reference, rather than a backslash or the character one escapes.
 	step(c: string): boolean {
 		if (c === "\\") {
-			this.escaped = !this.escaped;
-			return false;
+			this.escaped = !this.escaped
+			return false
 		}
-		const active = !this.escaped;
-		this.escaped = false;
-		return active;
+		const active = !this.escaped
+		this.escaped = false
+		return active
 	}
 }
 
@@ -101,13 +101,13 @@ class EscapeState {
 // through here, so what counts as a topic reference is defined once.
 export function topicRefAt(line: string, i: number): { body: string; end: number } | null {
 	if (i + 1 >= line.length || line[i] !== "[" || line[i + 1] !== "[") {
-		return null;
+		return null
 	}
-	const u = until(line, i + 2, "]]");
+	const u = until(line, i + 2, "]]")
 	if (u === null || u.body.includes("[") || u.body.includes("]")) {
-		return null;
+		return null
 	}
-	return u;
+	return u
 }
 
 // blockRefAt reports the ((ULID|label)) reference starting at i: its
@@ -125,44 +125,44 @@ export function topicRefAt(line: string, i: number): { body: string; end: number
 // places.
 export function blockRefAt(line: string, i: number): { target: string; label: string; end: number } | null {
 	if (i + 1 >= line.length || line[i] !== "(" || line[i + 1] !== "(") {
-		return null;
+		return null
 	}
-	const u = until(line, i + 2, "))");
+	const u = until(line, i + 2, "))")
 	if (u === null) {
-		return null;
+		return null
 	}
-	const pipe = u.body.indexOf("|");
-	const raw = pipe >= 0 ? u.body.slice(0, pipe) : u.body;
-	const label = pipe >= 0 ? u.body.slice(pipe + 1).trim() : "";
-	const target = raw.trim().toUpperCase();
+	const pipe = u.body.indexOf("|")
+	const raw = pipe >= 0 ? u.body.slice(0, pipe) : u.body
+	const label = pipe >= 0 ? u.body.slice(pipe + 1).trim() : ""
+	const target = raw.trim().toUpperCase()
 	if (!validULID(target)) {
-		return null;
+		return null
 	}
-	return { target, label, end: u.end };
+	return { target, label, end: u.end }
 }
 
 // until returns the text between start and the next occurrence of closer,
 // plus the offset just past closer. A missing terminator returns null.
 function until(line: string, start: number, closer: string): { body: string; end: number } | null {
-	const rest = line.slice(start);
-	const j = rest.indexOf(closer);
+	const rest = line.slice(start)
+	const j = rest.indexOf(closer)
 	if (j < 0) {
-		return null;
+		return null
 	}
-	return { body: rest.slice(0, j), end: start + j + closer.length };
+	return { body: rest.slice(0, j), end: start + j + closer.length }
 }
 
 // validULID reports whether s is 26 Crockford base32 characters.
 function validULID(s: string): boolean {
 	if (s.length !== ulidLen) {
-		return false;
+		return false
 	}
 	for (const ch of s) {
 		if (!crockford.includes(ch)) {
-			return false;
+			return false
 		}
 	}
-	return true;
+	return true
 }
 
 // normalizeTitle reduces a topic's content to the key references resolve
@@ -176,20 +176,20 @@ export function normalizeTitle(s: string): string {
 		.split(/\s+/)
 		.filter((f) => f !== "")
 		.join(" ")
-		.toLowerCase();
+		.toLowerCase()
 }
 
 // topicName is the text a [[Topic]] reference to this content should carry:
 // its first line without the markdown markers normalizeTitle also drops,
 // with the author's casing and spacing kept.
 export function topicName(s: string): string {
-	return firstLine(s).replace(/^[#>*+ \t-]+/, "");
+	return firstLine(s).replace(/^[#>*+ \t-]+/, "")
 }
 
 // firstLine is a block's display title: its first line, trimmed. Unlike
 // normalizeTitle it preserves the author's casing and punctuation, because it
 // is shown to a reader rather than matched against anything.
 export function firstLine(s: string): string {
-	const nl = s.indexOf("\n");
-	return (nl >= 0 ? s.slice(0, nl) : s).trim();
+	const nl = s.indexOf("\n")
+	return (nl >= 0 ? s.slice(0, nl) : s).trim()
 }

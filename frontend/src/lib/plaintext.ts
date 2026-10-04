@@ -22,5 +22,5 @@ export function plainText(src: string): string {
 		.replace(/(?<![\w_])_(\S|\S[^_\n]*\S)_(?![\w_])/g, "$1")
 		.replace(/`([^`\n]+)`/g, "$1")
 		.replace(/\s+/g, " ")
-		.trim();
+		.trim()
 }

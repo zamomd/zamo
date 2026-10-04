@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { plainText } from "./plaintext";
+import { describe, expect, it } from "vitest"
+import { plainText } from "./plaintext"
 
 describe("plainText", () => {
 	const cases: [string, string, string][] = [
@@ -26,14 +26,14 @@ describe("plainText", () => {
 			"rate_limit_bucket is a thing",
 		],
 		["repeated asterisks are multiplication, not emphasis pairs", "2 * 3 * 4 = 24", "2 * 3 * 4 = 24"],
-	];
+	]
 	for (const [name, src, want] of cases) {
 		it(`strips ${name}`, () => {
-			expect(plainText(src)).toBe(want);
-		});
+			expect(plainText(src)).toBe(want)
+		})
 	}
 
 	it("leaves a bare asterisk alone rather than eating punctuation", () => {
-		expect(plainText("2 * 3 = 6")).toBe("2 * 3 = 6");
-	});
-});
+		expect(plainText("2 * 3 = 6")).toBe("2 * 3 = 6")
+	})
+})

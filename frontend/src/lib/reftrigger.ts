@@ -1,14 +1,14 @@
-import { topicName } from "./refs";
+import { topicName } from "./refs"
 
 // Trigger describes an in-progress reference the caret currently sits inside:
 // an unclosed "[[" or "((" on the caret's own line, with nothing yet typed
 // past it that would close it. The popup that completes it lives in
 // RefAutocomplete.svelte.
-export type Trigger = { kind: "topic" | "block"; query: string; start: number };
+export type Trigger = { kind: "topic" | "block"; query: string; start: number }
 
-const kinds = ["topic", "block"] as const;
-const opener: Record<"topic" | "block", string> = { topic: "[[", block: "((" };
-const closer: Record<"topic" | "block", string> = { topic: "]]", block: "))" };
+const kinds = ["topic", "block"] as const
+const opener: Record<"topic" | "block", string> = { topic: "[[", block: "((" }
+const closer: Record<"topic" | "block", string> = { topic: "]]", block: "))" }
 
 // triggerAt scans backwards from caret to the nearest "[[" or "((" on the
 // same line. A closer between that opener and caret means the reference is
@@ -24,37 +24,37 @@ const closer: Record<"topic" | "block", string> = { topic: "]]", block: "))" };
 // same kind in between, refuses too; an opener first means that closer belongs
 // to a later reference and this one really is unterminated.
 export function triggerAt(text: string, caret: number): Trigger | null {
-	const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
-	let start = -1;
-	let kind: "topic" | "block" | null = null;
+	const lineStart = text.lastIndexOf("\n", caret - 1) + 1
+	let start = -1
+	let kind: "topic" | "block" | null = null
 	for (let i = caret - 2; i >= lineStart; i--) {
-		const two = text.slice(i, i + 2);
-		const found = kinds.find((k) => opener[k] === two);
+		const two = text.slice(i, i + 2)
+		const found = kinds.find((k) => opener[k] === two)
 		if (found !== undefined) {
-			start = i;
-			kind = found;
-			break;
+			start = i
+			kind = found
+			break
 		}
 	}
 	if (start < 0 || kind === null) {
-		return null;
+		return null
 	}
-	const query = text.slice(start + 2, caret);
+	const query = text.slice(start + 2, caret)
 	if (query.includes(closer[kind])) {
-		return null;
+		return null
 	}
-	const lineEnd = text.indexOf("\n", caret);
+	const lineEnd = text.indexOf("\n", caret)
 	// From caret - 1, so a closer the caret sits in the middle of counts too.
-	const ahead = text.slice(caret - 1, lineEnd < 0 ? text.length : lineEnd);
-	const close = ahead.indexOf(closer[kind]);
-	const reopen = ahead.indexOf(opener[kind]);
+	const ahead = text.slice(caret - 1, lineEnd < 0 ? text.length : lineEnd)
+	const close = ahead.indexOf(closer[kind])
+	const reopen = ahead.indexOf(opener[kind])
 	if (close >= 0 && (reopen < 0 || close < reopen)) {
-		return null;
+		return null
 	}
-	return { kind, query, start };
+	return { kind, query, start }
 }
 
-const maxLabelLength = 80;
+const maxLabelLength = 80
 
 // refLabel derives the label baked into a ((ULID|label)) reference from its
 // target's content: the first line with markdown markers stripped, its
@@ -66,18 +66,18 @@ export function refLabel(content: string): string {
 	const collapsed = topicName(content)
 		.split(/\s+/)
 		.filter((w) => w !== "")
-		.join(" ");
-	const safe = collapsed.replaceAll("|", " ").replaceAll(")", "");
-	return truncate(safe, maxLabelLength);
+		.join(" ")
+	const safe = collapsed.replaceAll("|", " ").replaceAll(")", "")
+	return truncate(safe, maxLabelLength)
 }
 
 function truncate(s: string, max: number): string {
 	if (s.length <= max) {
-		return s;
+		return s
 	}
-	const cut = s.slice(0, max);
-	const lastSpace = cut.lastIndexOf(" ");
-	return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd();
+	const cut = s.slice(0, max)
+	const lastSpace = cut.lastIndexOf(" ")
+	return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()
 }
 
 // topicReferenceable reports whether name can be written as [[name]] at all.
@@ -89,5 +89,5 @@ function truncate(s: string, max: number): string {
 // substitute — sanitizing it would insert a reference to a *different* name
 // than the one shown, silently pointing at nothing.
 export function topicReferenceable(name: string): boolean {
-	return !name.includes("[") && !name.includes("]");
+	return !name.includes("[") && !name.includes("]")
 }

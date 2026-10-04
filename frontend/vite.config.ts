@@ -1,7 +1,7 @@
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { svelteTesting } from "@testing-library/svelte/vite";
-import wails from "@wailsio/runtime/plugins/vite";
-import { defineConfig } from "vitest/config";
+import { svelte } from "@sveltejs/vite-plugin-svelte"
+import { svelteTesting } from "@testing-library/svelte/vite"
+import wails from "@wailsio/runtime/plugins/vite"
+import { defineConfig } from "vitest/config"
 
 // vitest/config re-exports Vite's defineConfig, so one file still configures
 // both the build and the tests.
@@ -18,4 +18,4 @@ export default defineConfig({
 		environment: "node",
 		include: ["src/**/*.test.ts"],
 	},
-});
+})
