@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Breadcrumbs from './lib/Breadcrumbs.svelte'
-	import CommandBox from './lib/CommandBox.svelte'
 	import DocView from './lib/DocView.svelte'
 	import StatusLine from './lib/StatusLine.svelte'
 	import TopicProps from './lib/TopicProps.svelte'
@@ -15,7 +14,7 @@
 	{#if tree === null}
 		<p class="empty">
 			{#if ai.enabled}
-				No topic selected. Ask the AI below to expand one.
+				No topic selected. Pick one in the sidebar, or ask the assistant (⌘K) to start one.
 			{:else}
 				No topic selected. Pick one in the sidebar, or add a topic there to start writing.
 			{/if}
@@ -40,9 +39,6 @@
 
 	<footer>
 		<StatusLine error={base.error} />
-		{#if ai.enabled}
-			<CommandBox />
-		{/if}
 	</footer>
 </section>
 

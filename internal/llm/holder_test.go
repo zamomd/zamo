@@ -7,25 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 type stubClient struct{ name string }
 
-func (s stubClient) GenerateTree(context.Context, string, string) ([]knowledge.Op, error) {
-	return []knowledge.Op{{Kind: knowledge.OpAdd, Content: s.name}}, nil
-}
-
-func (s stubClient) GenerateEdit(context.Context, []knowledge.Block, string) ([]knowledge.Op, error) {
-	return nil, nil
-}
-
-func (s stubClient) GenerateDocument(context.Context, string, string) (string, error) {
-	return s.name, nil
-}
-
-func (s stubClient) GenerateDocumentEdit(context.Context, knowledge.Block, string) (string, error) {
-	return s.name, nil
+func (s stubClient) Chat(context.Context, Request) (Reply, error) {
+	return Reply{Text: s.name}, nil
 }
 
 func (s stubClient) Ping(context.Context) error { return nil }
@@ -33,15 +20,15 @@ func (s stubClient) Ping(context.Context) error { return nil }
 func TestHolderSetSwapsClient(t *testing.T) {
 	h := NewHolder(stubClient{name: "first"})
 
-	ops, err := h.GenerateTree(t.Context(), "topic", "")
+	reply, err := h.Chat(t.Context(), Request{})
 	require.NoError(t, err)
-	require.Equal(t, "first", ops[0].Content)
+	require.Equal(t, "first", reply.Text)
 
 	h.Set(stubClient{name: "second"})
 
-	ops, err = h.GenerateTree(t.Context(), "topic", "")
+	reply, err = h.Chat(t.Context(), Request{})
 	require.NoError(t, err)
-	assert.Equal(t, "second", ops[0].Content, "Set must swap the client")
+	assert.Equal(t, "second", reply.Text, "Set must swap the client")
 }
 
 func TestHolderRace(t *testing.T) {
@@ -50,7 +37,7 @@ func TestHolderRace(t *testing.T) {
 	for i := range 50 {
 		wg.Go(func() { h.Set(stubClient{name: "swapped"}) })
 		wg.Go(func() {
-			_, err := h.GenerateTree(t.Context(), "topic", "")
+			_, err := h.Chat(t.Context(), Request{})
 			assert.NoError(t, err, "call %d", i)
 		})
 	}

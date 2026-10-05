@@ -1,4 +1,4 @@
-// Package openaicompat implements knowledge.LLMClient on top of any
+// Package openaicompat implements llm.Client on top of any
 // OpenAI-compatible API. One implementation covers OpenAI, OpenRouter,
 // DeepSeek and local models (Ollama and LM Studio expose the same API
 // on localhost). Only the dialect lives here — the round trip and the error
@@ -6,6 +6,8 @@
 package openaicompat
 
 import (
+	"cmp"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -26,8 +28,8 @@ type Client struct {
 }
 
 var (
-	_ knowledge.LLMClient = (*Client)(nil)
-	_ llm.Dialect         = (*Client)(nil)
+	_ llm.Client  = (*Client)(nil)
+	_ llm.Dialect = (*Client)(nil)
 )
 
 // New creates a Client. The key source may yield an empty key for local
@@ -61,14 +63,41 @@ type chatRequest struct {
 	Model     string     `json:"model"`
 	MaxTokens int        `json:"max_tokens"`
 	Messages  []chatTurn `json:"messages"`
+	Tools     []chatTool `json:"tools,omitempty"`
 }
 
 // chatTurn is one message. Content is read as a plain string — the common
 // dialect; a provider that returns an array of parts fails to decode and
 // surfaces as unavailable.
 type chatTurn struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []chatCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+type chatCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function chatFunction `json:"function"`
+}
+
+// chatFunction names the function of a call. Arguments is a JSON object
+// carried as a string, which is how this API spells it in both directions.
+type chatFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type chatTool struct {
+	Type     string      `json:"type"`
+	Function chatToolDef `json:"function"`
+}
+
+type chatToolDef struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  jsontext.Value `json:"parameters"`
 }
 
 type chatChoice struct {
@@ -82,30 +111,68 @@ type chatResponse struct {
 	Choices *[]chatChoice `json:"choices"`
 }
 
-// EncodeRequest implements llm.Dialect.
-func (c *Client) EncodeRequest(prompt string) ([]byte, error) {
-	return json.Marshal(chatRequest{
-		Model:     c.model,
-		MaxTokens: llm.MaxTokens,
-		Messages:  []chatTurn{{Role: "user", Content: prompt}},
-	})
+const functionType = "function"
+
+// EncodeChat implements llm.Dialect.
+func (c *Client) EncodeChat(r llm.Request) ([]byte, error) {
+	req := chatRequest{Model: c.model, MaxTokens: llm.MaxTokens}
+	for _, t := range r.Tools {
+		req.Tools = append(req.Tools, chatTool{
+			Type:     functionType,
+			Function: chatToolDef{Name: t.Name, Description: t.Description, Parameters: t.Schema},
+		})
+	}
+	if r.System != "" {
+		req.Messages = append(req.Messages, chatTurn{Role: "system", Content: r.System})
+	}
+	for _, m := range r.Messages {
+		turn := chatTurn{Role: string(m.Role), Content: m.Text}
+		if m.Role == llm.RoleTool {
+			turn.ToolCallID = m.CallID
+			// The API has no error flag on a tool message; the text carries it.
+			if m.Failed {
+				turn.Content = "error: " + m.Text
+			}
+		}
+		for _, call := range m.Calls {
+			turn.ToolCalls = append(turn.ToolCalls, chatCall{
+				ID:       call.ID,
+				Type:     functionType,
+				Function: chatFunction{Name: call.Name, Arguments: cmp.Or(string(call.Args), "{}")},
+			})
+		}
+		req.Messages = append(req.Messages, turn)
+	}
+	return json.Marshal(req)
 }
 
-// DecodeReply implements llm.Dialect: the content of the reply's first choice.
-func (c *Client) DecodeReply(body []byte) (string, error) {
+// DecodeChat implements llm.Dialect: the content and tool calls of the reply's
+// first choice.
+func (c *Client) DecodeChat(body []byte) (llm.Reply, error) {
 	var parsed chatResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
+		return llm.Reply{}, fmt.Errorf("%w: decode response: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	if parsed.Choices == nil {
 		// A 2xx body without the chat envelope means a proxy or CDN answered,
 		// not the model — unavailable, not a bad response.
-		return "", fmt.Errorf("%w: response is not a chat-completions envelope", knowledge.ErrLLMUnavailable)
+		return llm.Reply{}, fmt.Errorf("%w: response is not a chat-completions envelope", knowledge.ErrLLMUnavailable)
 	}
 	// Further choices are alternative completions, never continuations, so
 	// only the first is read.
-	if choices := *parsed.Choices; len(choices) > 0 {
-		return choices[0].Message.Content, nil
+	choices := *parsed.Choices
+	if len(choices) == 0 {
+		return llm.Reply{}, nil
 	}
-	return "", nil
+	msg := choices[0].Message
+	reply := llm.Reply{Text: msg.Content}
+	for _, call := range msg.ToolCalls {
+		args := jsontext.Value(cmp.Or(call.Function.Arguments, "{}"))
+		if !args.IsValid() {
+			return llm.Reply{}, fmt.Errorf(
+				"%w: arguments of %s are not JSON", knowledge.ErrLLMBadResponse, call.Function.Name)
+		}
+		reply.Calls = append(reply.Calls, llm.ToolCall{ID: call.ID, Name: call.Function.Name, Args: args})
+	}
+	return reply, nil
 }

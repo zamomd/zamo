@@ -1,5 +1,6 @@
 import { App } from "../../bindings/github.com/zamomd/zamo/internal/wailsbind"
 import { base } from "./base.svelte"
+import { shell } from "./shell.svelte"
 
 // AIStore holds the effective AI policy for the window.
 class AIStore {
@@ -18,6 +19,7 @@ class AIStore {
 		this.enabled = enabled
 		if (!enabled) {
 			base.clearScope()
+			shell.assistantOpen = false
 		}
 	}
 }

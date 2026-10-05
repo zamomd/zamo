@@ -12,7 +12,6 @@ type Source string
 // The write sources of the MVP.
 const (
 	SourceGUIExpand Source = "gui_expand" // topic expansion from the app
-	SourceGUIEdit   Source = "gui_edit"   // AI edit command from the app
 	SourceMCP       Source = "mcp"        // write from an MCP tool
 )
 

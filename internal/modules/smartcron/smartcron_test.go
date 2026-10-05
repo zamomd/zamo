@@ -76,15 +76,15 @@ func (f *fakeScheduler) Preview(spec string, n int) ([]time.Time, error) {
 	return out, nil
 }
 
-type fakeEditor struct {
-	got     knowledge.AIEdit
-	applied knowledge.Applied
-	err     error
+type fakeAgent struct {
+	got host.AgentRun
+	res host.AgentResult
+	err error
 }
 
-func (f *fakeEditor) EditWithAI(_ context.Context, e knowledge.AIEdit) (knowledge.Applied, error) {
-	f.got = e
-	return f.applied, f.err
+func (f *fakeAgent) Run(_ context.Context, run host.AgentRun) (host.AgentResult, error) {
+	f.got = run
+	return f.res, f.err
 }
 
 type fakeBase struct {
@@ -101,9 +101,9 @@ func (f fakeBase) GetSubtree(_ context.Context, root knowledge.ID) ([]knowledge.
 	return []knowledge.Block{b}, nil
 }
 
-func fixture() (*Module, *fakeScheduler, *fakeEditor) {
+func fixture() (*Module, *fakeScheduler, *fakeAgent) {
 	sched := newFakeScheduler()
-	editor := &fakeEditor{applied: knowledge.Applied{GroupID: "g1"}}
+	editor := &fakeAgent{res: host.AgentResult{Applied: knowledge.Applied{GroupID: "g1"}}}
 	base := fakeBase{blocks: map[knowledge.ID]knowledge.Block{"blk": {ID: "blk", Content: "Go releases"}}}
 	return New(sched, editor, base), sched, editor
 }
@@ -190,40 +190,52 @@ func run(t *testing.T, sched *fakeScheduler, payload string) host.RunResult {
 }
 
 func TestRunOutcomes(t *testing.T) {
+	wrote := host.AgentResult{Applied: knowledge.Applied{GroupID: "g"}}
+	pending := &knowledge.UnreviewedInScopeError{Scope: "blk", Count: 3}
 	cases := []struct {
-		name    string
-		applied knowledge.Applied
-		err     error
-		want    host.Outcome
-		detail  string
+		name   string
+		res    host.AgentResult
+		err    error
+		want   host.Outcome
+		detail string
 	}{
-		{"applied", knowledge.Applied{GroupID: "g"}, nil, host.OutcomeOK, ""},
-		{"nothing changed", knowledge.Applied{}, nil, host.OutcomeNoChange, ""},
+		{"applied", wrote, nil, host.OutcomeOK, ""},
+		{"nothing changed", host.AgentResult{}, nil, host.OutcomeNoChange, ""},
+		{"pending review", host.AgentResult{}, pending, host.OutcomeSkipped, "3 unreviewed changes in scope"},
 		{
-			"pending review",
-			knowledge.Applied{},
-			&knowledge.UnreviewedInScopeError{Scope: "blk", Count: 3},
+			"review became pending during the run",
+			host.AgentResult{WriteErr: pending},
+			nil,
 			host.OutcomeSkipped, "3 unreviewed changes in scope",
 		},
-		{"block gone", knowledge.Applied{}, knowledge.ErrNotFound, host.OutcomeSkipped, "target missing"},
-		{"AI off", knowledge.Applied{}, knowledge.ErrAIDisabled, host.OutcomeSkipped, "AI is off"},
+		{"block gone", host.AgentResult{}, knowledge.ErrNotFound, host.OutcomeSkipped, "target missing"},
+		{"AI off", host.AgentResult{}, knowledge.ErrAIDisabled, host.OutcomeSkipped, "AI is off"},
 		{
 			"provider down",
-			knowledge.Applied{},
+			host.AgentResult{},
 			knowledge.ErrLLMUnavailable, host.OutcomeFailed,
 			knowledge.ErrLLMUnavailable.Error(),
 		},
+		{"ran out of rounds", host.AgentResult{Exhausted: true}, nil, host.OutcomeFailed, "did not finish"},
+		{"wrote, then ran out of rounds", host.AgentResult{Applied: wrote.Applied, Exhausted: true}, nil, host.OutcomeOK, ""},
+		{"wrote, then the provider failed", wrote, knowledge.ErrLLMUnavailable, host.OutcomeOK, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, sched, editor := fixture()
-			editor.applied, editor.err = c.applied, c.err
+			editor.res, editor.err = c.res, c.err
 
 			got := run(t, sched, `{"v":1,"instruction":"refresh"}`)
 
 			assert.Equal(t, c.want, got.Outcome)
 			assert.Contains(t, got.Detail, c.detail)
-			want := knowledge.AIEdit{Scope: "blk", Instruction: "refresh", Source: Source, Unattended: true}
+			want := host.AgentRun{
+				Persona:     host.PersonaEditor,
+				Instruction: "refresh",
+				Write:       host.WritePolicy{Scope: "blk"},
+				Source:      Source,
+				Unattended:  true,
+			}
 			assert.Equal(t, want, editor.got)
 		})
 	}

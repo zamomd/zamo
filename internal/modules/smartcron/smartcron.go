@@ -1,11 +1,12 @@
 // Package smartcron keeps a block fresh on a schedule: the owner saves an AI
 // instruction and a cron expression on a block, and the module runs that
-// instruction through the app's own AI edit path when the time comes. Every
+// instruction as an agent run over that block when the time comes. Every
 // result is an AI-authored change awaiting review; the module never writes
 // on its own authority.
 package smartcron
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -73,14 +74,14 @@ type Preview struct {
 // frontend as the schedule service.
 type Module struct {
 	sched host.Scheduler
-	ai    host.AIEditor
+	agent host.Agent
 	base  host.BaseReader
 }
 
 // New builds the module and registers its handler. Runs go one at a time:
 // each is an LLM call, and a burst after a long absence must not be one.
-func New(sched host.Scheduler, ai host.AIEditor, base host.BaseReader) *Module {
-	m := &Module{sched: sched, ai: ai, base: base}
+func New(sched host.Scheduler, agent host.Agent, base host.BaseReader) *Module {
+	m := &Module{sched: sched, agent: agent, base: base}
 	sched.Handle(m.run, host.ScheduleOptions{MaxConcurrent: 1})
 	return m
 }
@@ -95,19 +96,25 @@ func (m *Module) run(ctx context.Context, key string, raw jsontext.Value) host.R
 	if p.V > payloadVersion {
 		return failed(fmt.Sprintf("payload version %d is newer than this build understands", p.V))
 	}
-	applied, err := m.ai.EditWithAI(ctx, knowledge.AIEdit{
-		Scope: knowledge.ID(key), Instruction: p.Instruction, Source: Source, Unattended: true,
+	res, err := m.agent.Run(ctx, host.AgentRun{
+		Persona:     host.PersonaEditor,
+		Instruction: p.Instruction,
+		Write:       host.WritePolicy{Scope: knowledge.ID(key)},
+		Source:      Source,
+		Unattended:  true,
 	})
-	if err == nil {
-		if applied.GroupID == "" {
-			return host.RunResult{Outcome: host.OutcomeNoChange}
-		}
+	// A write that landed is the outcome, whatever became of the run after it.
+	if res.Applied.GroupID != "" {
 		return host.RunResult{Outcome: host.OutcomeOK}
 	}
-	if pending, ok := errors.AsType[*knowledge.UnreviewedInScopeError](err); ok {
+	if pending, ok := errors.AsType[*knowledge.UnreviewedInScopeError](cmp.Or(err, res.WriteErr)); ok {
 		return skipped(fmt.Sprintf("%d unreviewed changes in scope", pending.Count))
 	}
 	switch {
+	case err == nil && res.Exhausted:
+		return failed("the model did not finish within its rounds")
+	case err == nil:
+		return host.RunResult{Outcome: host.OutcomeNoChange}
 	case errors.Is(err, knowledge.ErrNotFound):
 		return skipped("target missing")
 	case errors.Is(err, knowledge.ErrAIDisabled):

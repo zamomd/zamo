@@ -196,11 +196,6 @@ export enum Source {
     SourceGUIExpand = "gui_expand",
 
     /**
-     * AI edit command from the app
-     */
-    SourceGUIEdit = "gui_edit",
-
-    /**
      * write from an MCP tool
      */
     SourceMCP = "mcp",

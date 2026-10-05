@@ -27,11 +27,11 @@ func newRegistry(root context.Context) *jobs.Registry {
 func TestStartListsTheJobUntilDone(t *testing.T) {
 	r := newRegistry(t.Context())
 
-	_, done := r.Start(t.Context(), jobs.KindGeneration)
+	_, done := r.Start(t.Context(), jobs.KindAgent)
 	got := r.Running()
 	require.Len(t, got, 1)
 	require.Equal(t, "a", got[0].ID)
-	require.Equal(t, jobs.KindGeneration, got[0].Kind)
+	require.Equal(t, jobs.KindAgent, got[0].Kind)
 
 	done()
 	require.Empty(t, r.Running())
@@ -39,7 +39,7 @@ func TestStartListsTheJobUntilDone(t *testing.T) {
 
 func TestCancelEndsTheJobContext(t *testing.T) {
 	r := newRegistry(t.Context())
-	ctx, done := r.Start(t.Context(), jobs.KindGeneration)
+	ctx, done := r.Start(t.Context(), jobs.KindAgent)
 	defer done()
 
 	require.True(t, r.Cancel("a"), "Cancel of a running job")
@@ -49,12 +49,12 @@ func TestCancelEndsTheJobContext(t *testing.T) {
 
 func TestCancelKindOnlyTouchesThatKind(t *testing.T) {
 	r := newRegistry(t.Context())
-	gen, doneGen := r.Start(t.Context(), jobs.KindGeneration)
+	gen, doneGen := r.Start(t.Context(), jobs.KindAgent)
 	defer doneGen()
 	other, doneOther := r.Start(t.Context(), jobs.Kind("export"))
 	defer doneOther()
 
-	require.Equal(t, 1, r.CancelKind(jobs.KindGeneration))
+	require.Equal(t, 1, r.CancelKind(jobs.KindAgent))
 	require.Error(t, gen.Err(), "generation context still alive after CancelKind")
 	require.NoError(t, other.Err(), "export context ended")
 }
@@ -62,7 +62,7 @@ func TestCancelKindOnlyTouchesThatKind(t *testing.T) {
 func TestRootShutdownCancelsEveryJob(t *testing.T) {
 	root, stop := context.WithCancel(t.Context())
 	r := newRegistry(root)
-	ctx, done := r.Start(t.Context(), jobs.KindGeneration)
+	ctx, done := r.Start(t.Context(), jobs.KindAgent)
 	defer done()
 
 	stop()
@@ -77,7 +77,7 @@ func TestRootShutdownCancelsEveryJob(t *testing.T) {
 func TestParentCancellationEndsTheJob(t *testing.T) {
 	r := newRegistry(t.Context())
 	parent, cancel := context.WithCancel(t.Context())
-	ctx, done := r.Start(parent, jobs.KindGeneration)
+	ctx, done := r.Start(parent, jobs.KindAgent)
 	defer done()
 
 	cancel()
@@ -87,9 +87,9 @@ func TestParentCancellationEndsTheJob(t *testing.T) {
 
 func TestRunningIsOldestFirst(t *testing.T) {
 	r := newRegistry(t.Context())
-	_, done1 := r.Start(t.Context(), jobs.KindGeneration)
+	_, done1 := r.Start(t.Context(), jobs.KindAgent)
 	defer done1()
-	_, done2 := r.Start(t.Context(), jobs.KindGeneration)
+	_, done2 := r.Start(t.Context(), jobs.KindAgent)
 	defer done2()
 
 	got := r.Running()

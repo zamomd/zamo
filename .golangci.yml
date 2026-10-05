@@ -46,6 +46,26 @@ linters:
             - $gostd
             - github.com/zamomd/zamo/internal/jobs
             - github.com/adhocore/gronx
+        # The tools are definitions over the domain: no storage, no model.
+        tools-domain-only:
+          files:
+            - "**/internal/tools/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/zamomd/zamo/internal/knowledge
+            - github.com/google/jsonschema-go
+        # The agent loop joins a model to the tools; it never reaches storage.
+        agent-no-storage:
+          files:
+            - "**/internal/agent/**"
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/zamomd/zamo/internal/jobs
+            - github.com/zamomd/zamo/internal/knowledge
+            - github.com/zamomd/zamo/internal/llm
+            - github.com/zamomd/zamo/internal/tools
         # A feature module sees the host capability layer, domain types and
         # its own subpackages only.
         modules-host-only:
