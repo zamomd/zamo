@@ -73,6 +73,10 @@ var (
 	// could not be parsed into operations even after a retry.
 	ErrLLMBadResponse = errors.New("LLM returned an unparsable response")
 
+	// ErrLLMNoToolSupport reports that the configured model was reached but
+	// cannot call tools, which every AI feature depends on.
+	ErrLLMNoToolSupport = errors.New("model cannot call tools")
+
 	// ErrDocumentHasChildren reports a write that would leave a block under a
 	// topic root in ModeDoc. A document is the whole topic: its text is the
 	// page, and a child would be content the reader never sees.

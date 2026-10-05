@@ -30,7 +30,7 @@ func testRepo(t *testing.T) *Repo {
 // tests whose subject is a use case rather than a single storage call.
 func testService(repo *Repo) *knowledge.Service {
 	seq := 0
-	return knowledge.NewService(nil, repo, func() knowledge.ID {
+	return knowledge.NewService(repo, func() knowledge.ID {
 		seq++
 		return knowledge.ID(fmt.Sprintf("blk-%03d", seq))
 	})

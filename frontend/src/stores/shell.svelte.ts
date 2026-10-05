@@ -28,16 +28,65 @@ function loadSidebar(): SidebarPrefs {
 	return { width: null, hidden: false }
 }
 
+const ASSISTANT_KEY = "zamo.assistant"
+
+interface AssistantPrefs {
+	width: number | null
+	open: boolean
+}
+
+// Reads the stored panel preferences; anything unreadable is a closed panel
+// at its default width.
+export function readAssistantPrefs(stored: string | null): AssistantPrefs {
+	try {
+		const raw: unknown = JSON.parse(stored ?? "null")
+		if (typeof raw === "object" && raw !== null) {
+			const { width, open } = raw as Record<string, unknown>
+			return {
+				width: typeof width === "number" && Number.isFinite(width) ? width : null,
+				open: open === true,
+			}
+		}
+	} catch {}
+	return { width: null, open: false }
+}
+
+function loadAssistant(): AssistantPrefs {
+	try {
+		return readAssistantPrefs(localStorage.getItem(ASSISTANT_KEY))
+	} catch {
+		return readAssistantPrefs(null)
+	}
+}
+
 class ShellStore {
 	mode = $state<Mode>("tree")
 	// null until the user drags the edge: the stylesheet's proportional width.
 	sidebarWidth = $state<number | null>(null)
 	sidebarHidden = $state(false)
+	assistantOpen = $state(false)
+	// null until the user drags the edge: the stylesheet's own width.
+	assistantWidth = $state<number | null>(null)
 
 	constructor() {
 		const prefs = loadSidebar()
 		this.sidebarWidth = prefs.width
 		this.sidebarHidden = prefs.hidden
+		const panel = loadAssistant()
+		this.assistantOpen = panel.open
+		this.assistantWidth = panel.width
+	}
+
+	saveAssistant(): void {
+		const prefs: AssistantPrefs = { width: this.assistantWidth, open: this.assistantOpen }
+		try {
+			localStorage.setItem(ASSISTANT_KEY, JSON.stringify(prefs))
+		} catch {}
+	}
+
+	toggleAssistant(): void {
+		this.assistantOpen = !this.assistantOpen
+		this.saveAssistant()
 	}
 
 	saveSidebar(): void {

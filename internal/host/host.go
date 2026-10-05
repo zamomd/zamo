@@ -13,7 +13,9 @@ import (
 	"encoding/json/jsontext"
 	"time"
 
+	"github.com/zamomd/zamo/internal/agent"
 	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
 	"github.com/zamomd/zamo/internal/scheduler"
 )
 
@@ -61,13 +63,35 @@ type BatchWriter interface {
 	ApplyOps(ctx context.Context, meta knowledge.WriteMeta, ops []knowledge.Op) (knowledge.Applied, error)
 }
 
-// AIEditor runs an AI edit command over a scope through the one edit path the
-// app itself uses: the model's answer becomes an AI-authored batch awaiting
-// review. A module running without the owner watching sets AIEdit.Unattended,
-// and the edit then refuses to land over content still awaiting review.
-type AIEditor interface {
-	EditWithAI(ctx context.Context, e knowledge.AIEdit) (knowledge.Applied, error)
+// Agent runs the AI over the base: the model reads through the base's tools
+// and writes only what the run's policy allows, as an AI-authored batch
+// awaiting review. Every AI feature of a module goes through it.
+type Agent interface {
+	Run(ctx context.Context, run AgentRun) (AgentResult, error)
 }
+
+// AgentRun is one request to the agent.
+type AgentRun = agent.Run
+
+// AgentResult is how a run ended.
+type AgentResult = agent.Result
+
+// WritePolicy is what a run may change.
+type WritePolicy = agent.WritePolicy
+
+// Persona is who the model is asked to be in a run.
+type Persona = llm.Persona
+
+// The personas a module may run.
+const (
+	PersonaAssistant = llm.PersonaAssistant
+	PersonaEditor    = llm.PersonaEditor
+)
+
+// Message is one turn of an agent conversation. A module keeps the turns a
+// run returns and hands them back as the next run's history; it does not
+// build or read them.
+type Message = llm.Message
 
 // Schedule is a module's view of one of its scheduled records.
 type Schedule = scheduler.Schedule

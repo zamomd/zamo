@@ -61,11 +61,12 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
- * CancelGeneration cancels every generation in flight and returns how many
- * there were. The cancelled call fails with the "cancelled" code.
+ * CancelAgent cancels every agent run started on the user's behalf and
+ * returns how many there were. A cancelled call fails with the "cancelled"
+ * code.
  */
-export function CancelGeneration(): $CancellablePromise<number> {
-    return $Call.ByID(391441261);
+export function CancelAgent(): $CancellablePromise<number> {
+    return $Call.ByID(3016452972);
 }
 
 /**
@@ -108,26 +109,12 @@ export function EditBlockContent(id: knowledge$0.ID, content: string): $Cancella
 }
 
 /**
- * EditWithAI passes the call to knowledge.Service. The frontend supplies the
- * scope (a block or subtree root) and the user's text command.
+ * ExpandTopicByID has the AI write an existing topic in the shape it has: an
+ * outline grows a block tree, a document is written whole. The result awaits
+ * review. A run that writes nothing fails as a bad response.
  */
-export function EditWithAI(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(3918853051, scope, instruction);
-}
-
-/**
- * ExpandTopic passes the call to knowledge.Service.
- */
-export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(3015547164, topic, hint);
-}
-
-/**
- * ExpandTopicByID passes the call to knowledge.Service: expands an existing
- * topic in the shape it has.
- */
-export function ExpandTopicByID(id: knowledge$0.ID, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(96987004, id, hint);
+export function ExpandTopicByID(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Applied> {
+    return $Call.ByID(96987004, id);
 }
 
 /**

@@ -186,50 +186,9 @@ func (f *fakeRepo) ListUnreviewed(context.Context) (UnreviewedChanges, error) {
 
 func (f *fakeRepo) Search(context.Context, string) ([]SearchHit, error) { return nil, f.searchErr }
 
-type fakeLLM struct {
-	tree              []Op
-	treeErr           error
-	gotTopic, gotHint string
-
-	editOps        []Op
-	editErr        error
-	gotScope       []Block
-	gotInstruction string
-	editOpsCalls   int
-
-	document    string
-	documentErr error
-	gotDocument Block
-
-	pingErr error
-}
-
-func (l *fakeLLM) GenerateTree(_ context.Context, topic, hint string) ([]Op, error) {
-	l.gotTopic, l.gotHint = topic, hint
-	return l.tree, l.treeErr
-}
-
-func (l *fakeLLM) GenerateEdit(_ context.Context, scope []Block, instruction string) ([]Op, error) {
-	l.editOpsCalls++
-	l.gotScope, l.gotInstruction = scope, instruction
-	return l.editOps, l.editErr
-}
-
-func (l *fakeLLM) GenerateDocument(_ context.Context, topic, hint string) (string, error) {
-	l.gotTopic, l.gotHint = topic, hint
-	return l.document, l.documentErr
-}
-
-func (l *fakeLLM) GenerateDocumentEdit(_ context.Context, doc Block, instruction string) (string, error) {
-	l.gotDocument, l.gotInstruction = doc, instruction
-	return l.document, l.documentErr
-}
-
-func (l *fakeLLM) Ping(_ context.Context) error { return l.pingErr }
-
 func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	ops := []Op{
 		addOp("child", "root", "Child"),
@@ -250,7 +209,7 @@ func TestApplyOpsForcesGroupAndMapping(t *testing.T) {
 
 func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.ApplyOps(t.Context(),
 		WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "   "},
@@ -262,7 +221,7 @@ func TestApplyOpsRejectsEmptyTitle(t *testing.T) {
 func TestApplyOpsPropagatesRepoError(t *testing.T) {
 	boom := errors.New("disk full")
 	repo := &fakeRepo{applyErr: boom}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{addOp("t1", "", "A")})
@@ -271,7 +230,7 @@ func TestApplyOpsPropagatesRepoError(t *testing.T) {
 
 func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "t"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: "explode"}})
@@ -281,7 +240,7 @@ func TestApplyOpsRejectsMalformedOps(t *testing.T) {
 
 func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	id, err := svc.CreateTopic(t.Context(), "Local-first", "")
 	require.NoError(t, err)
@@ -299,7 +258,7 @@ func TestCreateTopicIsAnOwnerWriteOfOneRoot(t *testing.T) {
 
 func TestCreateTopicTakesItsMode(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.CreateTopic(t.Context(), "Go Contexts", ModeDoc)
 	require.NoError(t, err)
@@ -309,7 +268,7 @@ func TestCreateTopicTakesItsMode(t *testing.T) {
 
 func TestCreateTopicDefaultsToOutline(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.CreateTopic(t.Context(), "Go Contexts", "")
 	require.NoError(t, err)
@@ -318,7 +277,7 @@ func TestCreateTopicDefaultsToOutline(t *testing.T) {
 
 func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	// A bracketed name belongs here too: the root would be created and the
 	// [[...]] that asked for it would still resolve to nothing.
@@ -331,7 +290,7 @@ func TestCreateTopicRefusesANameThatResolvesToNothing(t *testing.T) {
 
 func TestCreateTopicReportsATakenName(t *testing.T) {
 	repo := &fakeRepo{applyErr: ErrDuplicateTopic}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.CreateTopic(t.Context(), "Local-first", "")
 	require.ErrorIs(t, err, ErrDuplicateTopic)
@@ -339,7 +298,7 @@ func TestCreateTopicReportsATakenName(t *testing.T) {
 
 func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 	repo := &fakeRepo{blocks: map[ID]Block{"01A": {ID: "01A", ParentID: "01ROOT", Content: "old text"}}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	require.NoError(t, svc.EditBlockContent(t.Context(), "01A", "new text"))
 	assert.Equal(t, AuthorOwner, repo.applyMeta.Author)
@@ -353,221 +312,15 @@ func TestEditBlockContentIsOwnerReviewedWrite(t *testing.T) {
 
 func TestEditBlockContentRefusesAMissingBlock(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	require.ErrorIs(t, svc.EditBlockContent(t.Context(), "01A", "new text"), ErrNotFound)
 	assert.Zero(t, repo.applyCalls, "a batch was applied for a missing block")
 }
 
-func TestEditWithAIUsesSubtreeAndAppliesDirectly(t *testing.T) {
-	scope := []Block{{ID: "01A", Content: "old text"}}
-	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "revised"}}}
-	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": scope}}
-	svc := NewService(llm, repo, seqIDs())
-
-	got, err := svc.EditWithAI(t.Context(), guiEdit("01A", "revise this block"))
-	require.NoError(t, err)
-	assert.Equal(t, ID("01A"), repo.gotSubtree)
-	assert.Equal(t, "revise this block", llm.gotInstruction)
-	require.Len(t, llm.gotScope, 1)
-	assert.Equal(t, ID("01A"), llm.gotScope[0].ID)
-	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
-	assert.Equal(t, SourceGUIEdit, repo.applyMeta.Source)
-	require.Len(t, repo.applyOps, 1)
-	assert.Equal(t, OpEdit, repo.applyOps[0].Kind)
-	assert.NotEmpty(t, got.GroupID, "want a generated group id")
-}
-
-func TestEditWithAISurfacesLLMError(t *testing.T) {
-	llm := &fakeLLM{editErr: ErrLLMUnavailable}
-	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do a thing"))
-	require.ErrorIs(t, err, ErrLLMUnavailable)
-	assert.Zero(t, repo.applyCalls, "a batch was applied despite the LLM failure")
-}
-
-func TestEditWithAIPropagatesReadError(t *testing.T) {
-	boom := errors.New("db down")
-	llm := &fakeLLM{editOps: []Op{{Kind: OpDelete, BlockID: "01A"}}}
-	repo := &fakeRepo{subtreeErr: boom}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do a thing"))
-	require.ErrorIs(t, err, boom)
-	assert.Empty(t, llm.gotInstruction, "the model was called despite a read failure")
-}
-
-func TestEditWithAIRejectsEmptyEdit(t *testing.T) {
-	llm := &fakeLLM{editOps: nil}
-	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "x"}}}}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "do nothing"))
-	require.ErrorIs(t, err, ErrEmptyOps)
-	assert.Zero(t, repo.applyCalls, "an empty edit was applied")
-}
-
-func TestExpandTopicAppliesDirectly(t *testing.T) {
-	llm := &fakeLLM{tree: []Op{addOp("t1", "", "# Go contexts")}}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs())
-
-	got, err := svc.ExpandTopic(t.Context(), "Go contexts", "cancellation")
-	require.NoError(t, err)
-	assert.Equal(t, "Go contexts", llm.gotTopic)
-	assert.Equal(t, "cancellation", llm.gotHint)
-	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
-	assert.Equal(t, SourceGUIExpand, repo.applyMeta.Source)
-	assert.Equal(t, "Go contexts", repo.applyMeta.Title, "want the batch titled by the topic")
-	assert.NotEmpty(t, got.GroupID, "want a generated group id")
-}
-
-func TestExpandTopicSurfacesLLMError(t *testing.T) {
-	llm := &fakeLLM{treeErr: ErrLLMUnavailable}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
-	require.ErrorIs(t, err, ErrLLMUnavailable)
-	assert.Zero(t, repo.applyCalls, "a batch was applied despite the LLM failure")
-}
-
-func TestExpandTopicRefusesBeforeCallingLLM(t *testing.T) {
-	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
-
-	_, err := svc.ExpandTopic(t.Context(), "private topic", "private hint")
-	require.ErrorIs(t, err, ErrAIDisabled)
-	assert.Empty(t, llm.gotTopic, "the model was called while AI was disabled")
-	assert.Empty(t, llm.gotHint, "the model was called while AI was disabled")
-}
-
-func TestEditWithAIRefusesBeforeReadingOrCallingLLM(t *testing.T) {
-	llm := &fakeLLM{editOps: []Op{{Kind: OpEdit, BlockID: "01A", Content: "should not be used"}}}
-	repo := &fakeRepo{subtrees: map[ID][]Block{"01A": {{ID: "01A", Content: "private"}}}}
-	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
-
-	_, err := svc.EditWithAI(t.Context(), guiEdit("01A", "private instruction"))
-	require.ErrorIs(t, err, ErrAIDisabled)
-	assert.Empty(t, repo.gotSubtree, "storage was called while AI was disabled")
-	assert.Empty(t, llm.gotInstruction, "the model was called while AI was disabled")
-}
-
-func TestExpandTopicRejectsEmptyTree(t *testing.T) {
-	llm := &fakeLLM{tree: nil}
-	repo := &fakeRepo{}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.ExpandTopic(t.Context(), "Go contexts", "")
-	require.ErrorIs(t, err, ErrEmptyOps)
-	assert.Zero(t, repo.applyCalls, "an empty expansion was applied")
-}
-
-func TestEditWithAIOnADocumentWritesOneContentEdit(t *testing.T) {
-	repo := &fakeRepo{subtrees: map[ID][]Block{
-		"t": {{ID: "t", Content: "# Doc\n\nOld body.", Mode: ModeDoc}},
-	}}
-	llm := &fakeLLM{document: "# Doc\n\nNew body."}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.EditWithAI(t.Context(), guiEdit("t", "rewrite the body"))
-	require.NoError(t, err)
-	assert.Zero(t, llm.editOpsCalls, "GenerateEdit was called on a document")
-	require.Len(t, repo.applyOps, 1)
-	op := repo.applyOps[0]
-	assert.Equal(t, OpEdit, op.Kind)
-	assert.Equal(t, ID("t"), op.BlockID)
-	assert.Equal(t, "# Doc\n\nNew body.", op.Content)
-	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
-	assert.Equal(t, ID("t"), llm.gotDocument.ID, "want the block being edited")
-}
-
-func TestExpandTopicIntoADocumentAsksForText(t *testing.T) {
-	repo := &fakeRepo{subtrees: map[ID][]Block{
-		"t": {{ID: "t", Content: "Go Contexts", Mode: ModeDoc}},
-	}}
-	llm := &fakeLLM{document: "# Go Contexts\n\nBody."}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
-	require.NoError(t, err)
-	require.Len(t, repo.applyOps, 1)
-	assert.Equal(t, "# Go Contexts\n\nBody.", repo.applyOps[0].Content)
-}
-
-func TestExpandTopicByIDExpandsAnOutline(t *testing.T) {
-	repo := &fakeRepo{subtrees: map[ID][]Block{
-		"t": {{ID: "t", Content: "Go Contexts"}},
-	}}
-	llm := &fakeLLM{tree: []Op{
-		addOp("t1", "", "Go Contexts"),
-		addOp("t2", "t1", "Cancellation propagates."),
-		addOp("t3", "t2", "A derived context is cancelled with its parent."),
-	}}
-	svc := NewService(llm, repo, seqIDs())
-
-	got, err := svc.ExpandTopicByID(t.Context(), "t", "cancellation")
-	require.NoError(t, err)
-	assert.Equal(t, "Go Contexts", llm.gotTopic)
-	assert.Equal(t, "cancellation", llm.gotHint)
-	require.Len(t, repo.applyOps, 2, "want the two blocks below the generated root")
-	assert.Equal(t, "Cancellation propagates.", repo.applyOps[0].Content)
-	assert.Equal(t, "t", repo.applyOps[0].Parent)
-	assert.Equal(t, string(repo.applyOps[0].BlockID), repo.applyOps[1].Parent, "nesting below the graft was lost")
-	assert.Equal(t, AuthorAI, repo.applyMeta.Author)
-	assert.Equal(t, SourceGUIExpand, repo.applyMeta.Source)
-	assert.Equal(t, "Go Contexts", repo.applyMeta.Title, "want the batch titled by the topic")
-	assert.NotEmpty(t, got.GroupID, "want a generated group id")
-}
-
-func TestExpandTopicByIDGraftsAFlatTreeOntoTheTopic(t *testing.T) {
-	repo := &fakeRepo{subtrees: map[ID][]Block{
-		"t": {{ID: "t", Content: "Go Contexts"}},
-	}}
-	llm := &fakeLLM{tree: []Op{
-		addOp("t1", "", "Cancellation propagates."),
-		addOp("t2", "", "Deadlines are contexts too."),
-	}}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
-	require.NoError(t, err)
-	require.Len(t, repo.applyOps, 2)
-	for i, op := range repo.applyOps {
-		assert.Equal(t, "t", op.Parent, "op %d", i)
-	}
-}
-
-func TestExpandTopicByIDRefusesAnEmptyExpansion(t *testing.T) {
-	repo := &fakeRepo{subtrees: map[ID][]Block{
-		"t": {{ID: "t", Content: "Go Contexts"}},
-	}}
-	llm := &fakeLLM{tree: []Op{addOp("t1", "", "Go Contexts")}}
-	svc := NewService(llm, repo, seqIDs())
-
-	_, err := svc.ExpandTopicByID(t.Context(), "t", "")
-	require.ErrorIs(t, err, ErrLLMBadResponse)
-	assert.Zero(t, repo.applyCalls)
-}
-
-func TestExpandTopicByIDRefusesBeforeCallingLLM(t *testing.T) {
-	llm := &fakeLLM{tree: []Op{addOp("t1", "", "should not be used")}}
-	repo := &fakeRepo{subtrees: map[ID][]Block{"t": {{ID: "t", Content: "private topic"}}}}
-	svc := NewService(llm, repo, seqIDs(), WithAIPolicy(func() bool { return false }))
-
-	_, err := svc.ExpandTopicByID(t.Context(), "t", "private hint")
-	require.ErrorIs(t, err, ErrAIDisabled)
-	assert.Empty(t, repo.gotSubtree, "storage was called while AI was disabled")
-	assert.Empty(t, llm.gotTopic, "the model was called while AI was disabled")
-	assert.Empty(t, llm.gotHint, "the model was called while AI was disabled")
-}
-
 func TestServiceReviewPassThroughs(t *testing.T) {
 	repo := &fakeRepo{unreviewed: UnreviewedChanges{Blocks: []UnreviewedBlock{{Head: Revision{ID: "R1"}}}}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	got, err := svc.Unreviewed(t.Context())
 	require.NoError(t, err)
@@ -597,7 +350,7 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 		Edges:  []TopicEdge{{From: "01A", To: "01B"}},
 	}
 	repo := &fakeRepo{graph: want}
-	svc := NewService(nil, repo, nil)
+	svc := NewService(repo, nil)
 
 	got, err := svc.TopicGraph(t.Context())
 	require.NoError(t, err)
@@ -605,7 +358,7 @@ func TestTopicGraphPassesThrough(t *testing.T) {
 	assert.Equal(t, want.Edges, got.Edges)
 
 	boom := errors.New("boom")
-	_, err = NewService(nil, &fakeRepo{graphErr: boom}, nil).TopicGraph(t.Context())
+	_, err = NewService(&fakeRepo{graphErr: boom}, nil).TopicGraph(t.Context())
 	require.ErrorIs(t, err, boom)
 }
 
@@ -624,7 +377,7 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 		},
 		{
 			name:       "the owner's own batch still applies",
-			meta:       WriteMeta{Author: AuthorOwner, Source: SourceGUIEdit, Title: "by hand"},
+			meta:       WriteMeta{Author: AuthorOwner, Source: SourceGUIManual, Title: "by hand"},
 			wantRefuse: false,
 		},
 	}
@@ -632,7 +385,7 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeRepo{}
-			svc := NewService(nil, repo, seqIDs(), WithAIPolicy(off))
+			svc := NewService(repo, seqIDs(), WithAIPolicy(off))
 
 			_, err := svc.ApplyOps(t.Context(), tt.meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})
 			if tt.wantRefuse {
@@ -648,7 +401,7 @@ func TestApplyOpsRefusesAIWritesWhileAIIsOff(t *testing.T) {
 func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 	enabled := true
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs(), WithAIPolicy(func() bool { return enabled }))
+	svc := NewService(repo, seqIDs(), WithAIPolicy(func() bool { return enabled }))
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
 	ops := []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}}
@@ -663,7 +416,7 @@ func TestApplyOpsAsksThePolicyEveryTime(t *testing.T) {
 
 func TestApplyOpsAllowsAIWritesWithNoPolicy(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	meta := WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "batch"}
 	_, err := svc.ApplyOps(t.Context(), meta, []Op{{Kind: OpAdd, TempID: "t1", Content: "x"}})

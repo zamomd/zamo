@@ -21,8 +21,7 @@ const reloadFixture = vi.hoisted(() => ({
 	createdTopicID: "",
 	createTopicError: null as Error | null,
 	expandByIDError: null as Error | null,
-	editError: null as Error | null,
-	editGate: null as Promise<void> | null,
+	expandGate: null as Promise<void> | null,
 }))
 const change = vi.hoisted(() => (GroupID: string, BlockID = "") => ({ GroupID, BlockID }))
 vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
@@ -43,8 +42,10 @@ vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 			}
 			return reloadFixture.subtrees[id] ?? []
 		},
-		ExpandTopic: vi.fn(async () => {}),
 		ExpandTopicByID: vi.fn(async () => {
+			if (reloadFixture.expandGate !== null) {
+				await reloadFixture.expandGate
+			}
 			if (reloadFixture.expandByIDError !== null) {
 				throw reloadFixture.expandByIDError
 			}
@@ -62,15 +63,7 @@ vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 			}
 			return reloadFixture.backlinks[id] ?? []
 		}),
-		EditWithAI: vi.fn(async () => {
-			if (reloadFixture.editGate !== null) {
-				await reloadFixture.editGate
-			}
-			if (reloadFixture.editError !== null) {
-				throw reloadFixture.editError
-			}
-		}),
-		CancelGeneration: vi.fn(async () => 1),
+		CancelAgent: vi.fn(async () => 1),
 		EditBlockContent: vi.fn(async () => {
 			if (reloadFixture.writeGate !== null) {
 				await reloadFixture.writeGate
@@ -161,8 +154,7 @@ beforeEach(() => {
 	reloadFixture.writeGate = null
 	reloadFixture.onSubtree = null
 	reloadFixture.subtreeGate = null
-	reloadFixture.editError = null
-	reloadFixture.editGate = null
+	reloadFixture.expandGate = null
 	reloadFixture.topics = [block("go", ""), block("sqlite", "")]
 	reloadFixture.subtrees = {
 		go: [block("go", ""), block("ctx", "go"), block("done", "ctx")],
@@ -493,8 +485,6 @@ describe("zoom-in", () => {
 
 describe("cancelling a generation", () => {
 	beforeEach(() => {
-		base.command = "tighten this"
-		base.scopeID = "go"
 		base.busy = false
 		base.editingID = null
 		base.error = ""
@@ -503,32 +493,32 @@ describe("cancelling a generation", () => {
 	it("is a no-op unless a generation is in flight", async () => {
 		await base.cancelAI()
 
-		expect(App.CancelGeneration).not.toHaveBeenCalled()
+		expect(App.CancelAgent).not.toHaveBeenCalled()
 	})
 
 	it("asks the backend to cancel while the model is working", async () => {
 		let release = () => {}
-		reloadFixture.editGate = new Promise<void>((resolve) => {
+		reloadFixture.expandGate = new Promise<void>((resolve) => {
 			release = resolve
 		})
-		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }))
+		reloadFixture.expandByIDError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }))
 
-		const asking = base.askAI()
+		const expanding = base.expandTopic("go")
 		await vi.waitFor(() => expect(base.generating).toBe(true))
 
 		await base.cancelAI()
-		expect(App.CancelGeneration).toHaveBeenCalled()
+		expect(App.CancelAgent).toHaveBeenCalled()
 		expect(base.cancelling).toBe(true)
 
 		release()
-		await asking
+		await expanding
 		expect(base.cancelling).toBe(false)
 	})
 
 	it("settles a cancelled generation without an error", async () => {
-		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }))
+		reloadFixture.expandByIDError = new Error(JSON.stringify({ cause: { code: "cancelled", message: "x" } }))
 
-		await base.askAI()
+		await base.expandTopic("go")
 
 		expect(base.error).toBe("")
 		expect(base.generating).toBe(false)
@@ -536,94 +526,70 @@ describe("cancelling a generation", () => {
 	})
 
 	it("still reports other generation failures as errors", async () => {
-		reloadFixture.editError = new Error(JSON.stringify({ cause: { code: "llm_unavailable", message: "x" } }))
+		reloadFixture.expandByIDError = new Error(JSON.stringify({ cause: { code: "llm_unavailable", message: "x" } }))
 
-		await base.askAI()
+		await base.expandTopic("go")
 
 		expect(base.error).not.toBe("")
 	})
 })
 
-describe("askAI's selection", () => {
+describe("absorbing a write the assistant made", () => {
 	beforeEach(() => {
-		base.command = ""
 		base.scopeID = null
 		base.busy = false
 		base.editingID = null
 	})
 
-	it("selects the newcomer after an untargeted expansion", async () => {
+	it("selects a topic the write created", async () => {
 		base.forest = [node("go", "")]
 		base.selectedTopicID = "go"
-		base.scopeID = null
-		base.command = "rust"
 		reloadFixture.topics = [block("go", ""), block("rust", "")]
 		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] }
 
-		await base.askAI()
+		await base.absorbWrite()
 
 		expect(base.selectedTopicID).toBe("rust")
 	})
 
-	it("drops the focus when an untargeted expansion moves onto the newcomer", async () => {
+	it("drops the focus when it moves onto a new topic", async () => {
 		base.forest = [node("go", "", [node("ctx", "go")])]
 		base.selectedTopicID = "go"
-		base.scopeID = null
-		base.command = "rust"
 		await base.focus("ctx")
 		reloadFixture.topics = [block("go", ""), block("rust", "")]
 		reloadFixture.subtrees = { go: [block("go", "")], rust: [block("rust", "")] }
 
-		await base.askAI()
+		await base.absorbWrite()
 
 		expect(base.focusID).toBe(null)
 		expect(base.viewRoot?.block.ID).toBe("rust")
 	})
 
-	it("leaves the selection alone for a scoped edit", async () => {
+	it("shows a change inside the open topic and leaves the selection alone", async () => {
 		base.forest = [node("go", ""), node("sqlite", "")]
 		base.selectedTopicID = "go"
-		base.scopeID = "go"
-		base.command = "restructure this"
-		reloadFixture.topics = [block("go", ""), block("sqlite", "")]
-		reloadFixture.subtrees = { go: [block("go", "")], sqlite: [block("sqlite", "")] }
-
-		await base.askAI()
-
-		expect(base.selectedTopicID).toBe("go")
-	})
-
-	it("reloads the tree after a scoped edit, not just after an untargeted expansion", async () => {
-		base.forest = [node("go", ""), node("sqlite", "")]
-		base.selectedTopicID = "go"
-		base.scopeID = "go"
-		base.command = "restructure this"
 		reloadFixture.topics = [block("go", ""), block("sqlite", "")]
 		reloadFixture.subtrees = { go: [block("go", ""), block("fresh", "go")], sqlite: [block("sqlite", "")] }
 
-		await base.askAI()
+		await base.absorbWrite()
 
-		expect(App.EditWithAI).toHaveBeenCalledWith("go", "restructure this")
+		expect(base.selectedTopicID).toBe("go")
 		expect(findNode(base.forest, "fresh")?.block.ID).toBe("fresh")
 	})
 
-	it("marks a scoped edit that changed nothing, until the next request", async () => {
-		base.forest = [node("go", "")]
+	it("keeps an edit the owner has open, text and all", async () => {
+		base.forest = [node("go", "", [node("ctx", "go", [], "before")])]
 		base.selectedTopicID = "go"
-		base.scopeID = "go"
-		base.command = "restructure this"
+		await base.startEdit(block("ctx", "go", "before"), 0)
+		base.editText = "the owner is typing"
 		reloadFixture.topics = [block("go", "")]
-		reloadFixture.subtrees = { go: [block("go", "")] }
-		vi.mocked(App.EditWithAI).mockResolvedValueOnce(change("") as never)
+		reloadFixture.subtrees = { go: [block("go", ""), block("ctx", "go", "rewritten by the assistant")] }
 
-		await base.askAI()
-		expect(base.unchanged).toBe(true)
+		await base.absorbWrite()
 
-		base.scopeID = "go"
-		base.command = "again"
-		vi.mocked(App.EditWithAI).mockResolvedValueOnce(change("g1") as never)
-		await base.askAI()
-		expect(base.unchanged).toBe(false)
+		expect(base.editingID).toBe("ctx")
+		expect(base.editText).toBe("the owner is typing")
+		expect(App.EditBlockContent).not.toHaveBeenCalled()
 	})
 })
 
@@ -878,8 +844,7 @@ describe("asking the AI to write an existing topic", () => {
 
 		await base.expandTopic("go")
 
-		expect(App.ExpandTopicByID).toHaveBeenCalledWith("go", "")
-		expect(App.ExpandTopic).not.toHaveBeenCalled()
+		expect(App.ExpandTopicByID).toHaveBeenCalledWith("go")
 		expect(findNode(base.forest, "written")?.block.ID).toBe("written")
 	})
 
@@ -1080,12 +1045,6 @@ describe("an open edit no longer locks the interface", () => {
 		expect(base.scopeID).toBe("done")
 	})
 
-	it("sending an AI command commits first", async () => {
-		base.command = "tighten this"
-		await base.askAI()
-		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after")
-	})
-
 	it("accepting a change commits first", async () => {
 		await base.accept("done")
 		expect(App.EditBlockContent).toHaveBeenCalledWith("ctx", "after")
@@ -1153,17 +1112,6 @@ describe("a failed commit aborts the gesture", () => {
 		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"))
 		await base.setScope(block("done", "ctx", "done"))
 		expect(base.scopeID).toBe(null)
-		expect(base.busy).toBe(false)
-		expect(base.editingID).toBe("ctx")
-		expect(base.editText).toBe("after")
-	})
-
-	it("leaves the command alone when the commit that sending an AI command triggers fails", async () => {
-		base.busy = false
-		vi.mocked(App.EditBlockContent).mockRejectedValueOnce(new Error("bridge down"))
-		base.command = "tighten this"
-		await base.askAI()
-		expect(base.command).toBe("tighten this")
 		expect(base.busy).toBe(false)
 		expect(base.editingID).toBe("ctx")
 		expect(base.editText).toBe("after")

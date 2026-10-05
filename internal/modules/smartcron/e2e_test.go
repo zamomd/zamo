@@ -2,7 +2,7 @@ package smartcron_test
 
 import (
 	"context"
-	"errors"
+	"encoding/json/jsontext"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -12,17 +12,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zamomd/zamo/internal/agent"
 	"github.com/zamomd/zamo/internal/host"
 	"github.com/zamomd/zamo/internal/jobs"
 	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
 	"github.com/zamomd/zamo/internal/modules/smartcron"
 	"github.com/zamomd/zamo/internal/scheduler"
 	"github.com/zamomd/zamo/internal/sqlite"
 )
 
-// scriptedLLM answers every edit with the content it is told to.
+// scriptedLLM plays an editor run: asked to do something, it rewrites the
+// block it is told to with the content it is told to, then says it is done.
 type scriptedLLM struct {
 	mu      sync.Mutex
+	block   knowledge.ID
 	content string
 	calls   int
 }
@@ -33,23 +37,15 @@ func (l *scriptedLLM) count() int {
 	return l.calls
 }
 
-func (l *scriptedLLM) GenerateTree(context.Context, string, string) ([]knowledge.Op, error) {
-	return nil, errors.New("not scripted")
-}
-
-func (l *scriptedLLM) GenerateEdit(_ context.Context, scope []knowledge.Block, _ string) ([]knowledge.Op, error) {
+func (l *scriptedLLM) Chat(_ context.Context, r llm.Request) (llm.Reply, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if r.Messages[len(r.Messages)-1].Role != llm.RoleUser {
+		return llm.Reply{Text: "done"}, nil
+	}
 	l.calls++
-	return []knowledge.Op{{Kind: knowledge.OpEdit, BlockID: scope[0].ID, Content: l.content}}, nil
-}
-
-func (l *scriptedLLM) GenerateDocument(context.Context, string, string) (string, error) {
-	return "", errors.New("not scripted")
-}
-
-func (l *scriptedLLM) GenerateDocumentEdit(context.Context, knowledge.Block, string) (string, error) {
-	return "", errors.New("not scripted")
+	args := fmt.Sprintf(`{"title":"refresh","ops":[{"op":"edit","block_id":%q,"content":%q}]}`, l.block, l.content)
+	return llm.Reply{Calls: []llm.ToolCall{{ID: "c1", Name: "write_blocks", Args: jsontext.Value(args)}}}, nil
 }
 
 func (l *scriptedLLM) Ping(context.Context) error { return nil }
@@ -70,17 +66,19 @@ func TestScheduledRefreshWritesOneReviewableChange(t *testing.T) {
 		ids++
 		return fmt.Sprintf("id-%03d", ids)
 	}
-	llm := &scriptedLLM{content: "Go 1.27 is out"}
-	svc := knowledge.NewService(llm, sqlite.NewRepo(db, time.Now, func() knowledge.ID { return knowledge.ID(newID()) }),
-		func() knowledge.ID { return knowledge.ID(newID()) }, knowledge.WithAIPolicy(func() bool { return true }))
-	sched, err := scheduler.New(sqlite.NewSchedules(db, time.Now), jobs.New(ctx, newID, time.Now), time.Now, newID,
-		scheduler.Options{})
+	model := &scriptedLLM{content: "Go 1.27 is out"}
+	svc := knowledge.NewService(sqlite.NewRepo(db, time.Now, func() knowledge.ID { return knowledge.ID(newID()) }),
+		func() knowledge.ID { return knowledge.ID(newID()) })
+	reg := jobs.New(ctx, newID, time.Now)
+	sched, err := scheduler.New(sqlite.NewSchedules(db, time.Now), reg, time.Now, newID, scheduler.Options{})
 	require.NoError(t, err)
 	sched.Start(ctx)
-	module := smartcron.New(sched.For(smartcron.Name), svc, svc)
+	runner := agent.New(model, svc, func() bool { return true }, reg)
+	module := smartcron.New(sched.For(smartcron.Name), runner, svc)
 
 	topic, err := svc.CreateTopic(ctx, "Go releases", knowledge.ModeOutline)
 	require.NoError(t, err)
+	model.block = topic
 	_, err = module.Save(ctx, topic, "refresh the release list", "0 9 * * *", true)
 	require.NoError(t, err)
 
@@ -103,7 +101,7 @@ func TestScheduledRefreshWritesOneReviewableChange(t *testing.T) {
 		t.Helper()
 		view := runAndWait()
 		for range 100 {
-			if llm.count() >= attempt || view.Outcome == string(host.OutcomeSkipped) {
+			if model.count() >= attempt || view.Outcome == string(host.OutcomeSkipped) {
 				return view
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -125,7 +123,7 @@ func TestScheduledRefreshWritesOneReviewableChange(t *testing.T) {
 	second := settled(1)
 	assert.Equal(t, string(host.OutcomeSkipped), second.Outcome, "second run must skip over the pending change")
 	assert.Equal(t, "1 unreviewed changes in scope", second.Detail)
-	assert.Equal(t, 1, llm.count(), "the refused run must not spend a call")
+	assert.Equal(t, 1, model.count(), "the refused run must not spend a call")
 
 	require.NoError(t, svc.AcceptGroup(ctx, pending.Blocks[0].GroupID))
 	third := settled(2)

@@ -1,8 +1,8 @@
 // Package settings is the use case for the provider settings screen: read the
 // effective configuration, save the mutable layer, swap the live client.
 //
-// It sits outside knowledge on purpose: the domain only ever sees an
-// LLMClient and must not learn about providers, TOML or paths.
+// It sits outside knowledge on purpose: the domain knows nothing of models,
+// providers, TOML or paths.
 package settings
 
 import (
@@ -75,7 +75,7 @@ func New(holder *llm.Holder, policy *Policy, path string) *Manager {
 
 // BuildClient creates the configured provider client.
 // An empty provider returns llm.Disabled.
-func BuildClient(r config.Resolved) (knowledge.LLMClient, error) {
+func BuildClient(r config.Resolved) (llm.Client, error) {
 	switch r.Config.LLM.Provider {
 	case "":
 		return llm.Disabled{}, nil
@@ -159,7 +159,8 @@ func (m *Manager) Save(_ context.Context, in In) error {
 	return nil
 }
 
-// Check tests an unsaved submission without changing runtime state or files.
+// Check tests an unsaved submission without changing runtime state or files:
+// the provider is reachable, and the model calls a tool when offered one.
 func (m *Manager) Check(ctx context.Context, in In) error {
 	current, err := config.ResolveFrom("", m.path)
 	if err != nil {
@@ -186,7 +187,10 @@ func (m *Manager) Check(ctx context.Context, in In) error {
 	if err != nil {
 		return err
 	}
-	return client.Ping(ctx)
+	if err := client.Ping(ctx); err != nil {
+		return err
+	}
+	return llm.ProbeTools(ctx, client)
 }
 
 // overrides converts a submission to the mutable configuration layer.

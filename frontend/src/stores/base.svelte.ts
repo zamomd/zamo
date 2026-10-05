@@ -45,13 +45,9 @@ type Command = {
 // BaseStore is the persistent view model for browsing, editing, and reviewing
 // the knowledge tree.
 class BaseStore {
-	command = $state("")
 	scopeID = $state<string | null>(null)
 	// cancelling is true from the cancel gesture until the generation settles.
 	cancelling = $state(false)
-	// unchanged marks that the last targeted AI edit came back with nothing to
-	// apply; without it such a request would end with no visible outcome.
-	unchanged = $state(false)
 	error = $state("")
 	busy = $state(false)
 	// generating is the subset of busy spent waiting on the model: the only
@@ -366,7 +362,6 @@ class BaseStore {
 			return
 		}
 		this.scopeID = this.scopeID === block.ID ? null : block.ID
-		this.unchanged = false
 		this.busy = false
 	}
 
@@ -392,43 +387,22 @@ class BaseStore {
 		}
 		this.cancelling = true
 		try {
-			await App.CancelGeneration()
+			await App.CancelAgent()
 		} catch (err: unknown) {
 			this.error = messageFor(err)
 		}
 	}
 
-	async askAI(): Promise<void> {
-		const text = this.command.trim()
-		if (text === "" || this.busy) {
-			return
-		}
-		this.busy = true
-		if (!(await this.commitEdit())) {
-			this.busy = false
-			return
-		}
-		this.error = ""
-		this.unchanged = false
-		this.generating = true
-		try {
-			const scope = this.scopeID
-			if (scope === null) {
-				await this.expandNewTopic(text)
-			} else {
-				const applied = await App.EditWithAI(scope, text)
-				await this.reload()
-				// An empty group means the model answered with what was already there.
-				this.unchanged = applied.GroupID === ""
-			}
-			this.command = ""
-			this.clearScope()
-		} catch (err: unknown) {
-			this.generationFailed(err)
-		} finally {
-			this.generating = false
-			this.cancelling = false
-			this.busy = false
+	// absorbWrite re-reads the base after a write the assistant made and moves
+	// onto a topic that write created. An edit the owner has open is left as it
+	// is: committing it later lands their text on top of the assistant's.
+	async absorbWrite(): Promise<void> {
+		const before = new Set(this.forest.map((t) => t.block.ID))
+		await this.reload()
+		const fresh = this.forest.find((t) => !before.has(t.block.ID))
+		if (fresh) {
+			this.selectedTopicID = fresh.block.ID
+			this.focusID = null
 		}
 	}
 
@@ -436,8 +410,7 @@ class BaseStore {
 	// an unresolved [[Topic]] reference in the tree offers to create its
 	// target. Deliberately not an AI expansion: the provider has no default, so
 	// routing this through the model would make creating a topic impossible on
-	// a fresh install. Expanding a topic with the AI stays its own gesture, the
-	// untargeted half of askAI.
+	// a fresh install. Writing a topic with the AI stays its own gesture.
 	async createTopic(name: string, mode: "outline" | "doc" = "outline"): Promise<void> {
 		if (this.busy) {
 			return
@@ -463,11 +436,9 @@ class BaseStore {
 	}
 
 	// expandTopic asks the AI to write a topic that already exists, in the shape
-	// it has: an outline grows a block tree, a document is written whole. This
-	// is the counterpart of askAI's untargeted half, which names a *new* topic
-	// after the command text — an existing empty topic has a name already, and
-	// it is the prompt. Steering it with an instruction is the targeted half:
-	// setScope on the topic, then the command box.
+	// it has: an outline grows a block tree, a document is written whole. The
+	// topic's name is the whole prompt; steering it with an instruction is the
+	// assistant's job.
 	async expandTopic(id: string): Promise<void> {
 		if (this.busy) {
 			return
@@ -478,10 +449,9 @@ class BaseStore {
 			return
 		}
 		this.error = ""
-		this.unchanged = false
 		this.generating = true
 		try {
-			await App.ExpandTopicByID(id, "")
+			await App.ExpandTopicByID(id)
 			await this.reload()
 		} catch (err: unknown) {
 			this.generationFailed(err)
@@ -515,17 +485,6 @@ class BaseStore {
 			this.error = messageFor(err)
 		} finally {
 			this.busy = false
-		}
-	}
-
-	private async expandNewTopic(name: string): Promise<void> {
-		await App.ExpandTopic(name, "")
-		const before = new Set(this.forest.map((t) => t.block.ID))
-		await this.reload()
-		const fresh = this.forest.find((t) => !before.has(t.block.ID))
-		if (fresh) {
-			this.selectedTopicID = fresh.block.ID
-			this.focusID = null
 		}
 	}
 

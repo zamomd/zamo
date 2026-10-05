@@ -21,20 +21,8 @@ type stubClient struct{}
 
 func ptr[T any](v T) *T { return &v }
 
-func (stubClient) GenerateTree(_ context.Context, _, _ string) ([]knowledge.Op, error) {
-	return nil, nil
-}
-
-func (stubClient) GenerateEdit(_ context.Context, _ []knowledge.Block, _ string) ([]knowledge.Op, error) {
-	return nil, nil
-}
-
-func (stubClient) GenerateDocument(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-
-func (stubClient) GenerateDocumentEdit(_ context.Context, _ knowledge.Block, _ string) (string, error) {
-	return "", nil
+func (stubClient) Chat(context.Context, llm.Request) (llm.Reply, error) {
+	return llm.Reply{}, nil
 }
 
 func (stubClient) Ping(_ context.Context) error { return nil }
@@ -321,4 +309,42 @@ func TestCurrentReportsNoStoredSwitchWhenUntouched(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, v.AIEnabled.Value, "want the declared false")
 	assert.Nil(t, v.AIEnabled.Override, "config.toml declared it, not the GUI")
+}
+
+// modelServer answers the models probe and replies to every chat with body.
+func modelServer(t *testing.T, chatBody string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		_, _ = io.WriteString(w, chatBody)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestCheckPassesWhenTheModelCallsTools(t *testing.T) {
+	url := modelServer(t, `{"choices":[{"message":{"role":"assistant","tool_calls":[`+
+		`{"id":"c1","type":"function","function":{"name":"ping","arguments":"{}"}}]}}]}`)
+	m, _, _ := newManager(t, "")
+
+	err := m.Check(t.Context(), In{
+		Provider: ptr(config.ProviderOpenAICompat), BaseURL: ptr(url), Model: ptr("qwen3"),
+	})
+
+	assert.NoError(t, err)
+}
+
+func TestCheckFailsWhenTheModelCannotCallTools(t *testing.T) {
+	url := modelServer(t, `{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`)
+	m, _, _ := newManager(t, "")
+
+	err := m.Check(t.Context(), In{
+		Provider: ptr(config.ProviderOpenAICompat), BaseURL: ptr(url), Model: ptr("qwen3"),
+	})
+
+	assert.ErrorIs(t, err, knowledge.ErrLLMNoToolSupport)
 }

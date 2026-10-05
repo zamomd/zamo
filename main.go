@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/zamomd/zamo/internal/agent"
 	"github.com/zamomd/zamo/internal/backup"
 	"github.com/zamomd/zamo/internal/config"
 	"github.com/zamomd/zamo/internal/fsexport"
@@ -23,6 +24,7 @@ import (
 	"github.com/zamomd/zamo/internal/knowledge"
 	"github.com/zamomd/zamo/internal/llm"
 	"github.com/zamomd/zamo/internal/mcp"
+	"github.com/zamomd/zamo/internal/modules/assistant"
 	"github.com/zamomd/zamo/internal/modules/basebackup"
 	"github.com/zamomd/zamo/internal/modules/export"
 	"github.com/zamomd/zamo/internal/modules/smartcron"
@@ -97,9 +99,10 @@ func run() error {
 	switch mode {
 	case "gui":
 		reg := jobs.New(ctx, ulid.New, time.Now)
-		return runGUI(ctx, svc, settings.New(holder, livePolicy, settingsPath), reg, base, store)
+		runner := agent.New(holder, svc, livePolicy.AIEnabled, reg)
+		return runGUI(ctx, svc, settings.New(holder, livePolicy, settingsPath), reg, runner, base, store)
 	case "mcp":
-		return mcp.NewServer(svc, svc, svc, version).Run(ctx)
+		return mcp.NewServer(svc, svc, version).Run(ctx)
 	default:
 		return fmt.Errorf("unknown mode %q (available: gui, mcp)", mode)
 	}
@@ -132,7 +135,7 @@ func buildService(
 	holder := llm.NewHolder(client)
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
 
-	svc := knowledge.NewService(holder, sqlite.NewRepo(db, time.Now, newID), newID, knowledge.WithAIPolicy(policy))
+	svc := knowledge.NewService(sqlite.NewRepo(db, time.Now, newID), newID, knowledge.WithAIPolicy(policy))
 	store := sqlite.NewSchedules(db, time.Now)
 	return svc, holder, backup.NewBase(db, dbPath, version), store, func() { db.Close() }, nil
 }
@@ -140,7 +143,7 @@ func buildService(
 // runGUI runs the Wails application; it blocks until the window closes.
 func runGUI(
 	ctx context.Context, svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry,
-	base backup.Base, store *sqlite.Schedules,
+	runner *agent.Runner, base backup.Base, store *sqlite.Schedules,
 ) error {
 	bind := wailsbind.New(svc, mgr, reg)
 	var emitter wailsbind.Emitter
@@ -156,7 +159,12 @@ func runGUI(
 		return err
 	}
 	wailsbind.SetScheduler(bind, sched)
-	cron := smartcron.New(sched.For(smartcron.Name), svc, svc)
+	// Runs the owner starts report their steps to the window; a scheduled
+	// run has nobody watching and reports none.
+	attended := wailsbind.Announce(runner, func() wailsbind.Emitter { return emitter })
+	wailsbind.SetAgent(bind, attended)
+	cron := smartcron.New(sched.For(smartcron.Name), runner, svc)
+	helper := assistant.New(attended, svc)
 	exporter := export.New(svc, fsexport.Writer{})
 	archive := basebackup.New(base)
 	importer := vaultimport.New(svc, svc, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
@@ -170,6 +178,7 @@ func runGUI(
 			application.NewServiceWithOptions(archive, wailsbind.ServiceOptions()),
 			application.NewServiceWithOptions(importer, wailsbind.ServiceOptions()),
 			application.NewServiceWithOptions(cron, wailsbind.ServiceOptions()),
+			application.NewServiceWithOptions(helper, wailsbind.ServiceOptions()),
 		},
 		MarshalError: wailsbind.MarshalError,
 		Assets: application.AssetOptions{

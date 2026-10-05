@@ -3,27 +3,25 @@ package llm
 import (
 	"context"
 	"sync"
-
-	"github.com/zamomd/zamo/internal/knowledge"
 )
 
-// Holder is an LLMClient whose implementation can be replaced while the
-// application runs. The service takes it once at wiring time and keeps that
+// Holder is a Client whose implementation can be replaced while the
+// application runs. Its users take it once at wiring time and keep that
 // reference; the settings screen swaps what is inside, so changing provider or
 // key takes effect without a restart.
 type Holder struct {
 	mu     sync.RWMutex
-	client knowledge.LLMClient
+	client Client
 }
 
-var _ knowledge.LLMClient = (*Holder)(nil)
+var _ Client = (*Holder)(nil)
 
 // NewHolder wraps the client the application starts with.
-func NewHolder(c knowledge.LLMClient) *Holder { return &Holder{client: c} }
+func NewHolder(c Client) *Holder { return &Holder{client: c} }
 
 // Set replaces the underlying client. Calls already in flight finish against
 // the previous one.
-func (h *Holder) Set(c knowledge.LLMClient) {
+func (h *Holder) Set(c Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.client = c
@@ -31,39 +29,16 @@ func (h *Holder) Set(c knowledge.LLMClient) {
 
 // current reads the client under the read lock; the call itself must not hold
 // the lock, or a slow request would block every swap.
-func (h *Holder) current() knowledge.LLMClient {
+func (h *Holder) current() Client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.client
 }
 
-// GenerateTree implements knowledge.LLMClient.
-func (h *Holder) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
-	return h.current().GenerateTree(ctx, topic, hint)
+// Chat implements Client.
+func (h *Holder) Chat(ctx context.Context, r Request) (Reply, error) {
+	return h.current().Chat(ctx, r)
 }
 
-// GenerateEdit implements knowledge.LLMClient.
-func (h *Holder) GenerateEdit(
-	ctx context.Context,
-	scope []knowledge.Block,
-	instruction string,
-) ([]knowledge.Op, error) {
-	return h.current().GenerateEdit(ctx, scope, instruction)
-}
-
-// GenerateDocument implements knowledge.LLMClient.
-func (h *Holder) GenerateDocument(ctx context.Context, topic, hint string) (string, error) {
-	return h.current().GenerateDocument(ctx, topic, hint)
-}
-
-// GenerateDocumentEdit implements knowledge.LLMClient.
-func (h *Holder) GenerateDocumentEdit(
-	ctx context.Context,
-	doc knowledge.Block,
-	instruction string,
-) (string, error) {
-	return h.current().GenerateDocumentEdit(ctx, doc, instruction)
-}
-
-// Ping implements knowledge.LLMClient.
+// Ping implements Client.
 func (h *Holder) Ping(ctx context.Context) error { return h.current().Ping(ctx) }

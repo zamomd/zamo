@@ -39,6 +39,7 @@ func TestMarshalErrorCodes(t *testing.T) {
 		{knowledge.ErrAIDisabled, "ai_disabled"},
 		{knowledge.ErrLLMUnavailable, "llm_unavailable"},
 		{knowledge.ErrLLMBadResponse, "llm_bad_response"},
+		{knowledge.ErrLLMNoToolSupport, "llm_no_tools"},
 		{settings.ErrDeclarative, "declarative"},
 	}
 	for _, c := range cases {

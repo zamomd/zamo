@@ -11,21 +11,11 @@ import (
 	"github.com/zamomd/zamo/internal/settings"
 )
 
-// GenerationProgressEvent is the name of the Wails event carrying live LLM
-// generation progress to the frontend. Its payload is a progressPayload.
-const GenerationProgressEvent = "generation:progress"
-
 // Emitter delivers a named event with a payload to the frontend. The Wails
 // application's event manager (app.Event) satisfies it; tests pass a fake. The
 // bool return is Wails' delivered-flag, which the bridge ignores.
 type Emitter interface {
 	Emit(name string, data ...any) bool
-}
-
-// progressPayload is the JSON shape the frontend reads from a
-// GenerationProgressEvent: the coarse phase of the in-flight generation.
-type progressPayload struct {
-	Phase string `json:"phase"`
 }
 
 // App is the object bound into the Wails runtime; the frontend calls
@@ -37,35 +27,24 @@ type App struct {
 	emit     Emitter // set via SetEmitter once the Wails app exists; nil when headless (see SetEmitter)
 
 	schedules ScheduleLister // set via SetScheduler; nil when headless
+	agent     AgentRunner    // set via SetAgent
 }
 
 // New wraps the service, the settings manager and the job registry for
-// binding. Generations run as jobs so the frontend can cancel them.
+// binding. Agent runs are jobs, so the frontend can cancel them.
 func New(svc *knowledge.Service, mgr *settings.Manager, reg *jobs.Registry) *App {
 	return &App{svc: svc, settings: mgr, jobs: reg}
 }
 
 // SetEmitter wires the frontend event emitter. It is called once at startup,
 // after the Wails application (whose event manager is the emitter) is built but
-// before it runs, so no generation can be in flight yet.
+// before it runs, so no agent run can be in flight yet.
 //
 // A package function rather than a method on App: App is registered as a Wails
 // service, so every exported method it has becomes a callable frontend binding.
 // As a method this was reachable from JavaScript, where passing null would
-// silently detach progress events. Startup wiring is not the frontend's to do.
+// silently detach the app's events. Startup wiring is not the frontend's to do.
 func SetEmitter(a *App, e Emitter) { a.emit = e }
-
-// withProgress returns a context that forwards LLM generation progress to the
-// frontend as GenerationProgressEvent events. With no emitter set (headless,
-// tests) it returns ctx unchanged, so Report stays a no-op.
-func (a *App) withProgress(ctx context.Context) context.Context {
-	if a.emit == nil {
-		return ctx
-	}
-	return knowledge.WithProgress(ctx, func(p knowledge.Progress) {
-		a.emit.Emit(GenerationProgressEvent, progressPayload{Phase: string(p.Phase)})
-	})
-}
 
 // The methods below are direct pass-throughs; the Wails frontend binds
 // to them. The set grows with the screens (tree, review, search, export).
@@ -89,45 +68,8 @@ func (a *App) CreateTopic(ctx context.Context, name string, mode knowledge.Mode)
 // SetTopicMode passes the call to knowledge.Service: converts a topic between
 // an outline and a document.
 func (a *App) SetTopicMode(ctx context.Context, id knowledge.ID, mode knowledge.Mode) error {
-	_, err := a.svc.SetTopicMode(a.withProgress(ctx), id, mode)
+	_, err := a.svc.SetTopicMode(ctx, id, mode)
 	return err
-}
-
-// generation registers a generation job for the duration of one binding call
-// and returns the context to run it under: cancellable from the frontend and
-// reporting progress to it.
-func (a *App) generation(ctx context.Context) (context.Context, func()) {
-	ctx, done := a.jobs.Start(ctx, jobs.KindGeneration)
-	return a.withProgress(ctx), done
-}
-
-// CancelGeneration cancels every generation in flight and returns how many
-// there were. The cancelled call fails with the "cancelled" code.
-func (a *App) CancelGeneration(_ context.Context) int {
-	return a.jobs.CancelKind(jobs.KindGeneration)
-}
-
-// ExpandTopic passes the call to knowledge.Service.
-func (a *App) ExpandTopic(ctx context.Context, topic, hint string) (knowledge.Applied, error) {
-	ctx, done := a.generation(ctx)
-	defer done()
-	return a.svc.ExpandTopic(ctx, topic, hint)
-}
-
-// ExpandTopicByID passes the call to knowledge.Service: expands an existing
-// topic in the shape it has.
-func (a *App) ExpandTopicByID(ctx context.Context, id knowledge.ID, hint string) (knowledge.Applied, error) {
-	ctx, done := a.generation(ctx)
-	defer done()
-	return a.svc.ExpandTopicByID(ctx, id, hint)
-}
-
-// EditWithAI passes the call to knowledge.Service. The frontend supplies the
-// scope (a block or subtree root) and the user's text command.
-func (a *App) EditWithAI(ctx context.Context, scope knowledge.ID, instruction string) (knowledge.Applied, error) {
-	ctx, done := a.generation(ctx)
-	defer done()
-	return a.svc.EditWithAI(ctx, knowledge.AIEdit{Scope: scope, Instruction: instruction, Source: knowledge.SourceGUIEdit})
 }
 
 // GetSubtree passes the call to knowledge.Service.

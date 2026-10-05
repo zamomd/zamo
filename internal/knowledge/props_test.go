@@ -17,7 +17,7 @@ func propsService(t *testing.T) (*Service, *fakeRepo) {
 		},
 		aliases: []TopicAlias{{TopicID: "lang", Alias: "PL"}},
 	}
-	return NewService(nil, repo, func() ID { return "new-1" }), repo
+	return NewService(repo, func() ID { return "new-1" }), repo
 }
 
 func TestSetTopicPropsKeepsEachAliasOnceAsWritten(t *testing.T) {

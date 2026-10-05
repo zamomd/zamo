@@ -14,8 +14,8 @@ type Kind string
 
 // The kinds of jobs.
 const (
-	// KindGeneration is an LLM generation started on the user's behalf.
-	KindGeneration Kind = "generation"
+	// KindAgent is an agent run started on the user's behalf.
+	KindAgent Kind = "agent"
 	// KindSchedule is a scheduled run, started by nobody in particular.
 	KindSchedule Kind = "schedule"
 )

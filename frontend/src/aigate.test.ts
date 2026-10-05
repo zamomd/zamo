@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
-import { render } from "@testing-library/svelte"
+import { fireEvent, render } from "@testing-library/svelte"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Author, Mode } from "../bindings/github.com/zamomd/zamo/internal/knowledge"
 import type { View } from "../bindings/github.com/zamomd/zamo/internal/settings"
+import ModeRail from "./lib/ModeRail.svelte"
 import TreeNode from "./lib/TreeNode.svelte"
 import SettingsView from "./SettingsView.svelte"
 import { ai } from "./stores/ai.svelte"
 import { base } from "./stores/base.svelte"
+import { shell } from "./stores/shell.svelte"
 import TopicView from "./TopicView.svelte"
 
 vi.mock("@wailsio/runtime", () => ({
@@ -37,7 +39,7 @@ function settingsView(aiEnabled: boolean): View {
 	}
 }
 
-const COMMAND_FIELD = 'input[aria-label="AI command"]'
+const ASSISTANT_TOGGLE = 'button[aria-label="assistant"]'
 const TARGET_BUTTON = 'button[aria-label="target this block for the AI command"]'
 
 const row = {
@@ -65,9 +67,8 @@ describe("the AI gate", () => {
 	it("renders no AI control anywhere while AI is off", () => {
 		ai.set(false)
 
-		const topic = render(TopicView).container
-		expect(topic.querySelector(COMMAND_FIELD)).toBeNull()
-		expect(topic.textContent).toContain("Pick one in the sidebar")
+		expect(render(ModeRail).container.querySelector(ASSISTANT_TOGGLE)).toBeNull()
+		expect(render(TopicView).container.textContent).toContain("Pick one in the sidebar")
 
 		const tree = render(TreeNode, { node: row }).container
 		expect(tree.querySelector(TARGET_BUTTON)).toBeNull()
@@ -77,8 +78,31 @@ describe("the AI gate", () => {
 	it("renders them again once AI is on", () => {
 		ai.set(true)
 
-		expect(render(TopicView).container.querySelector(COMMAND_FIELD)).not.toBeNull()
+		expect(render(ModeRail).container.querySelector(ASSISTANT_TOGGLE)).not.toBeNull()
+		expect(render(TopicView).container.textContent).toContain("ask the assistant")
 		expect(render(TreeNode, { node: row }).container.querySelector(TARGET_BUTTON)).not.toBeNull()
+	})
+
+	it("opens and closes the assistant from the rail", async () => {
+		ai.set(true)
+		shell.assistantOpen = false
+		const toggle = render(ModeRail).container.querySelector(ASSISTANT_TOGGLE) as HTMLButtonElement
+
+		await fireEvent.click(toggle)
+		expect(shell.assistantOpen).toBe(true)
+		expect(toggle.getAttribute("aria-pressed")).toBe("true")
+
+		await fireEvent.click(toggle)
+		expect(shell.assistantOpen).toBe(false)
+	})
+
+	it("closes an open assistant when AI is switched off", () => {
+		ai.set(true)
+		shell.assistantOpen = true
+
+		ai.set(false)
+
+		expect(shell.assistantOpen).toBe(false)
 	})
 
 	it("keeps the switch reachable on the settings screen while AI is off", async () => {

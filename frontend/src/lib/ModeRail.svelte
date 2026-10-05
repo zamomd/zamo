@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { type Mode, shell } from "../stores/shell.svelte";
 
@@ -24,6 +25,19 @@
 			{m.glyph}
 		</button>
 	{/each}
+	{#if ai.enabled}
+		<button
+			type="button"
+			class="assistant"
+			class:active={shell.assistantOpen}
+			title="assistant (⌘K)"
+			aria-label="assistant"
+			aria-pressed={shell.assistantOpen}
+			onclick={() => shell.toggleAssistant()}
+		>
+			✦
+		</button>
+	{/if}
 </nav>
 
 <style>
@@ -50,6 +64,16 @@
 	.rail button:hover:not(:disabled) {
 		color: var(--text-dim);
 		background: none;
+	}
+	/* Not a destination like the four above it: it opens a panel beside
+	   whichever of them is showing. A gap sets it apart, and the accent makes
+	   it findable: it is the only way in to the AI. */
+	.rail button.assistant {
+		margin-top: calc(var(--unit) * 2);
+		color: var(--accent);
+	}
+	.rail button.assistant:hover {
+		color: var(--text);
 	}
 	.rail button.active {
 		color: var(--text);
