@@ -12,8 +12,13 @@ import (
 // Kind classifies a job for cancellation and display.
 type Kind string
 
-// KindGeneration is an LLM generation started on the user's behalf.
-const KindGeneration Kind = "generation"
+// The kinds of jobs.
+const (
+	// KindAgent is an agent run started on the user's behalf.
+	KindAgent Kind = "agent"
+	// KindSchedule is a scheduled run, started by nobody in particular.
+	KindSchedule Kind = "schedule"
+)
 
 // Job is the observable description of a running job.
 type Job struct {

@@ -5,11 +5,10 @@
 	const lines = $derived(diffLines(before, after));
 </script>
 
-<pre class="diff">{#each lines as line, i (i)}<span class={line.kind}>{line.kind === "del"
-			? "- "
-			: line.kind === "add"
-				? "+ "
-				: "  "}{line.text}
+<pre class="diff">{#each lines as line, i (i)}<span class={line.kind} class:intraline={line.intraline}
+			>{line.kind === "del" ? "- " : line.kind === "add" ? "+ " : "  "}{#each line.parts as part, j (j)}<span
+					class:changed={part.changed}>{part.text}</span
+				>{/each}
 </span>{/each}</pre>
 
 <style>
@@ -27,9 +26,20 @@
 	   theme whose green and red land somewhere unexpected. */
 	.del {
 		color: var(--text-dim);
+	}
+	.del:not(.intraline),
+	.del .changed {
 		text-decoration: line-through;
 	}
 	.add {
+		color: var(--text);
+	}
+	/* Within a rewritten line the changed words carry the same contrast one
+	   step further, so the unchanged rest of the line reads as context. */
+	.add.intraline {
+		color: var(--text-dim);
+	}
+	.add .changed {
 		color: var(--text);
 	}
 	.same {

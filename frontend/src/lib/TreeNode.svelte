@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { Author } from "../../bindings/github.com/zamomd/zamo/internal/knowledge";
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
+	import { schedules } from "../stores/schedules.svelte";
 	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import InlineEditor from "./InlineEditor.svelte";
 	import { renderMarkdown } from "./markdown";
 	import { makeResolver, refClick } from "./resolve";
+	import SchedulePanel from "./SchedulePanel.svelte";
 	import TreeNode from "./TreeNode.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
@@ -23,6 +26,8 @@
 	const editing = $derived(base.editingID === node.block.ID);
 	const backlinksOpen = $derived(base.openBacklinks.has(node.block.ID));
 	const historyOpen = $derived(base.historyID === node.block.ID);
+	const scheduleOpen = $derived(base.openSchedules.has(node.block.ID));
+	const schedule = $derived(schedules.byKey.get(node.block.ID));
 	const unreviewed = $derived(node.block.Unreviewed);
 	const atomic = $derived(changes.atomic.has(node.block.ID));
 	const ghost = $derived(base.ghosts.has(node.block.ID));
@@ -30,7 +35,7 @@
 	const pageDirty = $derived(topicRoot && hasUnreviewed(node));
 	const straddling = $derived(changes.straddling.has(node.block.ID));
 	const writtenOver = $derived(changes.writtenOverPages.has(node.block.ID));
-	const byAI = $derived(node.block.Meta?.author === "ai");
+	const byAI = $derived(node.block.CreatedBy === Author.AuthorAI);
 	const hasHidden = $derived(hasChildren && !expanded);
 
 	let rowEl: HTMLElement | undefined;
@@ -48,7 +53,7 @@
 		});
 	});
 
-	const resolveRef = $derived(makeResolver(base.forest));
+	const resolveRef = $derived(makeResolver(base.forest, base.aliases));
 
 	// pendingTopic holds the unresolved [[Topic]] name a click just asked to
 	// create. confirm()/alert()/prompt() are no-ops in the Wails webview (see
@@ -61,7 +66,7 @@
 	// unresolved block reference — nothing points at a gone or not-yet-synced
 	// block — does nothing.
 	function clickRef(el: HTMLElement): void {
-		const action = refClick(base.forest, el);
+		const action = refClick(base.forest, base.aliases, el);
 		if (action === null) {
 			return;
 		}
@@ -225,6 +230,21 @@
 			>
 				⌚︎
 			</button>
+			<button
+				type="button"
+				class="schedule-toggle"
+				class:open={scheduleOpen}
+				class:scheduled={schedule !== undefined}
+				class:off={schedule !== undefined && !schedule.enabled}
+				class:attention={schedule?.outcome === "failed" || schedule?.outcome === "skipped"}
+				title={schedule ? "this block runs on a schedule" : "refresh this block on a schedule"}
+				aria-expanded={scheduleOpen}
+				aria-label="toggle this block's schedule"
+				disabled={base.busy}
+				onclick={() => base.toggleSchedule(node.block.ID)}
+			>
+				◷
+			</button>
 		</span>
 
 		{#if unreviewed && atomic}
@@ -299,6 +319,9 @@
 	{#if historyOpen}
 		<HistoryPanel block={node.block} />
 	{/if}
+	{#if scheduleOpen}
+		<SchedulePanel block={node.block} />
+	{/if}
 	{#if pendingTopic}
 		<!-- confirm() is a no-op in the Wails webview, so this row is the
 		     confirmation — see clickRef. -->
@@ -307,6 +330,11 @@
 			<button type="button" disabled={base.busy} onclick={confirmCreateTopic}>create</button>
 			<button type="button" onclick={cancelCreateTopic}>cancel</button>
 		</div>
+	{/if}
+	{#if title && !hasChildren && !ghost}
+		<button type="button" class="first-block" disabled={base.busy} onclick={() => base.insertFirstChild(node.block.ID)}>
+			write here, or press Enter on the title
+		</button>
 	{/if}
 	{#if hasChildren && expanded}
 		<ul class="children">
@@ -318,6 +346,21 @@
 </li>
 
 <style>
+	/* The empty body of a page: unframed and faint, so it reads as a place
+	   to write rather than as a control. */
+	.first-block {
+		display: block;
+		border: none;
+		background: none;
+		padding: 0;
+		line-height: var(--row-height);
+		color: var(--text-faint);
+		cursor: text;
+	}
+	.first-block:hover:not(:disabled) {
+		color: var(--text-dim);
+		background: none;
+	}
 	/* The forest is a plain nested list. Indentation and the rails carry the
 	   hierarchy: each item draws a vertical segment for its own level and a
 	   horizontal tick into its row, so a run of siblings reads as the box-
@@ -505,6 +548,28 @@
 			background: transparent;
 		}
 	}
+	/* Same indent and quiet styling as HistoryPanel's .history: a small panel
+	   hanging off this row, not a competing block. */
+	.ref-create {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.1rem 0 0.25rem 1.25rem;
+		padding: 0.2rem 0.4rem;
+		font-size: var(--size-small);
+		border-left: 2px solid var(--hairline);
+	}
+	.ref-create button {
+		border: 1px solid var(--hairline-strong);
+		border-radius: var(--radius);
+		background: none;
+		padding: 0.1rem 0.5rem;
+		cursor: pointer;
+		color: inherit;
+	}
+	.ref-create button:hover:not(:disabled) {
+		background: var(--hover);
+	}
 	/* The actions reserve their lane whether or not they are visible: fading
 	   them with opacity rather than removing them keeps a long block's text from
 	   reflowing under the pointer.
@@ -525,6 +590,10 @@
 		color: inherit;
 		opacity: 0;
 	}
+	/* Preserve the lane width without leaving its controls focusable. */
+	.gutter.reserved button {
+		visibility: hidden;
+	}
 	.row:hover .gutter button,
 	.row:focus-within .gutter button {
 		opacity: 0.6;
@@ -540,9 +609,18 @@
 	.gutter button.open {
 		opacity: 1;
 	}
-	/* Preserve the lane width without leaving its controls focusable. */
-	.gutter.reserved button {
-		visibility: hidden;
+	/* A scheduled block shows its glyph without hovering: it is the marker.
+	   Dim when the schedule is off, accented when its last attempt needs a
+	   look. */
+	.gutter button.schedule-toggle.scheduled {
+		opacity: 0.6;
+	}
+	.gutter button.schedule-toggle.off {
+		opacity: 0.3;
+	}
+	.gutter button.schedule-toggle.attention {
+		opacity: 1;
+		color: var(--accent);
 	}
 	/* Rendered markdown is injected via {@html}, so Svelte's scoping does not
 	   reach it — style it through :global under .content. */
@@ -641,28 +719,6 @@
 		flex: 1;
 		padding: 0.1rem 0.3rem;
 		text-decoration: line-through;
-	}
-	/* Same indent and quiet styling as HistoryPanel's .history: a small panel
-	   hanging off this row, not a competing block. */
-	.ref-create {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin: 0.1rem 0 0.25rem 1.25rem;
-		padding: 0.2rem 0.4rem;
-		font-size: var(--size-small);
-		border-left: 2px solid var(--hairline);
-	}
-	.ref-create button {
-		border: 1px solid var(--hairline-strong);
-		border-radius: var(--radius);
-		background: none;
-		padding: 0.1rem 0.5rem;
-		cursor: pointer;
-		color: inherit;
-	}
-	.ref-create button:hover:not(:disabled) {
-		background: var(--hover);
 	}
 	/* accept/reject are a per-row status action, not a hover affordance like
 	   .target: always visible while a block is unreviewed, so the decision is

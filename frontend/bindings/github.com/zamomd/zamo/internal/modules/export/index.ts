@@ -5,3 +5,9 @@ import * as Module from "./module.js";
 export {
     Module
 };
+
+export type {
+    Destination,
+    Options,
+    Result
+} from "./models.js";

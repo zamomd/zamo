@@ -5,29 +5,29 @@
 // message is the envelope's JSON body, while newer runtimes promise a
 // RuntimeError carrying the parsed payload in `cause`. callError accepts
 // both, never throws, and downgrades anything unrecognised to "internal".
-export type CallError = { code: string; message: string };
+export type CallError = { code: string; message: string }
 
 function payload(v: unknown): CallError | null {
-	if (typeof v !== "object" || v === null) return null;
-	const o = v as Record<string, unknown>;
-	return typeof o.code === "string" && typeof o.message === "string" ? { code: o.code, message: o.message } : null;
+	if (typeof v !== "object" || v === null) return null
+	const o = v as Record<string, unknown>
+	return typeof o.code === "string" && typeof o.message === "string" ? { code: o.code, message: o.message } : null
 }
 
 export function callError(err: unknown): CallError {
 	if (err instanceof Error) {
-		const direct = payload(err.cause);
-		if (direct) return direct;
+		const direct = payload(err.cause)
+		if (direct) return direct
 		try {
-			const envelope = JSON.parse(err.message) as { message?: unknown; cause?: unknown };
-			const p = payload(envelope.cause);
-			if (p) return p;
+			const envelope = JSON.parse(err.message) as { message?: unknown; cause?: unknown }
+			const p = payload(envelope.cause)
+			if (p) return p
 			if (typeof envelope.message === "string") {
-				return { code: "internal", message: envelope.message };
+				return { code: "internal", message: envelope.message }
 			}
 		} catch {}
-		return { code: "internal", message: err.message };
+		return { code: "internal", message: err.message }
 	}
-	return { code: "internal", message: String(err) };
+	return { code: "internal", message: String(err) }
 }
 
 // readable maps each wire code (assigned in internal/wailsbind MarshalError) to
@@ -36,6 +36,10 @@ export function callError(err: unknown): CallError {
 // be shown directly; anything unmapped, including "internal", gets a generic
 // line rather than leaking that text.
 const readable: Record<string, string> = {
+	schedule_empty_instruction: "Write what the AI should do to this block.",
+	schedule_invalid_spec: "That cron expression is not valid.",
+	schedule_busy: "A scheduled run is already in progress — wait for it to finish.",
+	schedule_missing: "This block has no schedule any more — reload and try again.",
 	not_found: "That block no longer exists — reload and try again.",
 	cycle: "That move would put a block inside its own subtree.",
 	invalid_ops: "That change is malformed and can't be applied.",
@@ -52,15 +56,22 @@ const readable: Record<string, string> = {
 	ai_disabled: "AI features are switched off. Turn them back on in Settings.",
 	llm_unavailable: "The AI provider is unreachable. Check your provider and key in Settings.",
 	llm_bad_response: "The AI returned something unusable. Try again.",
+	llm_no_tools: "This model can't call tools, which AI features need. Choose another model in Settings.",
 	declarative: "Settings are locked by your config file (declarative mode).",
+	assistant_empty: "Type a message first.",
+	assistant_busy: "The assistant is still working on your last message.",
+	assistant_no_answer: "That answer is no longer available to save.",
+	export_no_destination: "Choose a directory for the kept export first.",
+	export_busy: "An export is already in progress — wait for it to finish.",
+	export_bad_message:
+		'That commit message is not a valid template. Plain text works; the time is {{.Time.Format "2006-01-02 15:04"}}.',
 	import_unknown_format: "That folder is neither an Obsidian vault nor a Logseq graph.",
 	import_stale_preview: "The preview is out of date. Run it again.",
 	import_nothing: "Nothing to import: every page is already in the base or cannot be named.",
-	git_snapshot_dir_not_set: "Choose a folder for the Git snapshot in Settings first.",
-};
+}
 
 // messageFor turns a binding error into the sentence to show the user: a mapped,
 // actionable message by code, never the raw developer/driver text.
 export function messageFor(err: unknown): string {
-	return readable[callError(err).code] ?? "Something went wrong. Please try again.";
+	return readable[callError(err).code] ?? "Something went wrong. Please try again."
 }

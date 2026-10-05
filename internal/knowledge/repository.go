@@ -19,6 +19,21 @@ type Repository interface {
 	// them. Ordered by id, for a deterministic batch.
 	BlocksReferencingTopic(ctx context.Context, titleKey string) ([]Block, error)
 
+	// GetTopicProps returns the properties of a topic root, and ErrNotFound
+	// when topic is not one.
+	GetTopicProps(ctx context.Context, topic ID) (TopicProps, error)
+	// SetTopicProps replaces the properties of a topic root in one
+	// transaction. It reports ErrNotFound when topic is not a topic root,
+	// and ErrDuplicateTopic when an alias is already the name or an alias of
+	// a topic.
+	SetTopicProps(ctx context.Context, topic ID, props TopicProps) error
+	// ListTopicAliases returns the aliases of every topic, ordered by topic
+	// and then as the owner listed them.
+	ListTopicAliases(ctx context.Context) ([]TopicAlias, error)
+	// ListTopicTags returns the tags of every topic, ordered by topic and
+	// then as the owner listed them.
+	ListTopicTags(ctx context.Context) ([]TopicTag, error)
+
 	// ApplyOps applies a prepared, ordered batch in one transaction,
 	// writing one revision per touched block plus the projection.
 	//
@@ -29,6 +44,9 @@ type Repository interface {
 	// when the base has moved on, or a rename silently overwrites the write
 	// that landed between the preparation and the apply.
 	ApplyOps(ctx context.Context, groupID ID, meta WriteMeta, ops []Op) (changed bool, err error)
+	// CountUnreviewedUnder returns how many blocks at or under root await
+	// review, pending deletions included.
+	CountUnreviewedUnder(ctx context.Context, root ID) (int, error)
 
 	ListRevisions(ctx context.Context, blockID ID) ([]Revision, error)
 	DeleteRevision(ctx context.Context, blockID, revID ID) error

@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zamomd/zamo/internal/knowledge"
-	"github.com/zamomd/zamo/internal/llm"
 	"github.com/zamomd/zamo/internal/modules/vaultimport"
 	"github.com/zamomd/zamo/internal/modules/vaultimport/logseq"
 	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
@@ -27,7 +26,7 @@ func openService(t *testing.T) *knowledge.Service {
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 	newID := func() knowledge.ID { return knowledge.ID(ulid.New()) }
-	return knowledge.NewService(llm.NewHolder(nil), sqlite.NewRepo(db, time.Now, newID), newID)
+	return knowledge.NewService(sqlite.NewRepo(db, time.Now, newID), newID)
 }
 
 func TestImportLogseqGraphEndToEnd(t *testing.T) {

@@ -12,13 +12,15 @@ export type {
     Backlink,
     Block,
     ID,
-    Metadata,
     OutlineChange,
     Revision,
     SearchHit,
+    TopicAlias,
     TopicEdge,
     TopicGraph,
     TopicNode,
+    TopicProps,
+    TopicTag,
     UnreviewedBlock,
     UnreviewedChanges
 } from "./models.js";

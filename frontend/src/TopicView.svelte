@@ -1,28 +1,33 @@
 <script lang="ts">
-	import Breadcrumbs from "./lib/Breadcrumbs.svelte";
-	import CommandBox from "./lib/CommandBox.svelte";
-	import DocView from "./lib/DocView.svelte";
-	import StatusLine from "./lib/StatusLine.svelte";
-	import TreeNode from "./lib/TreeNode.svelte";
-	import { ai } from "./stores/ai.svelte";
-	import { base } from "./stores/base.svelte";
+	import Breadcrumbs from './lib/Breadcrumbs.svelte'
+	import DocView from './lib/DocView.svelte'
+	import StatusLine from './lib/StatusLine.svelte'
+	import TopicProps from './lib/TopicProps.svelte'
+	import TreeNode from './lib/TreeNode.svelte'
+	import { ai } from './stores/ai.svelte'
+	import { base } from './stores/base.svelte'
 
-	const tree = $derived(base.viewRoot);
+	const tree = $derived(base.viewRoot)
 </script>
 
 <section>
 	{#if tree === null}
 		<p class="empty">
 			{#if ai.enabled}
-				No topic selected. Ask the AI below to expand one.
+				No topic selected. Pick one in the sidebar, or ask the assistant (⌘K) to start one.
 			{:else}
 				No topic selected. Pick one in the sidebar, or add a topic there to start writing.
 			{/if}
 		</p>
 	{:else}
 		<Breadcrumbs />
+		{#if base.focusID === null}
+			<TopicProps id={tree.block.ID} />
+		{/if}
 		{#if base.topicMode === "doc"}
-			<div class="tree"><DocView node={tree} /></div>
+			<div class="tree">
+				<DocView node={tree} />
+			</div>
 		{:else}
 			<div class="tree">
 				<ul>
@@ -33,14 +38,7 @@
 	{/if}
 
 	<footer>
-		<StatusLine
-			status={base.status}
-			error={base.error}
-			onCancel={base.generating ? () => base.cancelAI() : undefined}
-		/>
-		{#if ai.enabled}
-			<CommandBox />
-		{/if}
+		<StatusLine error={base.error} />
 	</footer>
 </section>
 
@@ -51,22 +49,26 @@
 		display: flex;
 		flex-direction: column;
 	}
+
 	.tree {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
 		scrollbar-gutter: stable;
 	}
+
 	.tree ul {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 	}
+
 	.empty {
 		flex: 1;
 		margin: 0;
 		color: var(--text-faint);
 	}
+
 	footer {
 		flex: none;
 		padding-top: var(--unit);

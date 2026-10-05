@@ -1,32 +1,36 @@
+// Package llm is the boundary with LLM providers: one chat round with tools,
+// spelled per provider by a Dialect, and the system prompts the agent sends.
 package llm
 
 import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zamomd/zamo/internal/knowledge"
 )
 
 const (
-	// MaxTokens bounds the reply. A reviewable expansion is a few dozen short
-	// blocks, which fits comfortably; the parser caps the tree regardless. A
-	// dialect puts it in the request body, so it is theirs to read.
+	// MaxTokens bounds one reply: an answer, or a write batch of a reviewable
+	// size. A dialect puts it in the request body, so it is theirs to read.
 	MaxTokens = 4096
 
-	// maxHTTPReplyBytes bounds how much of the HTTP response is read into memory
-	// before the parsers apply their own (smaller) cap on the model text.
+	// maxHTTPReplyBytes bounds how much of the HTTP response is read into
+	// memory. The reply crosses the untrusted model boundary; anything larger
+	// is hostile or broken.
 	maxHTTPReplyBytes = 2 << 20 // 2 MiB
 )
 
 // Dialect is the provider-specific half of an HTTP LLM provider: how one API
-// spells a chat request. Everything around it — prompt rendering, the round
-// trip, the byte and status limits, progress reporting and the mapping onto the
-// domain's error vocabulary — belongs to Provider and is shared.
+// spells a chat request. Everything around it — the round trip, the byte and
+// status limits and the mapping onto the domain's error vocabulary — belongs
+// to Provider and is shared.
 type Dialect interface {
 	// CompletionURL is the endpoint a completion is POSTed to. It is asked for
 	// per request rather than cached, so a client may retarget its base URL.
@@ -39,15 +43,15 @@ type Dialect interface {
 	// SetHeaders applies the dialect's authorization and versioning headers.
 	// key is empty only when KeyRequired reports false.
 	SetHeaders(h http.Header, key string)
-	// EncodeRequest builds the completion request body.
-	EncodeRequest(prompt string) ([]byte, error)
-	// DecodeReply extracts the model's text from a 2xx body. A body that is not
+	// EncodeChat builds the request body for one chat round.
+	EncodeChat(r Request) ([]byte, error)
+	// DecodeChat extracts the model's turn from a 2xx body. A body that is not
 	// this API's envelope — a proxy or CDN page rather than the model — must
-	// yield ErrLLMUnavailable, not an empty string.
-	DecodeReply(body []byte) (string, error)
+	// yield ErrLLMUnavailable, not an empty reply.
+	DecodeChat(body []byte) (Reply, error)
 }
 
-// Provider implements knowledge.LLMClient over an HTTP API described by a
+// Provider implements Client over an HTTP API described by a
 // Dialect. Transport, key and HTTP-status failures map to ErrLLMUnavailable;
 // a reply that will not parse maps to ErrLLMBadResponse (via the parsers).
 type Provider struct {
@@ -73,104 +77,40 @@ func NewProvider(key KeySource, d Dialect) *Provider {
 	}
 }
 
-// GenerateTree implements knowledge.LLMClient: it renders the expansion prompt,
-// calls the API, and parses the reply into add operations.
-func (p *Provider) GenerateTree(ctx context.Context, topic, hint string) ([]knowledge.Op, error) {
-	prompt, err := ExpandPrompt(topic, hint)
-	if err != nil {
-		// The template is embedded; failing to render it is a build defect,
-		// still "the request cannot be made".
-		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
-	}
-	return p.generate(ctx, prompt, ParseOps)
-}
-
-// GenerateEdit implements knowledge.LLMClient: it renders the edit prompt over
-// the scope subtree and the instruction, calls the API, and parses the reply
-// into edit operations.
-func (p *Provider) GenerateEdit(
-	ctx context.Context,
-	scope []knowledge.Block,
-	instruction string,
-) ([]knowledge.Op, error) {
-	prompt, err := EditPrompt(scope, instruction)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
-	}
-	return p.generate(ctx, prompt, ParseEditOps)
-}
-
-// generate is one completion round trip followed by the caller's parser.
-func (p *Provider) generate(
-	ctx context.Context,
-	prompt string,
-	parse func([]byte) ([]knowledge.Op, error),
-) ([]knowledge.Op, error) {
-	text, err := p.complete(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseParsing})
-	return parse([]byte(text))
-}
-
-// complete is one completion round trip, returning the model's text. The
-// document methods use it directly: their answer is the content, with nothing
-// to parse.
-func (p *Provider) complete(ctx context.Context, prompt string) (string, error) {
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseRequesting})
+// Chat implements Client: one round trip to the completion endpoint. A
+// request that carried tools and was refused over them fails with
+// ErrLLMNoToolSupport rather than ErrLLMUnavailable.
+func (p *Provider) Chat(ctx context.Context, r Request) (Reply, error) {
 	key, err := p.apiKey()
 	if err != nil {
-		return "", err
+		return Reply{}, err
 	}
-	payload, err := p.dialect.EncodeRequest(prompt)
+	payload, err := p.dialect.EncodeChat(r)
 	if err != nil {
-		return "", fmt.Errorf("%w: encode request: %w", knowledge.ErrLLMUnavailable, err)
+		return Reply{}, fmt.Errorf("%w: encode request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, p.dialect.CompletionURL(), bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
+		return Reply{}, fmt.Errorf("%w: build request: %w", knowledge.ErrLLMUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	p.dialect.SetHeaders(req.Header, key)
 
-	knowledge.Report(ctx, knowledge.Progress{Phase: knowledge.PhaseAwaiting})
 	body, err := p.do(req)
 	if err != nil {
-		return "", err
+		if refused, ok := errors.AsType[*statusErr](err); ok && len(r.Tools) > 0 && refused.blamesTools() {
+			return Reply{}, fmt.Errorf("%w: %s", knowledge.ErrLLMNoToolSupport, refused.message)
+		}
+		return Reply{}, err
 	}
-	return p.dialect.DecodeReply(body)
+	return p.dialect.DecodeChat(body)
 }
 
-// GenerateDocument implements knowledge.LLMClient: it renders the document
-// expansion prompt and returns the model's markdown as written.
-func (p *Provider) GenerateDocument(ctx context.Context, topic, hint string) (string, error) {
-	prompt, err := ExpandDocumentPrompt(topic, hint)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
-	}
-	return p.complete(ctx, prompt)
-}
-
-// GenerateDocumentEdit implements knowledge.LLMClient: it renders the document
-// edit prompt and returns the rewritten document.
-func (p *Provider) GenerateDocumentEdit(
-	ctx context.Context,
-	doc knowledge.Block,
-	instruction string,
-) (string, error) {
-	prompt, err := EditDocumentPrompt(doc, instruction)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", knowledge.ErrLLMUnavailable, err)
-	}
-	return p.complete(ctx, prompt)
-}
-
-// Ping implements knowledge.LLMClient: it checks that the endpoint is reachable
+// Ping implements Client: it checks that the endpoint is reachable
 // and the key, if the dialect needs one, is accepted. It deliberately does not
 // exercise the configured model — a typo in the model name surfaces on the
-// first expansion, not here.
+// first request, not here.
 func (p *Provider) Ping(ctx context.Context) error {
 	key, err := p.apiKey()
 	if err != nil {
@@ -222,12 +162,31 @@ type apiError struct {
 	} `json:"error"`
 }
 
-// statusError turns a non-2xx response into ErrLLMUnavailable, folding in the
-// API's error message when the body carries one.
+// statusErr is a non-2xx response: ErrLLMUnavailable carrying the status and
+// the API's own message when the body had one.
+type statusErr struct {
+	status  int
+	message string
+}
+
+func (e *statusErr) Error() string {
+	if e.message == "" {
+		return fmt.Sprintf("%v: HTTP %d", knowledge.ErrLLMUnavailable, e.status)
+	}
+	return fmt.Sprintf("%v: HTTP %d: %s", knowledge.ErrLLMUnavailable, e.status, e.message)
+}
+
+func (e *statusErr) Unwrap() error { return knowledge.ErrLLMUnavailable }
+
+// blamesTools reports whether the API refused the request because the model
+// cannot be given tools. No API has a code for it; they say so in the message.
+func (e *statusErr) blamesTools() bool {
+	return e.status >= 400 && e.status < 500 &&
+		strings.Contains(strings.ToLower(e.message), "support tool")
+}
+
 func statusError(status int, body []byte) error {
 	var e apiError
-	if json.Unmarshal(body, &e) == nil && e.Error.Message != "" {
-		return fmt.Errorf("%w: HTTP %d: %s", knowledge.ErrLLMUnavailable, status, e.Error.Message)
-	}
-	return fmt.Errorf("%w: HTTP %d", knowledge.ErrLLMUnavailable, status)
+	_ = json.Unmarshal(body, &e)
+	return &statusErr{status: status, message: e.Error.Message}
 }

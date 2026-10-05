@@ -1,6 +1,11 @@
+// Package gitrepo is the git adapter for a directory's history: the
+// host.DirHistory implementation that commits a directory into the local
+// repository owning it. It knows nothing of the base or of what the
+// directory holds.
 package gitrepo
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -8,14 +13,48 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/zamomd/zamo/internal/host"
 )
 
-// identity is the fixed author and committer every snapshot commit carries.
-// go-git requires one explicitly when it cannot read user.name/user.email
-// from git config, which a freshly initialized repository has none of.
-var identity = object.Signature{Name: "Zamo", Email: "zamo@localhost"}
+// Repo commits directories into local git repositories, stamping each commit
+// with its clock.
+type Repo struct {
+	now func() time.Time
+}
+
+var _ host.DirHistory = Repo{}
+
+// New returns a Repo that reads commit times from now.
+func New(now func() time.Time) Repo { return Repo{now: now} }
+
+// Commit implements host.DirHistory. dir must exist.
+func (r Repo) Commit(ctx context.Context, dir, message string) (host.Commit, error) {
+	if err := ctx.Err(); err != nil {
+		return host.Commit{}, err
+	}
+	repo, relDir, err := openOrInitRepo(dir)
+	if err != nil {
+		return host.Commit{}, err
+	}
+	return commit(repo, relDir, message, r.now())
+}
+
+// fallbackIdentity signs a commit when git has no user configured, which a
+// machine that never ran git does not.
+var fallbackIdentity = object.Signature{Name: "Zamo", Email: "zamo@localhost"}
+
+// signature is who a commit is by: the user git is configured with, in the
+// repository or globally, or the fallback.
+func signature(repo *git.Repository, when time.Time) *object.Signature {
+	sig := fallbackIdentity
+	if cfg, err := repo.ConfigScoped(config.GlobalScope); err == nil && cfg.User.Name != "" && cfg.User.Email != "" {
+		sig.Name, sig.Email = cfg.User.Name, cfg.User.Email
+	}
+	sig.When = when
+	return &sig
+}
 
 // openOrInitRepo finds the repository that owns dir by walking up from it,
 // the equivalent of `git rev-parse --show-toplevel`, or creates one rooted
@@ -99,53 +138,48 @@ func stagedOutside(status git.Status, relDir string) []string {
 // already holds unrelated staged changes. The index is snapshotted before
 // Add and restored verbatim if anything after it fails, so a failed run
 // leaves the repository exactly as it found it.
-func commit(repo *git.Repository, relDir, message string, when time.Time) (host.GitSnapshotResult, error) {
+func commit(repo *git.Repository, relDir, message string, when time.Time) (host.Commit, error) {
 	wt, err := repo.Worktree()
 	if err != nil {
-		return host.GitSnapshotResult{}, fmt.Errorf("open the worktree: %w", err)
+		return host.Commit{}, fmt.Errorf("open the worktree: %w", err)
 	}
 	status, err := wt.Status()
 	if err != nil {
-		return host.GitSnapshotResult{}, fmt.Errorf("read the worktree status: %w", err)
+		return host.Commit{}, fmt.Errorf("read the worktree status: %w", err)
 	}
 	if outside := stagedOutside(status, relDir); len(outside) > 0 {
-		return host.GitSnapshotResult{}, fmt.Errorf(
-			"refusing to commit: %d file(s) already staged outside the managed directory", len(outside),
+		return host.Commit{}, fmt.Errorf(
+			"refusing to commit: %d file(s) already staged outside the export directory", len(outside),
 		)
 	}
 	if !changedUnder(status, relDir) {
-		return host.GitSnapshotResult{}, nil
+		return host.Commit{}, nil
 	}
 
 	idx, err := repo.Storer.Index()
 	if err != nil {
-		return host.GitSnapshotResult{}, fmt.Errorf("read the index: %w", err)
+		return host.Commit{}, fmt.Errorf("read the index: %w", err)
 	}
 
 	result, err := stageAndCommit(repo, wt, relDir, message, when)
 	if err != nil {
 		if restoreErr := repo.Storer.SetIndex(idx); restoreErr != nil {
-			return host.GitSnapshotResult{}, fmt.Errorf("%w (and the index could not be restored: %w)", err, restoreErr)
+			return host.Commit{}, fmt.Errorf("%w (and the index could not be restored: %w)", err, restoreErr)
 		}
-		return host.GitSnapshotResult{}, err
+		return host.Commit{}, err
 	}
 	return result, nil
 }
 
 func stageAndCommit(
 	repo *git.Repository, wt *git.Worktree, relDir, message string, when time.Time,
-) (host.GitSnapshotResult, error) {
+) (host.Commit, error) {
 	if _, err := wt.Add(relDir); err != nil {
-		return host.GitSnapshotResult{}, fmt.Errorf("stage %s: %w", relDir, err)
+		return host.Commit{}, fmt.Errorf("stage %s: %w", relDir, err)
 	}
-	author := identity
-	author.When = when
-	hash, err := wt.Commit(message, &git.CommitOptions{Author: &author})
+	hash, err := wt.Commit(message, &git.CommitOptions{Author: signature(repo, when)})
 	if err != nil {
-		return host.GitSnapshotResult{}, fmt.Errorf("commit: %w", err)
+		return host.Commit{}, fmt.Errorf("commit: %w", err)
 	}
-	return host.GitSnapshotResult{
-		Committed: true,
-		Commit:    &host.GitCommitInfo{Hash: hash.String(), Message: message, At: when},
-	}, nil
+	return host.Commit{Hash: hash.String(), Message: message, At: when}, nil
 }

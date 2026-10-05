@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/tools"
 )
 
 type fakeBase struct {
@@ -81,7 +82,7 @@ func connect(t *testing.T, srv *Server) *mcpsdk.ClientSession {
 
 func TestHandshakeReportsInjectedVersion(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	got := cs.InitializeResult().ServerInfo
 	assert.Equal(t, serverName, got.Name)
@@ -93,7 +94,7 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 		GroupID: "01GRP",
 		IDs:     map[string]knowledge.ID{"t1": "01ROOT", "t2": "01CHILD"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -117,16 +118,16 @@ func TestWriteBlocksAppliesImmediately(t *testing.T) {
 	for _, op := range fake.writeOps {
 		assert.Equal(t, "mcp", op.Origin, "on every op")
 	}
-	var out writeOutput
+	var out tools.WriteOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	require.NoError(t, json.Unmarshal(raw, &out))
-	want := writeOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
+	want := tools.WriteOutput{GroupID: "01GRP", IDs: map[string]string{"t1": "01ROOT", "t2": "01CHILD"}}
 	assert.Equal(t, want, out)
 }
 
 func TestWriteStampsOriginServerSide(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -149,7 +150,7 @@ func TestWriteStampsOriginServerSide(t *testing.T) {
 
 func TestWriteRejectsForgedOrigin(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -165,7 +166,7 @@ func TestWriteRejectsForgedOrigin(t *testing.T) {
 
 func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -184,7 +185,7 @@ func TestWriteBlocksForwardsAModeOnARootAdd(t *testing.T) {
 
 func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
 	fake := &fakeBase{writeErr: fmt.Errorf("block c1: %w", knowledge.ErrDocumentHasChildren)}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -202,7 +203,7 @@ func TestWriteBlocksExplainsAChildUnderADocument(t *testing.T) {
 
 func TestWriteBlocksReportsNoStructuredContentOnFailure(t *testing.T) {
 	fake := &fakeBase{writeErr: errors.New("base unavailable")}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name: "write_blocks",
@@ -221,7 +222,7 @@ func TestGetSubtreeReportsTheMode(t *testing.T) {
 	fake := &fakeBase{subtree: []knowledge.Block{
 		{ID: "01ROOT", Content: "# Doc", Mode: knowledge.ModeDoc},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "get_subtree",
@@ -229,10 +230,10 @@ func TestGetSubtreeReportsTheMode(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, res.IsError, "get_subtree reported a tool error: %+v", res.Content)
-	var out blocksOutput
+	var out tools.BlocksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	require.NoError(t, json.Unmarshal(raw, &out))
-	want := blocksOutput{Blocks: []blockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
+	want := tools.BlocksOutput{Blocks: []tools.BlockView{{ID: "01ROOT", Content: "# Doc", Mode: "doc"}}}
 	assert.Equal(t, want, out)
 }
 
@@ -241,7 +242,7 @@ func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
 		{ID: "01ROOT", Content: "Topic"},
 		{ID: "01KID", ParentID: "01ROOT", Content: "child"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "get_subtree",
@@ -252,23 +253,23 @@ func TestGetSubtreeLeavesAChildWithoutAMode(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(string(raw), `"mode"`), "result = %s, want the mode reported for the root alone", raw)
 }
 
-func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) blocksOutput {
+func callBlocks(t *testing.T, cs *mcpsdk.ClientSession, name string, args map[string]any) tools.BlocksOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: name, Arguments: args})
 	require.NoError(t, err, name)
 	require.False(t, res.IsError, "%s reported a tool error: %+v", name, res.Content)
-	var out blocksOutput
+	var out tools.BlocksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	require.NoError(t, json.Unmarshal(raw, &out), "decode %s output", name)
 	return out
 }
 
-func callSearch(t *testing.T, cs *mcpsdk.ClientSession, args map[string]any) searchOutput {
+func callSearch(t *testing.T, cs *mcpsdk.ClientSession, args map[string]any) tools.SearchOutput {
 	t.Helper()
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "search", Arguments: args})
 	require.NoError(t, err)
 	require.False(t, res.IsError, "search reported a tool error: %+v", res.Content)
-	var out searchOutput
+	var out tools.SearchOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	require.NoError(t, json.Unmarshal(raw, &out))
 	return out
@@ -291,7 +292,7 @@ func TestSearchTool(t *testing.T) {
 	fake := &fakeBase{searchHits: []knowledge.SearchHit{
 		{Block: knowledge.Block{ID: "01A", Content: "context deadlines"}, Snippet: "…context deadlines…"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	out := callSearch(t, cs, map[string]any{"query": "context"})
 	assert.Equal(t, "context", fake.searchQuery)
@@ -306,7 +307,7 @@ func TestGetSubtreeTool(t *testing.T) {
 		{ID: "01ROOT", Content: "Root"},
 		{ID: "01CHILD", ParentID: "01ROOT", Content: "Child"},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
 	assert.Equal(t, knowledge.ID("01ROOT"), fake.subtreeRoot)
@@ -316,7 +317,7 @@ func TestGetSubtreeTool(t *testing.T) {
 
 func TestTopicMapTool(t *testing.T) {
 	fake := &fakeBase{topic: []knowledge.Block{{ID: "01T", Content: "# Topic"}}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	out := callBlocks(t, cs, "topic_map", map[string]any{})
 	require.Len(t, out.Blocks, 1)
@@ -334,7 +335,7 @@ func TestBacklinksTool(t *testing.T) {
 			TopicTitle: "Go",
 		},
 	}}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "get_backlinks",
@@ -343,7 +344,7 @@ func TestBacklinksTool(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.IsError, "get_backlinks reported a tool error: %+v", res.Content)
 	assert.Equal(t, knowledge.ID("01JT4X9K2M8P0QRSTVWXYZ2340"), fake.backlinksID)
-	var out backlinksOutput
+	var out tools.BacklinksOutput
 	raw, _ := json.Marshal(res.StructuredContent)
 	require.NoError(t, json.Unmarshal(raw, &out))
 	require.Len(t, out.Backlinks, 1)
@@ -356,7 +357,7 @@ func TestBacklinksTool(t *testing.T) {
 
 func TestToolSurface(t *testing.T) {
 	fake := &fakeBase{}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	got := map[string]bool{}
 	for tool, err := range cs.Tools(t.Context(), nil) {
@@ -377,7 +378,7 @@ func TestReadToolsNeverWrite(t *testing.T) {
 		subtree:    []knowledge.Block{{ID: "01ROOT"}},
 		topic:      []knowledge.Block{{ID: "01T"}},
 	}
-	cs := connect(t, NewServer(fake, fake, fake, testVersion))
+	cs := connect(t, NewServer(fake, fake, testVersion))
 
 	callSearch(t, cs, map[string]any{"query": "x"})
 	callBlocks(t, cs, "get_subtree", map[string]any{"root": "01ROOT"})
@@ -407,7 +408,7 @@ func TestToolSurfacesDomainError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
-			cs := connect(t, NewServer(tc.fake, tc.fake, tc.fake, testVersion))
+			cs := connect(t, NewServer(tc.fake, tc.fake, testVersion))
 			res, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tc.tool, Arguments: tc.args})
 			require.NoError(t, err, "unexpected transport error")
 			assert.True(t, res.IsError, "%s must report IsError on a capability failure", tc.tool)

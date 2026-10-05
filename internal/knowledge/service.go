@@ -18,7 +18,7 @@ type AIPolicy func() bool
 // Option adjusts a Service at construction.
 type Option func(*Service)
 
-// WithAIPolicy sets the policy checked by AI operations and writes.
+// WithAIPolicy sets the policy checked by AI-authored writes.
 func WithAIPolicy(p AIPolicy) Option {
 	return func(s *Service) { s.aiAllowed = p }
 }
@@ -26,7 +26,6 @@ func WithAIPolicy(p AIPolicy) Option {
 // Service holds the product's use cases. It is the only place where the
 // logic lives; every input calls its methods.
 type Service struct {
-	llm       LLMClient
 	repo      Repository
 	newID     IDGenerator
 	aiAllowed AIPolicy
@@ -43,8 +42,8 @@ func (s *Service) requireAI() error {
 // and the injected ID source. Nothing in the domain stamps
 // time — storage does — so no time source is injected here.
 // AI operations are allowed when no policy is provided.
-func NewService(llm LLMClient, repo Repository, newID IDGenerator, opts ...Option) *Service {
-	s := &Service{llm: llm, repo: repo, newID: newID}
+func NewService(repo Repository, newID IDGenerator, opts ...Option) *Service {
+	s := &Service{repo: repo, newID: newID}
 	for _, o := range opts {
 		o(s)
 	}
@@ -106,108 +105,6 @@ func (s *Service) CreateTopic(ctx context.Context, name string, mode Mode) (ID, 
 		return "", err
 	}
 	return applied.IDs[temp], nil
-}
-
-// ExpandTopic expands a topic into a block tree and writes it directly,
-// awaiting review.
-func (s *Service) ExpandTopic(ctx context.Context, topic, hint string) (Applied, error) {
-	if err := s.requireAI(); err != nil {
-		return Applied{}, err
-	}
-	ops, err := s.llm.GenerateTree(ctx, topic, hint)
-	if err != nil {
-		return Applied{}, err
-	}
-	return s.ApplyOps(ctx, WriteMeta{Author: AuthorAI, Source: SourceGUIExpand, Title: topic}, ops)
-}
-
-// ExpandTopicByID expands an existing topic in the shape it has: an outline
-// grows a block tree, a document is written whole. Both await review.
-func (s *Service) ExpandTopicByID(ctx context.Context, id ID, hint string) (Applied, error) {
-	if err := s.requireAI(); err != nil {
-		return Applied{}, err
-	}
-	sub, err := s.repo.GetSubtree(ctx, id)
-	if err != nil {
-		return Applied{}, err
-	}
-	root := sub[0]
-	if root.Mode != ModeDoc {
-		ops, err := s.llm.GenerateTree(ctx, TopicName(root.Content), hint)
-		if err != nil {
-			return Applied{}, err
-		}
-		ops = graftOntoTopic(ops, id)
-		if len(ops) == 0 {
-			return Applied{}, fmt.Errorf(
-				"expand %s: the model returned nothing below the topic: %w", id, ErrLLMBadResponse)
-		}
-		return s.ApplyOps(ctx, WriteMeta{
-			Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
-		}, ops)
-	}
-	text, err := s.llm.GenerateDocument(ctx, TopicName(root.Content), hint)
-	if err != nil {
-		return Applied{}, err
-	}
-	return s.ApplyOps(ctx, WriteMeta{
-		Author: AuthorAI, Source: SourceGUIExpand, Title: TopicName(root.Content),
-	}, []Op{{Kind: OpEdit, BlockID: id, Content: text}})
-}
-
-// graftOntoTopic rebinds a generated tree onto a topic that already exists.
-// GenerateTree answers with a whole tree whose root names the topic.
-//
-// A single generated root is dropped and its children hang from id. When the
-// result has several top-level blocks, each becomes a child of the topic.
-func graftOntoTopic(ops []Op, id ID) []Op {
-	var roots []int
-	for i, op := range ops {
-		if op.Parent == "" {
-			roots = append(roots, i)
-		}
-	}
-	if len(roots) == 1 && ops[roots[0]].TempID != "" {
-		generated := ops[roots[0]].TempID
-		out := slices.Delete(slices.Clone(ops), roots[0], roots[0]+1)
-		for i := range out {
-			if out[i].Parent == generated {
-				out[i].Parent = string(id)
-			}
-		}
-		return out
-	}
-	out := slices.Clone(ops)
-	for _, i := range roots {
-		out[i].Parent = string(id)
-	}
-	return out
-}
-
-// EditWithAI turns a user's text command into a change of the scope and applies
-// it directly, awaiting review. A document is rewritten whole; an outline gets
-// structure edits.
-func (s *Service) EditWithAI(ctx context.Context, scope ID, instruction string) (Applied, error) {
-	if err := s.requireAI(); err != nil {
-		return Applied{}, err
-	}
-	blocks, err := s.repo.GetSubtree(ctx, scope)
-	if err != nil {
-		return Applied{}, err
-	}
-	meta := WriteMeta{Author: AuthorAI, Source: SourceGUIEdit, Title: instruction}
-	if blocks[0].Mode == ModeDoc {
-		text, err := s.llm.GenerateDocumentEdit(ctx, blocks[0], instruction)
-		if err != nil {
-			return Applied{}, err
-		}
-		return s.ApplyOps(ctx, meta, []Op{{Kind: OpEdit, BlockID: scope, Content: text}})
-	}
-	ops, err := s.llm.GenerateEdit(ctx, blocks, instruction)
-	if err != nil {
-		return Applied{}, err
-	}
-	return s.ApplyOps(ctx, meta, ops)
 }
 
 // EditBlockContent applies the owner's manual edit through the same write
@@ -414,10 +311,6 @@ func referencesTopic(content, key string) bool {
 // batch — never one per op, which would rewrite the backlinks to a name only an
 // intermediate op held. A root taken back to the name it started with changes
 // nothing and is no rename at all.
-//
-// A name a reference cannot carry — one holding a bracket — keys as empty, so
-// taking a topic to such a name is the same transition as unnaming it: there is
-// nothing to rewrite the backlinks to, and refuseOrphaning decides.
 func (s *Service) renamesIn(ctx context.Context, ops []Op) ([]rename, error) {
 	var changed []ID
 	seen := make(map[ID]bool)
@@ -533,6 +426,12 @@ func (s *Service) DeleteRevision(ctx context.Context, blockID, revID ID) error {
 // UndoGroup rolls back an entire revision group.
 func (s *Service) UndoGroup(ctx context.Context, groupID ID) error {
 	return s.repo.UndoGroup(ctx, groupID)
+}
+
+// CountUnreviewedUnder returns how many blocks at or under root await review,
+// pending deletions included.
+func (s *Service) CountUnreviewedUnder(ctx context.Context, root ID) (int, error) {
+	return s.repo.CountUnreviewedUnder(ctx, root)
 }
 
 // Search runs a full-text search over block content.

@@ -56,6 +56,15 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
   not grow a method per feature; a module must be deletable without
   breaking the core build. Long-running work runs under
   `internal/jobs` so it can be cancelled and ends with the process.
+  Timed work goes through `internal/scheduler`, handed to a module as
+  `host.Scheduler`.
+- Every AI feature is a run of the one agent loop (`internal/agent`),
+  handed to a module as `host.Agent`: the model reads the base through
+  the tools in `internal/tools` — the same set the MCP server serves —
+  and writes only what the run's `WritePolicy` allows, as an AI-authored
+  batch awaiting review. The caller sets the policy; the model is never
+  asked where it may write. There is no other path from a model to the
+  base, and `internal/knowledge` knows nothing of models.
 
 ## Gotchas
 

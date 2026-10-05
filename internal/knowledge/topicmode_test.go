@@ -14,7 +14,7 @@ func TestSetTopicModeToDocCollapsesTheSubtree(t *testing.T) {
 			{ID: "a", ParentID: "t", Position: 1, Content: "First."},
 		},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeDoc)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestSetTopicModeToOutlineSplitsTheDocument(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: "Go Contexts\n\n- First.\n  - Nested.\n", Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeOutline)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestSetTopicModeAwaitsReviewWithoutLyingAboutTheAuthor(t *testing.T) {
 			{ID: "a", ParentID: "t", Position: 1, Content: "First."},
 		},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeDoc)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestSetTopicModeRefusesANonRoot(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"c": {{ID: "c", ParentID: "t", Content: "child"}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "c", ModeDoc)
 	require.ErrorIs(t, err, ErrInvalidOps)
@@ -90,7 +90,7 @@ func TestSetTopicModeToOutlineReparentsAfterAHeadingJumpsBackOut(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeOutline)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAHeadingSkipsALeve
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeOutline)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestSetTopicModeToOutlineNestsUnderTheNearestAncestorWhenAListSkipsALevel(t
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeOutline)
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestSetTopicModeToOutlineDoesNotNestUnderAnAbandonedBranch(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: doc, Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeOutline)
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestSetTopicModeToTheModeAlreadyHeldWritesNothing(t *testing.T) {
 	repo := &fakeRepo{subtrees: map[ID][]Block{
 		"t": {{ID: "t", Content: "# Doc", Mode: ModeDoc}},
 	}}
-	svc := NewService(nil, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
 	_, err := svc.SetTopicMode(t.Context(), "t", ModeDoc)
 	require.NoError(t, err)
@@ -193,10 +193,11 @@ func TestAIRewriteChangingTheFirstLineRewritesBacklinks(t *testing.T) {
 		},
 		referencing: []Block{{ID: "s", ParentID: "other", Content: "See [[Go Contexts]]."}},
 	}
-	llm := &fakeLLM{document: "# Contexts in Go\n\nBody."}
-	svc := NewService(llm, repo, seqIDs())
+	svc := NewService(repo, seqIDs())
 
-	_, err := svc.EditWithAI(t.Context(), "t", "rename it")
+	_, err := svc.ApplyOps(t.Context(),
+		WriteMeta{Author: AuthorAI, Source: SourceMCP, Title: "rename it"},
+		[]Op{{Kind: OpEdit, BlockID: "t", Content: "# Contexts in Go\n\nBody."}})
 	require.NoError(t, err)
 	assert.True(t, repo.applyMeta.Atomic, "a rename expansion did not make the batch atomic")
 	var rewrote bool

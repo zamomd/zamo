@@ -34,17 +34,8 @@ type Overrides struct {
 	// never touched the switch, so config.toml keeps deciding.
 	AIEnabled *bool `toml:"ai_enabled,omitempty"`
 
-	LLM         LLMOverrides         `toml:"llm"`
-	GitSnapshot GitSnapshotOverrides `toml:"git_snapshot,omitempty"`
-	unknown     map[string]any
-}
-
-// GitSnapshotOverrides holds the git snapshot module's GUI-set preferences.
-// It has no config.toml or environment counterpart — settings.toml is the
-// sole source.
-type GitSnapshotOverrides struct {
-	Dir            string `toml:"dir,omitempty"`
-	CommitTemplate string `toml:"commit_template,omitempty"`
+	LLM     LLMOverrides `toml:"llm"`
+	unknown map[string]any
 }
 
 // LLMOverrides contains explicitly set mutable LLM values.

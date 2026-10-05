@@ -21,7 +21,7 @@ func outlineService(t *testing.T) (*Service, *fakeRepo) {
 			"root": {blocks["root"], blocks["first"], blocks["second"]},
 		},
 	}
-	return NewService(nil, repo, func() ID { return "new-1" }), repo
+	return NewService(repo, func() ID { return "new-1" }), repo
 }
 
 func TestSplitBlockEditsHeadAndAnchorsTailAfterIt(t *testing.T) {
@@ -55,6 +55,42 @@ func TestInsertBeforeAnchorsAheadOfTheBlock(t *testing.T) {
 	assert.Equal(t, "root", add.Parent)
 	assert.Equal(t, "first", add.Before)
 	assert.Empty(t, add.Content)
+}
+
+func TestInsertFirstChildGoesAheadOfTheExistingChildren(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	change, err := svc.InsertFirstChild(t.Context(), "root", "")
+	require.NoError(t, err)
+	assert.Equal(t, ID("new-1"), change.BlockID)
+	assert.Equal(t, AuthorOwner, repo.applyMeta.Author, "born reviewed")
+	require.Len(t, repo.applyOps, 1, "want a single add")
+	add := repo.applyOps[0]
+	assert.Equal(t, OpAdd, add.Kind)
+	assert.Equal(t, "root", add.Parent)
+	assert.Equal(t, "first", add.Before)
+	assert.Empty(t, add.After)
+}
+
+func TestInsertFirstChildAppendsUnderAChildlessBlock(t *testing.T) {
+	svc, repo := outlineService(t)
+	repo.subtrees["first"] = []Block{repo.blocks["first"]}
+
+	_, err := svc.InsertFirstChild(t.Context(), "first", "")
+	require.NoError(t, err)
+	require.Len(t, repo.applyOps, 1)
+	add := repo.applyOps[0]
+	assert.Equal(t, "first", add.Parent)
+	assert.Empty(t, add.Before)
+	assert.Empty(t, add.After)
+}
+
+func TestInsertFirstChildReportsAMissingBlock(t *testing.T) {
+	svc, repo := outlineService(t)
+
+	_, err := svc.InsertFirstChild(t.Context(), "ghost", "")
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Zero(t, repo.applyCalls, "refused before any write")
 }
 
 func TestSplitBlockRefusesATopicRoot(t *testing.T) {
@@ -104,7 +140,7 @@ func TestOutdentBlockMovesItAfterItsParent(t *testing.T) {
 	repo := &fakeRepo{
 		blocks: blocks,
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" })
+	svc := NewService(repo, func() ID { return "new-1" })
 
 	_, err := svc.OutdentBlock(t.Context(), "leaf")
 	require.NoError(t, err)
@@ -138,7 +174,7 @@ func TestMergeBlocksMovesChildrenBeforeDeletingTheSource(t *testing.T) {
 			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"]},
 		},
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" })
+	svc := NewService(repo, func() ID { return "new-1" })
 
 	_, err := svc.MergeBlocks(t.Context(), "target", "source")
 	require.NoError(t, err)
@@ -171,7 +207,7 @@ func TestMergeBlocksMovesOnlyDirectChildren(t *testing.T) {
 			"source": {blocks["source"], blocks["kid-a"], blocks["kid-b"], blocks["grandkid"]},
 		},
 	}
-	svc := NewService(nil, repo, func() ID { return "new-1" })
+	svc := NewService(repo, func() ID { return "new-1" })
 
 	_, err := svc.MergeBlocks(t.Context(), "target", "source")
 	require.NoError(t, err)

@@ -35,7 +35,14 @@
 		const candidates = topics.filter((t) => topicReferenceable(topicName(t.Content)));
 		const matches = candidates.filter((t) => key === "" || normalizeTitle(t.Content).includes(key));
 		const out: Entry[] = matches.map((t) => ({ kind: "topic" as const, id: t.ID, label: topicName(t.Content) }));
-		const exact = key !== "" && matches.some((t) => normalizeTitle(t.Content) === key);
+		// An alias is offered as its own entry and inserts itself, so the
+		// sentence keeps the word its author reached for.
+		for (const [aliasKey, { topicID, alias }] of base.aliases) {
+			if (key !== "" && aliasKey.includes(key) && topics.some((t) => t.ID === topicID)) {
+				out.push({ kind: "topic", id: topicID, label: alias });
+			}
+		}
+		const exact = key !== "" && (matches.some((t) => normalizeTitle(t.Content) === key) || base.aliases.has(key));
 		if (query !== "" && !exact && topicReferenceable(query)) {
 			out.push({ kind: "create", name: query });
 		}
@@ -43,7 +50,7 @@
 	});
 
 	function entryKey(e: Entry): string {
-		return e.kind === "create" ? `create:${e.name}` : `${e.kind}:${e.id}`;
+		return e.kind === "create" ? `create:${e.name}` : `${e.kind}:${e.id}:${e.label}`;
 	}
 
 	// Reset the selection whenever the candidate set changes — an index held

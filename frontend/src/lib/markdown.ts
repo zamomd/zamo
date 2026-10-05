@@ -1,5 +1,5 @@
-import MarkdownIt from "markdown-it";
-import { blockRefAt, normalizeTitle, type Ref, topicName, topicRefAt } from "./refs";
+import MarkdownIt from "markdown-it"
+import { blockRefAt, normalizeTitle, type Ref, topicName, topicRefAt } from "./refs"
 
 // Block content is authored by an LLM, so it is untrusted. `html: false` makes
 // markdown-it escape any raw HTML in the source and never emit input-derived
@@ -14,7 +14,7 @@ const md = new MarkdownIt({
 	html: false,
 	linkify: true,
 	breaks: true,
-});
+})
 
 // Mark every link external. The rendered href is already scheme-checked by
 // markdown-it; the app additionally intercepts the click (see TreeNode) to open
@@ -23,16 +23,16 @@ const md = new MarkdownIt({
 // With no prior link_open rule, the renderer's default is self.renderToken, so
 // setting attributes and delegating to it is the canonical override.
 md.renderer.rules.link_open = (tokens, idx, options, _env, self) => {
-	tokens[idx].attrSet("target", "_blank");
-	tokens[idx].attrSet("rel", "noopener noreferrer");
-	return self.renderToken(tokens, idx, options);
-};
+	tokens[idx].attrSet("target", "_blank")
+	tokens[idx].attrSet("rel", "noopener noreferrer")
+	return self.renderToken(tokens, idx, options)
+}
 
 // RefResolver supplies the live display text for a reference. Returning null
 // means unresolved: a topic that does not exist yet, or a block that is gone.
 // The renderer falls back to the reference's own label, so a dead target
 // still leaves a readable sentence.
-export type RefResolver = (ref: Ref) => string | null;
+export type RefResolver = (ref: Ref) => string | null
 
 // noResolver treats every reference as unresolved. It backstops env.resolve
 // below: state.env is typed `any` by markdown-it, so nothing enforces that a
@@ -40,7 +40,7 @@ export type RefResolver = (ref: Ref) => string | null;
 // This is not renderMarkdown's default — renderMarkdown requires resolve, so
 // every real caller's choice of "what does unresolved look like here" stays
 // visible at its call site rather than silently substituted.
-const noResolver: RefResolver = () => null;
+const noResolver: RefResolver = () => null
 
 // refAt finds a [[Topic]] or ((ULID|label)) reference starting at pos, plus
 // the fallback text to show when it does not resolve. The search is bounded
@@ -49,29 +49,29 @@ const noResolver: RefResolver = () => null;
 // never crosses that boundary. It is also bounded to posMax, matching the
 // span markdown-it itself considers in play for this state.
 function refAt(src: string, pos: number, posMax: number): { ref: Ref; fallback: string; end: number } | null {
-	const nl = src.indexOf("\n", pos);
-	const boundary = nl < 0 ? posMax : Math.min(nl, posMax);
-	const line = src.slice(0, boundary);
+	const nl = src.indexOf("\n", pos)
+	const boundary = nl < 0 ? posMax : Math.min(nl, posMax)
+	const line = src.slice(0, boundary)
 
-	const topic = topicRefAt(line, pos);
+	const topic = topicRefAt(line, pos)
 	if (topic !== null) {
 		return {
 			ref: { kind: "topic", targetKey: normalizeTitle(topic.body) },
 			fallback: topicName(topic.body),
 			end: topic.end,
-		};
+		}
 	}
 
-	const block = blockRefAt(line, pos);
+	const block = blockRefAt(line, pos)
 	if (block !== null) {
 		return {
 			ref: { kind: "block", targetKey: block.target },
 			fallback: block.label !== "" ? block.label : block.target,
 			end: block.end,
-		};
+		}
 	}
 
-	return null;
+	return null
 }
 
 // markdown-it's built-in "text" rule consumes a run of characters up to the
@@ -109,25 +109,25 @@ function isRefTerminator(code: number): boolean {
 		case 0x7b: // {
 		case 0x7d: // }
 		case 0x7e: // ~
-			return true;
+			return true
 		default:
-			return false;
+			return false
 	}
 }
 md.inline.ruler.at("text", (state, silent) => {
-	let pos = state.pos;
+	let pos = state.pos
 	while (pos < state.posMax && !isRefTerminator(state.src.charCodeAt(pos))) {
-		pos++;
+		pos++
 	}
 	if (pos === state.pos) {
-		return false;
+		return false
 	}
 	if (!silent) {
-		state.pending += state.src.slice(state.pos, pos);
+		state.pending += state.src.slice(state.pos, pos)
 	}
-	state.pos = pos;
-	return true;
-});
+	state.pos = pos
+	return true
+})
 
 // The inline rule for both reference forms. It emits a plain span_open/text/
 // span_close token triple — no renderer.rules override needed, since the
@@ -135,27 +135,27 @@ md.inline.ruler.at("text", (state, silent) => {
 // already escapes content. Registered before "text" so it claims a "(" or
 // "[" position first, per the terminator set above.
 md.inline.ruler.before("text", "ref", (state, silent) => {
-	const match = refAt(state.src, state.pos, state.posMax);
+	const match = refAt(state.src, state.pos, state.posMax)
 	if (match === null) {
-		return false;
+		return false
 	}
 	if (!silent) {
-		const { resolve } = state.env as { resolve?: RefResolver };
-		const resolved = (resolve ?? noResolver)(match.ref);
-		const classes = ["ref", `ref-${match.ref.kind}`];
+		const { resolve } = state.env as { resolve?: RefResolver }
+		const resolved = (resolve ?? noResolver)(match.ref)
+		const classes = ["ref", `ref-${match.ref.kind}`]
 		if (resolved === null) {
-			classes.push("ref-missing");
+			classes.push("ref-missing")
 		}
-		const open = state.push("ref_open", "span", 1);
-		open.attrSet("class", classes.join(" "));
-		open.attrSet("data-target", match.ref.targetKey);
-		const text = state.push("text", "", 0);
-		text.content = resolved ?? match.fallback;
-		state.push("ref_close", "span", -1);
+		const open = state.push("ref_open", "span", 1)
+		open.attrSet("class", classes.join(" "))
+		open.attrSet("data-target", match.ref.targetKey)
+		const text = state.push("text", "", 0)
+		text.content = resolved ?? match.fallback
+		state.push("ref_close", "span", -1)
 	}
-	state.pos = match.end;
-	return true;
-});
+	state.pos = match.end
+	return true
+})
 
 // renderMarkdown turns one block's markdown source into sanitized HTML ready for
 // {@html}. The raw source is never mutated — it stays the edit round-trip value.
@@ -165,5 +165,5 @@ md.inline.ruler.before("text", "ref", (state, silent) => {
 // strings, and a hidden default is how that divergence goes unnoticed. See
 // caret.ts's renderedText/sourceOffset, which take resolve for this reason.
 export function renderMarkdown(src: string, resolve: RefResolver): string {
-	return md.render(src, { resolve });
+	return md.render(src, { resolve })
 }

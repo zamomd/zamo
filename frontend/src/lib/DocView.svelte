@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { Browser } from "@wailsio/runtime";
+	import { Author } from "../../bindings/github.com/zamomd/zamo/internal/knowledge";
 	import { ai } from "../stores/ai.svelte";
 	import { base } from "../stores/base.svelte";
 	import { changes } from "../stores/changes.svelte";
+	import { schedules } from "../stores/schedules.svelte";
 	import Backlinks from "./Backlinks.svelte";
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import { renderMarkdown } from "./markdown";
 	import { makeResolver, refClick } from "./resolve";
+	import SchedulePanel from "./SchedulePanel.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
 
 	let { node }: { node: TreeNodeData } = $props();
@@ -17,16 +20,18 @@
 	// AI scope all take it unchanged; only the layout differs.
 	const block = $derived(node.block);
 	const editing = $derived(base.editingID === block.ID);
-	const resolveRef = $derived(makeResolver(base.forest));
+	const resolveRef = $derived(makeResolver(base.forest, base.aliases));
 	const html = $derived(renderMarkdown(block.Content, resolveRef));
 
 	// The tree says this with a hollow dot, whose meaning comes from the filled
 	// dots around it. A document is one block with nothing to contrast against,
 	// so it says it in words instead, in the same channel as the lane's other
 	// small dim labels.
-	const byAI = $derived(block.Meta?.author === "ai");
+	const byAI = $derived(block.CreatedBy === Author.AuthorAI);
 	const backlinksOpen = $derived(base.openBacklinks.has(block.ID));
 	const historyOpen = $derived(base.historyID === block.ID);
+	const scheduleOpen = $derived(base.openSchedules.has(block.ID));
+	const schedule = $derived(schedules.byKey.get(block.ID));
 	const unreviewed = $derived(block.Unreviewed);
 	const atomic = $derived(changes.atomic.has(block.ID));
 	// The page carries the tombstones of whatever a conversion removed as well
@@ -57,7 +62,7 @@
 	let pendingTopic: { name: string } | null = $state(null);
 
 	function clickRef(el: HTMLElement): void {
-		const action = refClick(base.forest, el);
+		const action = refClick(base.forest, base.aliases, el);
 		if (action === null) {
 			return;
 		}
@@ -193,6 +198,21 @@
 	>
 		⌚︎
 	</button>
+	<button
+		type="button"
+		class="schedule-toggle"
+		class:open={scheduleOpen}
+		class:scheduled={schedule !== undefined}
+		class:off={schedule !== undefined && !schedule.enabled}
+		class:attention={schedule?.outcome === "failed" || schedule?.outcome === "skipped"}
+		title={schedule ? "this document runs on a schedule" : "refresh this document on a schedule"}
+		aria-expanded={scheduleOpen}
+		aria-label="toggle this document's schedule"
+		disabled={base.busy}
+		onclick={() => base.toggleSchedule(block.ID)}
+	>
+		◷
+	</button>
 
 	{#if unreviewed && atomic}
 		<!-- Part of a conversion or a rename: the backend refuses a decision on
@@ -296,6 +316,9 @@
 {/if}
 {#if historyOpen}
 	<HistoryPanel {block} />
+{/if}
+{#if scheduleOpen}
+	<SchedulePanel {block} />
 {/if}
 
 {#if pendingTopic}

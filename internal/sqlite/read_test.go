@@ -30,8 +30,8 @@ func insertBlock(ctx context.Context, t *testing.T, db *sql.DB, id, parent strin
 		parentArg = parent
 	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO blocks (id, parent_id, position, content, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, '{}', ?, ?)`,
+		INSERT INTO blocks (id, parent_id, position, content, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
 		id, parentArg, pos, content, now, now)
 	require.NoError(t, err, "insert block %s", id)
 }
@@ -260,4 +260,37 @@ func equalIDs(a, b []knowledge.ID) bool {
 		}
 	}
 	return true
+}
+
+func TestBlockReportsWhoCreatedItAcrossLaterEdits(t *testing.T) {
+	repo := testRepo(t)
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01AI", Content: "By the model"},
+	}))
+	require.NoError(t, ownerOps(t, repo, "g2",
+		knowledge.Op{Kind: knowledge.OpAdd, BlockID: "01ME", Content: "By the owner"},
+		knowledge.Op{Kind: knowledge.OpEdit, BlockID: "01AI", Content: "Rewritten by the owner"},
+	))
+
+	got, err := repo.GetBlocks(t.Context(), []knowledge.ID{"01AI", "01ME"})
+	require.NoError(t, err)
+	assert.Equal(t, knowledge.AuthorAI, got["01AI"].CreatedBy, "the first revision decides")
+	assert.Equal(t, knowledge.AuthorOwner, got["01ME"].CreatedBy)
+}
+
+func TestBlockKeepsItsCreatorWhenRebuiltFromHistory(t *testing.T) {
+	repo := testRepo(t)
+	require.NoError(t, applyOps(t.Context(), repo, "g1", aiMeta("add"), []knowledge.Op{
+		{Kind: knowledge.OpAdd, BlockID: "01AI", Content: "By the model"},
+	}))
+	require.NoError(t, repo.MarkBlockReviewed(t.Context(), "01AI"))
+	require.NoError(t, applyOps(t.Context(), repo, "g2", aiMeta("delete"), []knowledge.Op{
+		{Kind: knowledge.OpDelete, BlockID: "01AI"},
+	}))
+	require.NoError(t, repo.RejectBlock(t.Context(), "01AI"))
+
+	got, err := repo.GetBlocks(t.Context(), []knowledge.ID{"01AI"})
+	require.NoError(t, err)
+	require.Contains(t, got, knowledge.ID("01AI"), "the rejected deletion brought the block back")
+	assert.Equal(t, knowledge.AuthorAI, got["01AI"].CreatedBy)
 }

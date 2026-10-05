@@ -10,9 +10,13 @@ package host
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"time"
 
+	"github.com/zamomd/zamo/internal/agent"
 	"github.com/zamomd/zamo/internal/knowledge"
+	"github.com/zamomd/zamo/internal/llm"
+	"github.com/zamomd/zamo/internal/scheduler"
 )
 
 // BaseReader is read access to the shape of the base: its topics and the
@@ -26,9 +30,29 @@ type BaseReader interface {
 
 // FileWriter persists rendered files into a directory the user chose.
 type FileWriter interface {
-	// WriteFiles writes each file into dir. Names are unique within files,
-	// so order does not matter.
+	// WriteFiles makes dir hold files: it writes each one and removes those
+	// an earlier call wrote there that are no longer among them. Nothing it
+	// did not write is removed. Names are unique within files, so order does
+	// not matter.
 	WriteFiles(ctx context.Context, dir string, files []knowledge.ExportFile) error
+}
+
+// Commit is one commit in a directory's history. The zero value means no
+// commit was made.
+type Commit struct {
+	Hash    string    `json:"hash"`
+	Message string    `json:"message"`
+	At      time.Time `json:"at,omitzero"`
+}
+
+// DirHistory keeps the history of a directory in a local git repository.
+type DirHistory interface {
+	// Commit records what changed in dir since its last commit, in the
+	// repository that owns dir or a new one started at dir. Only dir is
+	// committed: changes elsewhere in the repository stay as they are, and
+	// ones already staged there make it refuse. A dir that has not changed
+	// yields the zero Commit. Nothing is ever pushed.
+	Commit(ctx context.Context, dir, message string) (Commit, error)
 }
 
 // FilePicker asks the user for a path through the platform's own dialog. An
@@ -52,43 +76,92 @@ type BaseArchive interface {
 	CancelRestore() error
 }
 
-// GitCommitInfo describes one commit under the managed directory.
-type GitCommitInfo struct {
-	Hash, Message string
-	At            time.Time
-}
-
-// GitSnapshotStatus is what the settings screen renders.
-type GitSnapshotStatus struct {
-	Dir            string
-	CommitTemplate string
-	LatestCommit   *GitCommitInfo // nil when there is no commit yet
-}
-
-// GitSnapshotResult reports one export-and-commit run. Commit is nil exactly
-// when Committed is false — a no-op run creates no commit.
-type GitSnapshotResult struct {
-	Committed bool
-	Commit    *GitCommitInfo
-}
-
-// GitSnapshot exports the base into a managed directory inside a local git
-// repository and commits the change there when it actually changed
-// something. export renders the base into dir; the caller supplies it, since
-// only it holds BaseReader/FileWriter — GitSnapshot owns everything about
-// the repository itself and never reaches into the base.
-type GitSnapshot interface {
-	Status() (GitSnapshotStatus, error)
-	ExportAndCommit(ctx context.Context, export func(ctx context.Context, dir string) error) (GitSnapshotResult, error)
-	SetDirectory(dir string) error
-	SetCommitTemplate(tmpl string) error
-}
-
 // BatchWriter applies one write batch through the single write path: every
 // touched block gains a revision in one group, reviewed or awaiting review
 // as the batch's WriteMeta decides.
 type BatchWriter interface {
 	ApplyOps(ctx context.Context, meta knowledge.WriteMeta, ops []knowledge.Op) (knowledge.Applied, error)
+}
+
+// Agent runs the AI over the base: the model reads through the base's tools
+// and writes only what the run's policy allows, as an AI-authored batch
+// awaiting review. Every AI feature of a module goes through it.
+type Agent interface {
+	Run(ctx context.Context, run AgentRun) (AgentResult, error)
+}
+
+// AgentRun is one request to the agent.
+type AgentRun = agent.Run
+
+// AgentResult is how a run ended.
+type AgentResult = agent.Result
+
+// WritePolicy is what a run may change.
+type WritePolicy = agent.WritePolicy
+
+// Persona is who the model is asked to be in a run.
+type Persona = llm.Persona
+
+// The personas a module may run.
+const (
+	PersonaAssistant = llm.PersonaAssistant
+	PersonaEditor    = llm.PersonaEditor
+)
+
+// Message is one turn of an agent conversation. A module keeps the turns a
+// run returns and hands them back as the next run's history; it does not
+// build or read them.
+type Message = llm.Message
+
+// Schedule is a module's view of one of its scheduled records.
+type Schedule = scheduler.Schedule
+
+// ScheduleHandler runs one record when its time comes.
+type ScheduleHandler = scheduler.Handler
+
+// ScheduleOptions is the policy a handler is registered with.
+type ScheduleOptions = scheduler.HandlerOptions
+
+// RunResult is a handler's report of one run.
+type RunResult = scheduler.RunResult
+
+// Outcome is how a run ended.
+type Outcome = scheduler.Outcome
+
+// The outcomes a handler reports.
+const (
+	OutcomeOK       = scheduler.OutcomeOK
+	OutcomeNoChange = scheduler.OutcomeNoChange
+	OutcomeSkipped  = scheduler.OutcomeSkipped
+	OutcomeFailed   = scheduler.OutcomeFailed
+)
+
+// The scheduler's errors a module acts on.
+var (
+	ErrScheduleNotFound = scheduler.ErrNotFound
+	ErrInvalidSpec      = scheduler.ErrInvalidSpec
+	ErrScheduleBusy     = scheduler.ErrBusy
+)
+
+// Scheduler is timed work, bound to the module it was handed to: the module
+// registers one handler and manages its own records by key; it sees nobody
+// else's. The scheduler persists the records, runs them while the app is
+// running, collapses the slots a sleeping machine missed into one run, drops
+// those that passed while the app was not running at all, and keeps two
+// processes on one base from running the same record.
+type Scheduler interface {
+	Handle(h ScheduleHandler, opts ScheduleOptions)
+	// Put creates or replaces the record for key; the next run counts from
+	// now, so saving never runs it. Disabling cancels a run in flight.
+	Put(ctx context.Context, key, spec string, enabled bool, payload jsontext.Value) (Schedule, error)
+	Get(ctx context.Context, key string) (Schedule, error)
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]Schedule, error)
+	// RunNow runs the record at once through the same path as a timed run.
+	RunNow(ctx context.Context, key string) error
+	Cancel(ctx context.Context, key string) bool
+	// Preview validates spec and returns its next n firing times.
+	Preview(spec string, n int) ([]time.Time, error)
 }
 
 // Coded is an error that carries a stable wire code, so the frontend can

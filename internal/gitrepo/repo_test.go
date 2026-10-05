@@ -13,16 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheManagedDirectory(t *testing.T) {
+func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheExportDirectory(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func(t *testing.T, root string) (managed, wantRoot, wantRel string)
+		setup       func(t *testing.T, root string) (dir, wantRoot, wantRel string)
 		wantCreated bool
 	}{
 		{
 			name: "creates a repository when none exists in the directory's ancestry",
 			setup: func(t *testing.T, root string) (string, string, string) {
-				dir := filepath.Join(root, "snapshots")
+				dir := filepath.Join(root, "export")
 				require.NoError(t, os.MkdirAll(dir, 0o755))
 				return dir, dir, "."
 			},
@@ -44,9 +44,9 @@ func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheManagedDirectory(t *te
 				repoRoot := filepath.Join(root, "vault")
 				_, err := git.PlainInit(repoRoot, false)
 				require.NoError(t, err)
-				managed := filepath.Join(repoRoot, "zamo-snapshot")
-				require.NoError(t, os.MkdirAll(managed, 0o755))
-				return managed, repoRoot, "zamo-snapshot"
+				dir := filepath.Join(repoRoot, "zamo-export")
+				require.NoError(t, os.MkdirAll(dir, 0o755))
+				return dir, repoRoot, "zamo-export"
 			},
 		},
 	}
@@ -54,9 +54,9 @@ func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheManagedDirectory(t *te
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			managed, wantRoot, wantRel := tc.setup(t, root)
+			dir, wantRoot, wantRel := tc.setup(t, root)
 
-			repo, relDir, err := openOrInitRepo(managed)
+			repo, relDir, err := openOrInitRepo(dir)
 
 			require.NoError(t, err)
 			assert.Equal(t, wantRel, relDir)
@@ -69,7 +69,7 @@ func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheManagedDirectory(t *te
 	}
 }
 
-func TestCommitStagesOnlyTheManagedDirectory(t *testing.T) {
+func TestCommitStagesOnlyTheExportDirectory(t *testing.T) {
 	repoRoot := t.TempDir()
 	repo, err := git.PlainInit(repoRoot, false)
 	require.NoError(t, err)
@@ -81,30 +81,29 @@ func TestCommitStagesOnlyTheManagedDirectory(t *testing.T) {
 	writeFile(t, repoRoot, "existing.txt", "already committed")
 	_, err = wt.Add("existing.txt")
 	require.NoError(t, err)
-	_, err = wt.Commit("seed", &git.CommitOptions{Author: &identity})
+	_, err = wt.Commit("seed", &git.CommitOptions{Author: &fallbackIdentity})
 	require.NoError(t, err)
 
 	// An unrelated change elsewhere in the same repository, made by the
 	// user's own separate git usage — this must survive untouched.
-	writeFile(t, repoRoot, "existing.txt", "edited outside the managed directory")
+	writeFile(t, repoRoot, "existing.txt", "edited outside the dir directory")
 
-	managed := filepath.Join(repoRoot, "zamo-snapshot")
-	require.NoError(t, os.MkdirAll(managed, 0o755))
-	writeFile(t, managed, "topic.md", "# Topic")
+	dir := filepath.Join(repoRoot, "zamo-export")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	writeFile(t, dir, "topic.md", "# Topic")
 
-	_, relDir, err := openOrInitRepo(managed)
+	_, relDir, err := openOrInitRepo(dir)
 	require.NoError(t, err)
 	result, err := commit(repo, relDir, "snapshot", time.Now())
 	require.NoError(t, err)
 
-	assert.True(t, result.Committed)
-	require.NotNil(t, result.Commit)
+	require.NotEmpty(t, result.Hash)
 
 	head, err := repo.Head()
 	require.NoError(t, err)
 	commitObj, err := repo.CommitObject(head.Hash())
 	require.NoError(t, err)
-	assertOnlyPathCommitted(t, commitObj, "zamo-snapshot/topic.md")
+	assertOnlyPathCommitted(t, commitObj, "zamo-export/topic.md")
 	assertFileContent(t, commitObj, "existing.txt", "already committed")
 
 	status, err := wt.Status()
@@ -113,26 +112,25 @@ func TestCommitStagesOnlyTheManagedDirectory(t *testing.T) {
 		"the unrelated edit must stay an uncommitted working-tree change")
 }
 
-func TestCommitIsANoOpWhenNothingChangedUnderTheManagedDirectory(t *testing.T) {
+func TestCommitIsANoOpWhenNothingChangedUnderTheExportDirectory(t *testing.T) {
 	root := t.TempDir()
-	managed := filepath.Join(root, "snapshots")
-	require.NoError(t, os.MkdirAll(managed, 0o755))
-	writeFile(t, managed, "topic.md", "# Topic")
+	dir := filepath.Join(root, "export")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	writeFile(t, dir, "topic.md", "# Topic")
 
-	repo, relDir, err := openOrInitRepo(managed)
+	repo, relDir, err := openOrInitRepo(dir)
 	require.NoError(t, err)
 	first, err := commit(repo, relDir, "first", time.Now())
 	require.NoError(t, err)
-	require.True(t, first.Committed)
+	require.NotEmpty(t, first.Hash)
 
 	second, err := commit(repo, relDir, "second", time.Now())
 	require.NoError(t, err)
 
-	assert.False(t, second.Committed)
-	assert.Nil(t, second.Commit)
+	assert.Zero(t, second)
 	head, err := repo.Head()
 	require.NoError(t, err)
-	assert.Equal(t, first.Commit.Hash, head.Hash().String(), "a no-op run must not move HEAD")
+	assert.Equal(t, first.Hash, head.Hash().String(), "a no-op run must not move HEAD")
 }
 
 // TestCommitLeavesTheRepositoryUnchangedWhenStagingFails forces the
@@ -143,11 +141,11 @@ func TestCommitIsANoOpWhenNothingChangedUnderTheManagedDirectory(t *testing.T) {
 // covers a Commit failure after a successful Add.
 func TestCommitLeavesTheRepositoryUnchangedWhenStagingFails(t *testing.T) {
 	root := t.TempDir()
-	managed := filepath.Join(root, "snapshots")
-	require.NoError(t, os.MkdirAll(managed, 0o755))
-	writeFile(t, managed, "topic.md", "# Topic")
+	dir := filepath.Join(root, "export")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	writeFile(t, dir, "topic.md", "# Topic")
 
-	repo, relDir, err := openOrInitRepo(managed)
+	repo, relDir, err := openOrInitRepo(dir)
 	require.NoError(t, err)
 
 	wt, err := repo.Worktree()
@@ -164,6 +162,92 @@ func TestCommitLeavesTheRepositoryUnchangedWhenStagingFails(t *testing.T) {
 	idx, err := repo.Storer.Index()
 	require.NoError(t, err)
 	assert.Empty(t, idx.Entries, "a failed Add must never reach SetIndex")
+}
+
+func TestCommitRefusesWhenSomethingElseIsAlreadyStaged(t *testing.T) {
+	repoRoot := t.TempDir()
+	repo, err := git.PlainInit(repoRoot, false)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	writeFile(t, repoRoot, "theirs.txt", "staged by the owner")
+	_, err = wt.Add("theirs.txt")
+	require.NoError(t, err)
+
+	dir := filepath.Join(repoRoot, "zamo-export")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	writeFile(t, dir, "topic.md", "# Topic")
+
+	_, err = New(time.Now).Commit(t.Context(), dir, "export")
+
+	require.ErrorContains(t, err, "already staged")
+	_, err = repo.Head()
+	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound)
+}
+
+func TestCommitRecordsARemovedFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "kept.md", "# Kept")
+	writeFile(t, dir, "gone.md", "# Gone")
+	history := New(time.Now)
+	_, err := history.Commit(t.Context(), dir, "first")
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "gone.md")))
+	second, err := history.Commit(t.Context(), dir, "second")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, second.Hash)
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	c, err := repo.CommitObject(plumbing.NewHash(second.Hash))
+	require.NoError(t, err)
+	_, err = c.File("gone.md")
+	require.ErrorIs(t, err, object.ErrFileNotFound)
+	_, err = c.File("kept.md")
+	assert.NoError(t, err)
+}
+
+func TestCommitIsStampedWithTheClockAndSignedByTheConfiguredUser(t *testing.T) {
+	when := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		gitconfig string
+		wantName  string
+		wantEmail string
+	}{
+		{name: "no git user", wantName: "Zamo", wantEmail: "zamo@localhost"},
+		{
+			name:      "a global git user",
+			gitconfig: "[user]\n\tname = Ada\n\temail = ada@example.com\n",
+			wantName:  "Ada", wantEmail: "ada@example.com",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			if tc.gitconfig != "" {
+				writeFile(t, home, ".gitconfig", tc.gitconfig)
+			}
+			dir := t.TempDir()
+			writeFile(t, dir, "topic.md", "# Topic")
+
+			got, err := New(func() time.Time { return when }).Commit(t.Context(), dir, "export")
+
+			require.NoError(t, err)
+			assert.Equal(t, "export", got.Message)
+			assert.Equal(t, when, got.At)
+			repo, err := git.PlainOpen(dir)
+			require.NoError(t, err)
+			c, err := repo.CommitObject(plumbing.NewHash(got.Hash))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantName, c.Author.Name)
+			assert.Equal(t, tc.wantEmail, c.Author.Email)
+			assert.True(t, when.Equal(c.Author.When))
+		})
+	}
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

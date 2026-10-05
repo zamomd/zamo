@@ -1,6 +1,9 @@
 package knowledge
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // BacklinkExcerpt returns the paragraph of source that carries a reference to
 // the target: the sentence that made the link, rather than the whole block a
@@ -10,18 +13,18 @@ import "strings"
 // same question. A block reference resolves by id and its label is free text —
 // often nothing at all — and a topic reference resolves by normalized title,
 // so [[go   contexts]] finds "Go Contexts" while a search for that literal
-// name finds nothing. titleKey is the target's title_key and is empty for a
-// block that is not a topic root, which is exactly when no topic reference can
-// name it.
+// name finds nothing. names are the keys the target answers to — its name and
+// its aliases — and there are none for a block that is not a topic root, which
+// is exactly when no topic reference can name it.
 //
 // A source whose reference this cannot see falls back to its opening
 // paragraph; content that is entirely blank yields an empty string.
-func BacklinkExcerpt(source string, target ID, titleKey string) string {
+func BacklinkExcerpt(source string, target ID, names ...string) string {
 	want := Ref{Kind: RefBlock, TargetKey: strings.ToUpper(string(target))}
 	paragraphs := splitParagraphs(source)
 	for _, p := range paragraphs {
 		for _, ref := range ParseRefs(p) {
-			if ref == want || (titleKey != "" && ref.Kind == RefTopic && ref.TargetKey == titleKey) {
+			if ref == want || (ref.Kind == RefTopic && ref.TargetKey != "" && slices.Contains(names, ref.TargetKey)) {
 				return p
 			}
 		}

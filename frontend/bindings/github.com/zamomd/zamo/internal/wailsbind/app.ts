@@ -18,6 +18,10 @@ import * as knowledge$0 from "../knowledge/models.js";
 // @ts-ignore: Unused imports
 import * as settings$0 from "../settings/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * AcceptBlock passes the call to knowledge.Service.
  */
@@ -57,11 +61,12 @@ export function BlockHistory(id: knowledge$0.ID): $CancellablePromise<knowledge$
 }
 
 /**
- * CancelGeneration cancels every generation in flight and returns how many
- * there were. The cancelled call fails with the "cancelled" code.
+ * CancelAgent cancels every agent run started on the user's behalf and
+ * returns how many there were. A cancelled call fails with the "cancelled"
+ * code.
  */
-export function CancelGeneration(): $CancellablePromise<number> {
-    return $Call.ByID(391441261);
+export function CancelAgent(): $CancellablePromise<number> {
+    return $Call.ByID(3016452972);
 }
 
 /**
@@ -104,26 +109,12 @@ export function EditBlockContent(id: knowledge$0.ID, content: string): $Cancella
 }
 
 /**
- * EditWithAI passes the call to knowledge.Service. The frontend supplies the
- * scope (a block or subtree root) and the user's text command.
+ * ExpandTopicByID has the AI write an existing topic in the shape it has: an
+ * outline grows a block tree, a document is written whole. The result awaits
+ * review. A run that writes nothing fails as a bad response.
  */
-export function EditWithAI(scope: knowledge$0.ID, instruction: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(3918853051, scope, instruction);
-}
-
-/**
- * ExpandTopic passes the call to knowledge.Service.
- */
-export function ExpandTopic(topic: string, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(3015547164, topic, hint);
-}
-
-/**
- * ExpandTopicByID passes the call to knowledge.Service: expands an existing
- * topic in the shape it has.
- */
-export function ExpandTopicByID(id: knowledge$0.ID, hint: string): $CancellablePromise<knowledge$0.Applied> {
-    return $Call.ByID(96987004, id, hint);
+export function ExpandTopicByID(id: knowledge$0.ID): $CancellablePromise<knowledge$0.Applied> {
+    return $Call.ByID(96987004, id);
 }
 
 /**
@@ -146,6 +137,22 @@ export function IndentBlock(id: knowledge$0.ID): $CancellablePromise<knowledge$0
  */
 export function InsertBlockBefore(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
     return $Call.ByID(1463859878, id, content);
+}
+
+/**
+ * InsertFirstChild is Enter on the block the view is rooted at: an empty block
+ * opens its children. It is how an empty topic gets its first block.
+ */
+export function InsertFirstChild(id: knowledge$0.ID, content: string): $CancellablePromise<knowledge$0.OutlineChange> {
+    return $Call.ByID(3531137792, id, content);
+}
+
+/**
+ * ListSchedules returns every module's scheduled work, for the Changes
+ * screen's scheduled tab. Without a scheduler (headless) the list is empty.
+ */
+export function ListSchedules(): $CancellablePromise<$models.ScheduleEntry[] | null> {
+    return $Call.ByID(1298538653);
 }
 
 /**
@@ -210,6 +217,13 @@ export function SetTopicMode(id: knowledge$0.ID, mode: knowledge$0.Mode): $Cance
 }
 
 /**
+ * SetTopicProps replaces a topic's aliases and tags, both as written.
+ */
+export function SetTopicProps(id: knowledge$0.ID, aliases: string[] | null, tags: string[] | null): $CancellablePromise<knowledge$0.TopicProps> {
+    return $Call.ByID(3303681992, id, aliases, tags);
+}
+
+/**
  * Settings passes the call to settings.Manager: the effective provider
  * configuration and the origin of each field. The API key is never part of the
  * result — only whether one is set.
@@ -227,6 +241,13 @@ export function SplitBlock(id: knowledge$0.ID, head: string, tail: string): $Can
 }
 
 /**
+ * TopicAliases returns every alias in the base with the topic it resolves to.
+ */
+export function TopicAliases(): $CancellablePromise<knowledge$0.TopicAlias[] | null> {
+    return $Call.ByID(1358738504);
+}
+
+/**
  * TopicGraph passes the call to knowledge.Service.
  */
 export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
@@ -238,6 +259,21 @@ export function TopicGraph(): $CancellablePromise<knowledge$0.TopicGraph> {
  */
 export function TopicMap(): $CancellablePromise<knowledge$0.Block[] | null> {
     return $Call.ByID(1755291030);
+}
+
+/**
+ * TopicProps returns what a topic carries beside its text: its aliases and its
+ * tags.
+ */
+export function TopicProps(id: knowledge$0.ID): $CancellablePromise<knowledge$0.TopicProps> {
+    return $Call.ByID(3187238454, id);
+}
+
+/**
+ * TopicTags returns every tag in the base with the topic that carries it.
+ */
+export function TopicTags(): $CancellablePromise<knowledge$0.TopicTag[] | null> {
+    return $Call.ByID(2165251913);
 }
 
 /**

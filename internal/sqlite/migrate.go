@@ -20,7 +20,6 @@ CREATE TABLE blocks (
     content    TEXT NOT NULL,
     title_key  TEXT,
     mode       TEXT NOT NULL DEFAULT 'outline' CHECK (mode IN ('outline','doc')),
-    metadata   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -44,6 +43,31 @@ CREATE TABLE refs (
 );
 
 CREATE INDEX idx_refs_target ON refs(target_key);
+
+-- What a topic carries beside its text: the other names it answers to and the
+-- labels it is found by. The owner sets both outside revisions. Neither row
+-- goes with its topic, because a deleted topic can come back through a
+-- rollback; every reader joins live roots, so the rows of a topic that is gone
+-- match nothing meanwhile.
+CREATE TABLE topic_aliases (
+    topic_id  TEXT NOT NULL,
+    alias_key TEXT NOT NULL,
+    alias     TEXT NOT NULL,
+    position  INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, alias_key)
+);
+
+CREATE INDEX idx_topic_aliases_key ON topic_aliases(alias_key);
+
+CREATE TABLE topic_tags (
+    topic_id TEXT NOT NULL,
+    tag_key  TEXT NOT NULL,
+    tag      TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (topic_id, tag_key)
+);
+
+CREATE INDEX idx_topic_tags_key ON topic_tags(tag_key);
 
 CREATE TABLE block_revisions (
     id         TEXT PRIMARY KEY,
@@ -84,6 +108,29 @@ CREATE TABLE revision_groups (
     atomic     INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+
+-- Schedules of every module, owned by internal/scheduler. Times are unix
+-- seconds so that due and lease comparisons are plain integer ones; payload
+-- belongs to the owning module and is never read here.
+CREATE TABLE schedules (
+    id           TEXT PRIMARY KEY,
+    module       TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    spec         TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    payload      TEXT NOT NULL DEFAULT '{}',
+    next_run     INTEGER,
+    last_run     INTEGER,
+    last_outcome TEXT NOT NULL DEFAULT '',
+    last_detail  TEXT NOT NULL DEFAULT '',
+    claimed_at   INTEGER,
+    claimed_by   TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    UNIQUE (module, key)
+);
+
+CREATE INDEX idx_schedules_due ON schedules(enabled, next_run);
 
 CREATE VIRTUAL TABLE blocks_fts USING fts5(
     content,
@@ -149,6 +196,9 @@ var schemaFeatures = []struct {
 	{"blocks.title_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'title_key')`},
 	{"revision_groups.atomic", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('revision_groups') WHERE name = 'atomic')`},
 	{"blocks.mode", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('blocks') WHERE name = 'mode')`},
+	{"schedules", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedules')`},
+	{"topic_aliases", `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'topic_aliases')`},
+	{"topic_tags.tag_key", `SELECT EXISTS(SELECT 1 FROM pragma_table_info('topic_tags') WHERE name = 'tag_key')`},
 }
 
 // checkCurrent verifies that a database already at the current schema version

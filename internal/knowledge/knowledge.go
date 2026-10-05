@@ -10,10 +10,6 @@ import "time"
 // ID generation lives outside the domain and is injected into Service.
 type ID string
 
-// Metadata holds extensible block metadata: authorship (human/AI),
-// provenance, model, etc. Stored in the database as JSON.
-type Metadata map[string]any
-
 // Block is the unit of knowledge: a short markdown fragment in a topic
 // tree. Portability rule: Content is pure markdown; all structure lives
 // in fields, never as service markup inside the text.
@@ -22,7 +18,6 @@ type Block struct {
 	ParentID ID // empty means the block is a topic root
 	Position int
 	Content  string
-	Meta     Metadata
 
 	// Mode is the shape of the topic this block roots. Meaningful only when
 	// IsTopic reports true; a child is always ModeOutline.
@@ -30,6 +25,10 @@ type Block struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// CreatedBy is who wrote the block's first revision. Derived by storage on
+	// read; never written by callers.
+	CreatedBy Author
 
 	// Unreviewed reports that the block has revisions awaiting review.
 	// Derived by storage on read; never written by callers.

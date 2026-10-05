@@ -1,6 +1,9 @@
 package knowledge
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // The error vocabulary of the domain.
 var (
@@ -70,8 +73,30 @@ var (
 	// could not be parsed into operations even after a retry.
 	ErrLLMBadResponse = errors.New("LLM returned an unparsable response")
 
+	// ErrLLMNoToolSupport reports that the configured model was reached but
+	// cannot call tools, which every AI feature depends on.
+	ErrLLMNoToolSupport = errors.New("model cannot call tools")
+
 	// ErrDocumentHasChildren reports a write that would leave a block under a
 	// topic root in ModeDoc. A document is the whole topic: its text is the
 	// page, and a child would be content the reader never sees.
 	ErrDocumentHasChildren = errors.New("a document topic cannot have children")
+
+	// ErrUnreviewedInScope reports a batch refused because its scope still
+	// holds changes awaiting review (see WriteMeta.RefuseOverUnreviewedIn). It
+	// arrives wrapped in an UnreviewedInScopeError carrying how many.
+	ErrUnreviewedInScope = errors.New("scope has changes awaiting review")
 )
+
+// UnreviewedInScopeError is ErrUnreviewedInScope with the number of blocks
+// awaiting review, so a caller can tell the owner how much stands in the way.
+type UnreviewedInScopeError struct {
+	Scope ID
+	Count int
+}
+
+func (e *UnreviewedInScopeError) Error() string {
+	return fmt.Sprintf("%d changes under %s await review: %v", e.Count, e.Scope, ErrUnreviewedInScope)
+}
+
+func (e *UnreviewedInScopeError) Unwrap() error { return ErrUnreviewedInScope }

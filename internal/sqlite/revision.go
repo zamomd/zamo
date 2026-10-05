@@ -196,8 +196,8 @@ func projectHead(ctx context.Context, tx *sql.Tx, blockID string) error {
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO blocks (id, parent_id, position, content, title_key, mode, metadata, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?)
+		INSERT INTO blocks (id, parent_id, position, content, title_key, mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
 			parent_id = excluded.parent_id, position = excluded.position,
 			content = excluded.content, title_key = excluded.title_key,
