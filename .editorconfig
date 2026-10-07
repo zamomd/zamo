@@ -9,16 +9,18 @@ indent_style = tab
 indent_size = 4
 
 [*.go]
-indent_style = tab
-indent_size = 4
 max_line_length = 120
-
-[go.mod]
-indent_style = tab
 
 [*.{js,ts,svelte,html,css}]
-indent_style = tab
 max_line_length = 120
+ij_javascript_use_double_quotes = true
+ij_javascript_force_quote_style = true
+ij_javascript_use_semicolon_after_statement = false
+ij_javascript_force_semicolon_style = true
+ij_typescript_use_double_quotes = true
+ij_typescript_force_quote_style = true
+ij_typescript_use_semicolon_after_statement = false
+ij_typescript_force_semicolon_style = true
 
 [*.{yml,yaml}]
 indent_style = space
@@ -27,9 +29,6 @@ indent_size = 2
 [*.toml]
 indent_style = space
 indent_size = 2
-
-[*.json]
-indent_style = tab
 
 [*.md]
 trim_trailing_whitespace = false
