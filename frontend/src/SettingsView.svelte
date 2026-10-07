@@ -7,6 +7,7 @@
 	import type { In, View } from "../bindings/github.com/zamomd/zamo/internal/settings/models.js";
 	import { App } from "../bindings/github.com/zamomd/zamo/internal/wailsbind";
 	import { messageFor } from "./lib/callerror";
+	import ExportDestination from "./lib/ExportDestination.svelte";
 	import { submittedSwitch, submittedText } from "./lib/settingsinput";
 	import { canApply, count, describeKind, groupByKind, summaryLine } from "./lib/vaultimport";
 	import { ai } from "./stores/ai.svelte";
@@ -439,6 +440,8 @@
 			</div>
 			<button type="button" onclick={exportMarkdown} disabled={baseBusy}>Export as Markdown…</button>
 		</div>
+
+		<ExportDestination />
 
 		<div class="item">
 			<div class="about">

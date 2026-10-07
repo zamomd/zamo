@@ -16,7 +16,11 @@
 	let error = $state("");
 	const now = new Date();
 
+	// Every record but the kept export's is a block's.
+	const ofBlock = (e: ScheduleEntry): boolean => e.module !== "export";
+
 	function label(e: ScheduleEntry): string {
+		if (!ofBlock(e)) return "Markdown export";
 		const block = findBlock(base.forest, e.key);
 		return block ? plainText(firstLine(block.Content)) : "(deleted block)";
 	}
@@ -58,9 +62,19 @@
 	<ul>
 		{#each schedules.entries as e (`${e.module}/${e.key}`)}
 			<li class="row" class:off={!e.enabled} class:unavailable={!e.available}>
-				<button type="button" class="block" title="open this block and its schedule" disabled={base.busy} onclick={() => open(e)}>
-					{label(e)}
-				</button>
+				{#if ofBlock(e)}
+					<button
+						type="button"
+						class="block"
+						title="open this block and its schedule"
+						disabled={base.busy}
+						onclick={() => open(e)}
+					>
+						{label(e)}
+					</button>
+				{:else}
+					<span class="block" title="set in Settings">{label(e)}</span>
+				{/if}
 				<code class="spec">{e.spec}</code>
 				<span class="meta next">{e.enabled ? formatWhen(e.nextRun, now) : "—"}</span>
 				<span class="meta attempt" class:attention={e.outcome === "failed" || e.outcome === "skipped"}>
@@ -82,7 +96,9 @@
 						not run yet
 					{/if}
 				</span>
-				{#if e.available}
+				{#if !ofBlock(e)}
+					<span class="meta">in Settings</span>
+				{:else if e.available}
 					<button
 						type="button"
 						class="toggle"
@@ -129,10 +145,12 @@
 		border: none;
 		background: none;
 		padding: 0.1rem 0.4rem;
-		cursor: pointer;
 		color: inherit;
 	}
-	.block:hover:not(:disabled) {
+	button.block {
+		cursor: pointer;
+	}
+	button.block:hover:not(:disabled) {
 		background: var(--hover);
 	}
 	.spec {

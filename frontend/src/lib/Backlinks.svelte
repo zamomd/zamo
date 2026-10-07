@@ -1,11 +1,11 @@
 <script lang="ts">
-	import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge/models.js";
-	import { base } from "../stores/base.svelte";
-	import { jumpToBlock } from "./navigate";
+	import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
+	import { base } from "../stores/base.svelte"
+	import { jumpToBlock } from "./navigate"
 
-	let { block }: { block: Block } = $props();
+	let { block }: { block: Block } = $props()
 
-	const backlinks = $derived(base.backlinksById.get(block.ID) ?? []);
+	const backlinks = $derived(base.backlinksById.get(block.ID) ?? [])
 </script>
 
 {#if backlinks.length > 0}

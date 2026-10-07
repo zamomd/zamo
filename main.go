@@ -20,6 +20,7 @@ import (
 	"github.com/zamomd/zamo/internal/backup"
 	"github.com/zamomd/zamo/internal/config"
 	"github.com/zamomd/zamo/internal/fsexport"
+	"github.com/zamomd/zamo/internal/gitrepo"
 	"github.com/zamomd/zamo/internal/jobs"
 	"github.com/zamomd/zamo/internal/knowledge"
 	"github.com/zamomd/zamo/internal/llm"
@@ -165,7 +166,7 @@ func runGUI(
 	wailsbind.SetAgent(bind, attended)
 	cron := smartcron.New(sched.For(smartcron.Name), runner, svc)
 	helper := assistant.New(attended, svc)
-	exporter := export.New(svc, fsexport.Writer{})
+	exporter := export.New(svc, fsexport.Writer{}, gitrepo.New(time.Now), sched.For(export.Name), time.Now)
 	archive := basebackup.New(base)
 	importer := vaultimport.New(svc, svc, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})
 	var window *application.WebviewWindow

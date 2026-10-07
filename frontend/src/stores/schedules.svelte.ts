@@ -29,7 +29,9 @@ class SchedulesStore {
 
 	async refresh(): Promise<void> {
 		try {
-			this.entries = (await App.ListSchedules()) ?? []
+			// The kept export holds its record whether or not it is scheduled;
+			// only a scheduled one is scheduled work.
+			this.entries = ((await App.ListSchedules()) ?? []).filter((e) => e.module !== "export" || e.enabled)
 		} catch {
 			// The list is decoration over the base; a failed refresh keeps the last one.
 		}

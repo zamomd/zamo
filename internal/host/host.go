@@ -11,6 +11,7 @@ package host
 import (
 	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"time"
 
 	"github.com/zamomd/zamo/internal/agent"
@@ -30,9 +31,35 @@ type BaseReader interface {
 
 // FileWriter persists rendered files into a directory the user chose.
 type FileWriter interface {
-	// WriteFiles writes each file into dir. Names are unique within files,
-	// so order does not matter.
+	// WriteFiles makes dir hold files: it writes each one and removes those
+	// an earlier call wrote there that are no longer among them. Nothing it
+	// did not write is removed. Names are unique within files, so order does
+	// not matter.
 	WriteFiles(ctx context.Context, dir string, files []knowledge.ExportFile) error
+}
+
+// Commit is one commit in a directory's history. The zero value means no
+// commit was made.
+type Commit struct {
+	Hash    string    `json:"hash"`
+	Message string    `json:"message"`
+	At      time.Time `json:"at,omitzero"`
+}
+
+// ErrNoGit is DirHistory's failure on a machine with no git to run.
+var ErrNoGit = errors.New("git is not installed")
+
+// DirHistory keeps the history of a directory in a local git repository.
+type DirHistory interface {
+	// Root answers the root of the repository that owns dir, or "" when
+	// none does and Commit would start one at dir. It changes nothing.
+	Root(ctx context.Context, dir string) (string, error)
+	// Commit records what changed in dir since its last commit, in the
+	// repository that owns dir or a new one started at dir. Only dir is
+	// committed: changes elsewhere in the repository stay as they are,
+	// staged ones included. A dir that has not changed yields the zero
+	// Commit. Nothing is ever pushed.
+	Commit(ctx context.Context, dir, message string) (Commit, error)
 }
 
 // FilePicker asks the user for a path through the platform's own dialog. An

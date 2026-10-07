@@ -3,10 +3,12 @@ package vaultimport_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zamomd/zamo/internal/fsexport"
+	"github.com/zamomd/zamo/internal/host"
 	"github.com/zamomd/zamo/internal/knowledge"
 	"github.com/zamomd/zamo/internal/modules/export"
 	"github.com/zamomd/zamo/internal/modules/vaultimport"
@@ -14,6 +16,11 @@ import (
 	"github.com/zamomd/zamo/internal/modules/vaultimport/obsidian"
 	"github.com/zamomd/zamo/internal/modules/vaultimport/zamo"
 )
+
+// unscheduled is the scheduler of an export that only ever runs by hand.
+type unscheduled struct{ host.Scheduler }
+
+func (unscheduled) Handle(host.ScheduleHandler, host.ScheduleOptions) {}
 
 // shape is a topic as content and structure only: what a round trip through
 // markdown must keep. Ids and timestamps are new on every import.
@@ -77,7 +84,7 @@ func TestExportThenImportKeepsEveryTopic(t *testing.T) {
 	})
 	require.NoError(t, err)
 	dir := t.TempDir()
-	require.NoError(t, export.New(src, fsexport.Writer{}).Markdown(ctx, dir))
+	require.NoError(t, export.New(src, fsexport.Writer{}, nil, unscheduled{}, time.Now).Markdown(ctx, dir))
 
 	dst := openService(t)
 	m := vaultimport.New(dst, dst, zamo.Adapter{}, obsidian.Adapter{}, logseq.Adapter{})

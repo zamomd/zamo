@@ -31,6 +31,14 @@ vi.mock("../../bindings/github.com/zamomd/zamo/internal/wailsbind", () => ({
 vi.mock("../../bindings/github.com/zamomd/zamo/internal/modules/export", () => ({
 	Module: {
 		Export: async () => backend.exportDir,
+		Destination: async () => ({
+			dir: "",
+			commit: false,
+			message: "",
+			spec: "@daily",
+			scheduled: false,
+			running: false,
+		}),
 	},
 }))
 

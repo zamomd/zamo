@@ -11,14 +11,56 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+/**
+ * ChooseDestination asks for a directory and keeps it as the destination,
+ * leaving every other choice as it was. A cancelled dialog changes nothing.
+ */
+export function ChooseDestination(): $CancellablePromise<$models.Destination> {
+    return $Call.ByID(2392791282);
+}
+
+/**
+ * Configure sets how and when the destination is exported.
+ */
+export function Configure(opts: $models.Options): $CancellablePromise<$models.Destination> {
+    return $Call.ByID(790320565, opts);
+}
+
+/**
+ * Destination returns the kept destination, or one with an empty Dir.
+ */
+export function Destination(): $CancellablePromise<$models.Destination> {
+    return $Call.ByID(2693782705);
+}
+
 /**
  * Export asks for a directory and writes the base into it as markdown,
  * answering with the directory it wrote. An empty answer means the user
  * cancelled. Files named after topics already in the directory are
- * overwritten; nothing else in it is touched.
+ * overwritten, and those an earlier export left for topics since gone are
+ * removed; nothing else in it is touched.
  */
 export function Export(): $CancellablePromise<string> {
     return $Call.ByID(4094061073);
+}
+
+/**
+ * ExportNow exports into the destination at once.
+ */
+export function ExportNow(): $CancellablePromise<$models.Result> {
+    return $Call.ByID(393091747);
+}
+
+/**
+ * ForgetDestination drops the destination and its schedule. The directory
+ * and everything in it stay.
+ */
+export function ForgetDestination(): $CancellablePromise<void> {
+    return $Call.ByID(197032334);
 }
 
 /**
