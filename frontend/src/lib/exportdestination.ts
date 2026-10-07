@@ -1,4 +1,4 @@
-import type { Destination, Result } from "../../bindings/github.com/zamomd/zamo/internal/modules/export/models"
+import type { Destination, Result } from "../../bindings/github.com/zamomd/zamo/internal/modules/export"
 import { formatWhen, outcomeLabel } from "./schedule"
 
 // The kept export's logic lives here, out of the component, so it is testable
@@ -18,6 +18,15 @@ const presets: ScheduleChoice[] = [
 export function scheduleChoices(spec: string): ScheduleChoice[] {
 	if (spec === "" || presets.some((p) => p.spec === spec)) return presets
 	return [...presets, { spec, label: spec }]
+}
+
+// repoLine says which git repository the commits go into. It matters most
+// when that is a repository above the directory, one the owner keeps for
+// something else.
+export function repoLine(dest: Destination): string {
+	if (dest.repo === "") return "Commits go into the repository this directory is in, or a new one started here."
+	if (dest.repo === dest.dir) return "Commits go into the repository in this directory."
+	return `Commits go into the repository at ${dest.repo}, which this directory is part of.`
 }
 
 // resultLine words how an export the owner just ran went.

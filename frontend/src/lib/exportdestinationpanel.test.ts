@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import ExportDestination from "./ExportDestination.svelte"
 
 const backend = vi.hoisted(() => ({
-	dest: { dir: "", commit: false, message: "msg", spec: "@daily", scheduled: false, running: false },
+	dest: { dir: "", commit: false, message: "msg", repo: "", spec: "@daily", scheduled: false, running: false },
 	picked: "/vault",
 	configured: [] as unknown[],
 	refuse: "",
@@ -39,7 +39,7 @@ const button = (c: Element, text: string) =>
 	[...c.querySelectorAll("button")].find((b) => b.textContent?.includes(text))
 
 beforeEach(() => {
-	backend.dest = { dir: "", commit: false, message: "msg", spec: "@daily", scheduled: false, running: false }
+	backend.dest = { dir: "", commit: false, message: "msg", repo: "", spec: "@daily", scheduled: false, running: false }
 	backend.configured = []
 	backend.refuse = ""
 	backend.result = { dir: "/vault", commit: "" }

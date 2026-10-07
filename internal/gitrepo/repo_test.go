@@ -2,192 +2,142 @@ package gitrepo
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zamomd/zamo/internal/host"
 )
 
-func TestOpenOrInitRepoResolvesTheRepositoryAndScopesToTheExportDirectory(t *testing.T) {
-	tests := []struct {
-		name        string
-		setup       func(t *testing.T, root string) (dir, wantRoot, wantRel string)
-		wantCreated bool
-	}{
-		{
-			name: "creates a repository when none exists in the directory's ancestry",
-			setup: func(t *testing.T, root string) (string, string, string) {
-				dir := filepath.Join(root, "export")
-				require.NoError(t, os.MkdirAll(dir, 0o755))
-				return dir, dir, "."
-			},
-			wantCreated: true,
-		},
-		{
-			name: "uses the existing repository rooted at the chosen directory",
-			setup: func(t *testing.T, root string) (string, string, string) {
-				dir := filepath.Join(root, "vault")
-				require.NoError(t, os.MkdirAll(dir, 0o755))
-				_, err := git.PlainInit(dir, false)
-				require.NoError(t, err)
-				return dir, dir, "."
-			},
-		},
-		{
-			name: "uses the existing repository when the chosen directory is a subdirectory",
-			setup: func(t *testing.T, root string) (string, string, string) {
-				repoRoot := filepath.Join(root, "vault")
-				_, err := git.PlainInit(repoRoot, false)
-				require.NoError(t, err)
-				dir := filepath.Join(repoRoot, "zamo-export")
-				require.NoError(t, os.MkdirAll(dir, 0o755))
-				return dir, repoRoot, "zamo-export"
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			dir, wantRoot, wantRel := tc.setup(t, root)
-
-			repo, relDir, err := openOrInitRepo(dir)
-
-			require.NoError(t, err)
-			assert.Equal(t, wantRel, relDir)
-			wt, err := repo.Worktree()
-			require.NoError(t, err)
-			resolvedWantRoot, err := filepath.EvalSymlinks(wantRoot)
-			require.NoError(t, err)
-			assert.Equal(t, resolvedWantRoot, wt.Filesystem.Root())
-		})
-	}
+// isolate keeps the machine's own git configuration out of a test, leaving
+// git with no user unless gitconfig names one.
+func isolate(t *testing.T, gitconfig string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	writeFile(t, home, ".gitconfig", gitconfig)
 }
 
-func TestCommitStagesOnlyTheExportDirectory(t *testing.T) {
-	repoRoot := t.TempDir()
-	repo, err := git.PlainInit(repoRoot, false)
-	require.NoError(t, err)
-	wt, err := repo.Worktree()
-	require.NoError(t, err)
+const ada = "[user]\n\tname = Ada\n\temail = ada@example.com\n"
 
-	// Seed the repository with a settled first commit so the unrelated file
-	// below is a genuine working-tree change, not an untracked stray.
-	writeFile(t, repoRoot, "existing.txt", "already committed")
-	_, err = wt.Add("existing.txt")
+// tempDir is a temporary directory by the path git reports it under.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	_, err = wt.Commit("seed", &git.CommitOptions{Author: &fallbackIdentity})
-	require.NoError(t, err)
-
-	// An unrelated change elsewhere in the same repository, made by the
-	// user's own separate git usage — this must survive untouched.
-	writeFile(t, repoRoot, "existing.txt", "edited outside the dir directory")
-
-	dir := filepath.Join(repoRoot, "zamo-export")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	writeFile(t, dir, "topic.md", "# Topic")
-
-	_, relDir, err := openOrInitRepo(dir)
-	require.NoError(t, err)
-	result, err := commit(repo, relDir, "snapshot", time.Now())
-	require.NoError(t, err)
-
-	require.NotEmpty(t, result.Hash)
-
-	head, err := repo.Head()
-	require.NoError(t, err)
-	commitObj, err := repo.CommitObject(head.Hash())
-	require.NoError(t, err)
-	assertOnlyPathCommitted(t, commitObj, "zamo-export/topic.md")
-	assertFileContent(t, commitObj, "existing.txt", "already committed")
-
-	status, err := wt.Status()
-	require.NoError(t, err)
-	assert.Equal(t, git.Modified, status.File("existing.txt").Worktree,
-		"the unrelated edit must stay an uncommitted working-tree change")
+	return dir
 }
 
-func TestCommitIsANoOpWhenNothingChangedUnderTheExportDirectory(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "export")
+// gitOut runs git in dir the way the owner would, outside the adapter.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+	return string(out)
+}
+
+// seeded is a repository with one commit holding existing.txt.
+func seeded(t *testing.T) string {
+	t.Helper()
+	root := tempDir(t)
+	gitOut(t, root, "init", "--quiet")
+	writeFile(t, root, "existing.txt", "already committed")
+	gitOut(t, root, "add", "existing.txt")
+	gitOut(t, root, "commit", "--quiet", "--message", "seed")
+	return root
+}
+
+func exportDir(t *testing.T, root string) string {
+	t.Helper()
+	dir := filepath.Join(root, "zamo-export")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	writeFile(t, dir, "topic.md", "# Topic")
+	return dir
+}
 
-	repo, relDir, err := openOrInitRepo(dir)
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+}
+
+func TestRoot(t *testing.T) {
+	isolate(t, ada)
+
+	t.Run("no repository owns the directory", func(t *testing.T) {
+		dir := tempDir(t)
+
+		root, err := New(time.Now).Root(t.Context(), dir)
+
+		require.NoError(t, err)
+		assert.Empty(t, root)
+		assert.NoDirExists(t, filepath.Join(dir, ".git"), "asking must not start a repository")
+	})
+
+	t.Run("the directory is inside a repository", func(t *testing.T) {
+		repo := seeded(t)
+
+		root, err := New(time.Now).Root(t.Context(), exportDir(t, repo))
+
+		require.NoError(t, err)
+		assert.Equal(t, repo, root)
+	})
+}
+
+func TestCommitStartsARepositoryWhereThereIsNone(t *testing.T) {
+	isolate(t, ada)
+	dir := tempDir(t)
+	writeFile(t, dir, "topic.md", "# Topic")
+
+	got, err := New(time.Now).Commit(t.Context(), dir, "export")
+
 	require.NoError(t, err)
-	first, err := commit(repo, relDir, "first", time.Now())
+	assert.Equal(t, got.Hash, gitOut(t, dir, "rev-parse", "HEAD")[:40])
+	assert.Equal(t, "topic.md\n", gitOut(t, dir, "ls-tree", "-r", "--name-only", "HEAD"))
+}
+
+func TestCommitTouchesOnlyTheDirectory(t *testing.T) {
+	isolate(t, ada)
+	repo := seeded(t)
+	writeFile(t, repo, "existing.txt", "edited by the owner")
+	writeFile(t, repo, "theirs.txt", "staged by the owner")
+	gitOut(t, repo, "add", "theirs.txt")
+	dir := exportDir(t, repo)
+
+	got, err := New(time.Now).Commit(t.Context(), dir, "export")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Hash)
+	assert.Equal(t, "zamo-export/topic.md\n", gitOut(t, repo, "show", "--format=", "--name-only", "HEAD"))
+	assert.Equal(t, " M existing.txt\nA  theirs.txt\n", gitOut(t, repo, "status", "--short"),
+		"the owner's own changes must stay as they were, staged or not")
+}
+
+func TestCommitIsANoOpWhenNothingChanged(t *testing.T) {
+	isolate(t, ada)
+	dir := exportDir(t, seeded(t))
+	history := New(time.Now)
+	first, err := history.Commit(t.Context(), dir, "first")
 	require.NoError(t, err)
 	require.NotEmpty(t, first.Hash)
 
-	second, err := commit(repo, relDir, "second", time.Now())
-	require.NoError(t, err)
+	second, err := history.Commit(t.Context(), dir, "second")
 
+	require.NoError(t, err)
 	assert.Zero(t, second)
-	head, err := repo.Head()
-	require.NoError(t, err)
-	assert.Equal(t, first.Hash, head.Hash().String(), "a no-op run must not move HEAD")
-}
-
-// TestCommitLeavesTheRepositoryUnchangedWhenStagingFails forces the
-// underlying object write to fail (a read-only objects directory) and
-// checks the repository comes back exactly as it went in: no new commit,
-// the on-disk index untouched, because a failing Add never reaches the
-// SetIndex call that would persist it, and the same restore branch also
-// covers a Commit failure after a successful Add.
-func TestCommitLeavesTheRepositoryUnchangedWhenStagingFails(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "export")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	writeFile(t, dir, "topic.md", "# Topic")
-
-	repo, relDir, err := openOrInitRepo(dir)
-	require.NoError(t, err)
-
-	wt, err := repo.Worktree()
-	require.NoError(t, err)
-	objects := filepath.Join(wt.Filesystem.Root(), ".git", "objects")
-	require.NoError(t, os.Chmod(objects, 0o555))
-	t.Cleanup(func() { _ = os.Chmod(objects, 0o755) })
-
-	_, err = commit(repo, relDir, "snapshot", time.Now())
-	require.Error(t, err)
-
-	_, err = repo.Head()
-	require.ErrorIs(t, err, plumbing.ErrReferenceNotFound, "no commit means no HEAD yet")
-	idx, err := repo.Storer.Index()
-	require.NoError(t, err)
-	assert.Empty(t, idx.Entries, "a failed Add must never reach SetIndex")
-}
-
-func TestCommitRefusesWhenSomethingElseIsAlreadyStaged(t *testing.T) {
-	repoRoot := t.TempDir()
-	repo, err := git.PlainInit(repoRoot, false)
-	require.NoError(t, err)
-	wt, err := repo.Worktree()
-	require.NoError(t, err)
-	writeFile(t, repoRoot, "theirs.txt", "staged by the owner")
-	_, err = wt.Add("theirs.txt")
-	require.NoError(t, err)
-
-	dir := filepath.Join(repoRoot, "zamo-export")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	writeFile(t, dir, "topic.md", "# Topic")
-
-	_, err = New(time.Now).Commit(t.Context(), dir, "export")
-
-	require.ErrorContains(t, err, "already staged")
-	_, err = repo.Head()
-	assert.ErrorIs(t, err, plumbing.ErrReferenceNotFound)
+	assert.Equal(t, first.Hash, gitOut(t, dir, "rev-parse", "HEAD")[:40])
 }
 
 func TestCommitRecordsARemovedFile(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "kept.md", "# Kept")
+	isolate(t, ada)
+	dir := exportDir(t, seeded(t))
 	writeFile(t, dir, "gone.md", "# Gone")
 	history := New(time.Now)
 	_, err := history.Commit(t.Context(), dir, "first")
@@ -198,14 +148,68 @@ func TestCommitRecordsARemovedFile(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotEmpty(t, second.Hash)
-	repo, err := git.PlainOpen(dir)
+	assert.Equal(t, "topic.md\n", gitOut(t, dir, "ls-tree", "--name-only", "HEAD", "./"))
+}
+
+func TestCommitThatFailsLeavesNothingStaged(t *testing.T) {
+	isolate(t, ada)
+	repo := seeded(t)
+	dir := exportDir(t, repo)
+	head := gitOut(t, repo, "rev-parse", "HEAD")
+	// A stale lock on the branch lets staging through and stops the commit.
+	branch := gitOut(t, repo, "symbolic-ref", "HEAD")
+	lock := filepath.Join(repo, ".git", branch[:len(branch)-1]+".lock")
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
+
+	_, err := New(time.Now).Commit(t.Context(), dir, "export")
+
+	require.Error(t, err)
+	require.NoError(t, os.Remove(lock))
+	assert.Equal(t, head, gitOut(t, repo, "rev-parse", "HEAD"))
+	assert.Equal(t, "?? zamo-export/\n", gitOut(t, repo, "status", "--short"))
+}
+
+func TestCommitRefusesADirectoryTheRepositoryIgnores(t *testing.T) {
+	isolate(t, ada)
+	repo := seeded(t)
+	writeFile(t, repo, ".gitignore", "zamo-export/\n")
+	dir := exportDir(t, repo)
+
+	_, err := New(time.Now).Commit(t.Context(), dir, "export")
+
+	assert.ErrorContains(t, err, "ignores")
+}
+
+func TestCommitWorksInALinkedWorktree(t *testing.T) {
+	isolate(t, ada)
+	repo := seeded(t)
+	linked := filepath.Join(tempDir(t), "linked")
+	gitOut(t, repo, "worktree", "add", "--quiet", "-b", "side", linked)
+	dir := exportDir(t, linked)
+
+	got, err := New(time.Now).Commit(t.Context(), dir, "export")
+
 	require.NoError(t, err)
-	c, err := repo.CommitObject(plumbing.NewHash(second.Hash))
+	assert.Equal(t, got.Hash, gitOut(t, repo, "rev-parse", "side")[:40])
+	assert.NoFileExists(t, filepath.Join(dir, ".git"))
+}
+
+func TestCommitIgnoresARepositoryNamedByTheEnvironment(t *testing.T) {
+	isolate(t, ada)
+	elsewhere := seeded(t)
+	head := gitOut(t, elsewhere, "rev-parse", "HEAD")
+	dir := tempDir(t)
+	writeFile(t, dir, "topic.md", "# Topic")
+	t.Setenv("GIT_DIR", filepath.Join(elsewhere, ".git"))
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(elsewhere, ".git", "index"))
+
+	got, err := New(time.Now).Commit(t.Context(), dir, "export")
+
 	require.NoError(t, err)
-	_, err = c.File("gone.md")
-	require.ErrorIs(t, err, object.ErrFileNotFound)
-	_, err = c.File("kept.md")
-	assert.NoError(t, err)
+	require.NoError(t, os.Unsetenv("GIT_DIR"))
+	require.NoError(t, os.Unsetenv("GIT_INDEX_FILE"))
+	assert.Equal(t, head, gitOut(t, elsewhere, "rev-parse", "HEAD"))
+	assert.Equal(t, got.Hash, gitOut(t, dir, "rev-parse", "HEAD")[:40])
 }
 
 func TestCommitIsStampedWithTheClockAndSignedByTheConfiguredUser(t *testing.T) {
@@ -213,68 +217,36 @@ func TestCommitIsStampedWithTheClockAndSignedByTheConfiguredUser(t *testing.T) {
 	tests := []struct {
 		name      string
 		gitconfig string
-		wantName  string
-		wantEmail string
+		want      string
 	}{
-		{name: "no git user", wantName: "Zamo", wantEmail: "zamo@localhost"},
+		{name: "no git user", want: "Zamo <zamo@localhost> 2026-10-05T12:00:00Z 2026-10-05T12:00:00Z\n"},
 		{
-			name:      "a global git user",
-			gitconfig: "[user]\n\tname = Ada\n\temail = ada@example.com\n",
-			wantName:  "Ada", wantEmail: "ada@example.com",
+			name: "a global git user", gitconfig: ada,
+			want: "Ada <ada@example.com> 2026-10-05T12:00:00Z 2026-10-05T12:00:00Z\n",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-			if tc.gitconfig != "" {
-				writeFile(t, home, ".gitconfig", tc.gitconfig)
-			}
-			dir := t.TempDir()
+			isolate(t, tc.gitconfig)
+			dir := tempDir(t)
 			writeFile(t, dir, "topic.md", "# Topic")
 
-			got, err := New(func() time.Time { return when }).Commit(t.Context(), dir, "export")
+			got, err := New(func() time.Time { return when }).Commit(t.Context(), dir, "# export")
 
 			require.NoError(t, err)
-			assert.Equal(t, "export", got.Message)
+			assert.Equal(t, "# export", got.Message)
 			assert.Equal(t, when, got.At)
-			repo, err := git.PlainOpen(dir)
-			require.NoError(t, err)
-			c, err := repo.CommitObject(plumbing.NewHash(got.Hash))
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantName, c.Author.Name)
-			assert.Equal(t, tc.wantEmail, c.Author.Email)
-			assert.True(t, when.Equal(c.Author.When))
+			t.Setenv("TZ", "UTC")
+			assert.Equal(t, tc.want, gitOut(t, dir, "log", "-1", "--date=iso-strict-local", "--format=%an <%ae> %ad %cd"))
+			assert.Equal(t, "# export\n", gitOut(t, dir, "log", "-1", "--format=%B")[:9])
 		})
 	}
 }
 
-func writeFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
-}
+func TestCommitWithoutGitSaysSo(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 
-func assertFileContent(t *testing.T, c *object.Commit, path, want string) {
-	t.Helper()
-	f, err := c.File(path)
-	require.NoError(t, err)
-	got, err := f.Contents()
-	require.NoError(t, err)
-	assert.Equal(t, want, got, "the committed blob for %s must be the pre-edit version: the edit was never staged", path)
-}
+	_, err := New(time.Now).Commit(t.Context(), t.TempDir(), "export")
 
-func assertOnlyPathCommitted(t *testing.T, c *object.Commit, want string) {
-	t.Helper()
-	tree, err := c.Tree()
-	require.NoError(t, err)
-	var got []string
-	require.NoError(t, tree.Files().ForEach(func(f *object.File) error {
-		got = append(got, f.Name)
-		return nil
-	}))
-	assert.Contains(t, got, want)
-	for _, name := range got {
-		assert.True(t, name == want || name == "existing.txt", "unexpected file in tree: %s", name)
-	}
+	assert.ErrorIs(t, err, host.ErrNoGit)
 }

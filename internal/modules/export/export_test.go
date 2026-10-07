@@ -37,9 +37,16 @@ type fakeFiles struct {
 	dir      string
 	files    []knowledge.ExportFile
 	writeErr error
+	// writing, when set, is told a write began and holds it until answered.
+	writing chan chan struct{}
 }
 
 func (w *fakeFiles) WriteFiles(_ context.Context, dir string, files []knowledge.ExportFile) error {
+	if w.writing != nil {
+		done := make(chan struct{})
+		w.writing <- done
+		<-done
+	}
 	if w.writeErr != nil {
 		return w.writeErr
 	}
@@ -58,11 +65,14 @@ func (p fakePicker) OpenFile(_ string) (string, error)      { return p.answer, p
 func (p fakePicker) OpenDirectory(_ string) (string, error) { return p.answer, p.err }
 
 type fakeHistory struct {
+	root    string
 	dir     string
 	message string
 	commit  host.Commit
 	err     error
 }
+
+func (h *fakeHistory) Root(context.Context, string) (string, error) { return h.root, nil }
 
 func (h *fakeHistory) Commit(_ context.Context, dir, message string) (host.Commit, error) {
 	h.dir, h.message = dir, message
@@ -247,6 +257,36 @@ func TestExportReportsAWriteFailure(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
+func TestExportIsRefusedWhileAnotherIsWriting(t *testing.T) {
+	f := withDestination(t, "/vault")
+	f.files.writing = make(chan chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		_, err := f.m.ExportNow(t.Context())
+		finished <- err
+	}()
+	done := <-f.files.writing
+
+	_, err := f.m.Export(t.Context())
+
+	close(done)
+	require.NoError(t, <-finished)
+	assert.ErrorIs(t, err, export.ErrBusy)
+}
+
+func TestDestinationNamesTheRepositoryItsCommitsGoInto(t *testing.T) {
+	f := withDestination(t, "/vault/notes")
+	f.history.root = "/vault"
+
+	uncommitted, err := f.m.Destination(t.Context())
+	require.NoError(t, err)
+	committed, err := f.m.Configure(t.Context(), export.Options{Commit: true, Spec: "@daily"})
+	require.NoError(t, err)
+
+	assert.Empty(t, uncommitted.Repo)
+	assert.Equal(t, "/vault", committed.Repo)
+}
+
 func TestDestinationIsEmptyUntilOneIsChosen(t *testing.T) {
 	got, err := oneOff(&fakeBase{}, &fakeFiles{}).Destination(t.Context())
 
@@ -397,6 +437,17 @@ func TestExportNowDoesNotCommitWhatItFailedToWrite(t *testing.T) {
 	assert.Empty(t, f.history.dir)
 }
 
+func TestExportNowWithoutGitSaysSo(t *testing.T) {
+	f := withDestination(t, "/vault")
+	_, err := f.m.Configure(t.Context(), export.Options{Commit: true, Spec: "@daily"})
+	require.NoError(t, err)
+	f.history.err = fmt.Errorf("%w: not on PATH", host.ErrNoGit)
+
+	_, err = f.m.ExportNow(t.Context())
+
+	assert.ErrorIs(t, err, export.ErrNoGit)
+}
+
 func TestScheduledExportReportsHowItWent(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -417,8 +468,8 @@ func TestScheduledExportReportsHowItWent(t *testing.T) {
 			want: host.RunResult{Outcome: host.OutcomeFailed, Detail: "disk full"},
 		},
 		{
-			name: "git refused", commit: true, commitErr: errors.New("refusing to commit"),
-			want: host.RunResult{Outcome: host.OutcomeFailed, Detail: "refusing to commit"},
+			name: "git refused", commit: true, commitErr: errors.New("git commit: index.lock exists"),
+			want: host.RunResult{Outcome: host.OutcomeFailed, Detail: "git commit: index.lock exists"},
 		},
 	}
 	for _, tc := range tests {

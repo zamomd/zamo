@@ -7,16 +7,9 @@
  */
 export interface Destination {
     "dir": string;
-
-    /**
-     * Commit says whether each export is committed to git.
-     */
     "commit": boolean;
-
-    /**
-     * Message is the commit message template in effect.
-     */
     "message": string;
+    "repo": string;
     "spec": string;
     "scheduled": boolean;
     "running": boolean;

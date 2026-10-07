@@ -1,20 +1,20 @@
 // Package gitrepo is the git adapter for a directory's history: the
 // host.DirHistory implementation that commits a directory into the local
-// repository owning it. It knows nothing of the base or of what the
-// directory holds.
+// repository owning it, by running the machine's own git. It knows nothing
+// of the base or of what the directory holds.
 package gitrepo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"os"
+	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/zamomd/zamo/internal/host"
 )
 
@@ -29,157 +29,188 @@ var _ host.DirHistory = Repo{}
 // New returns a Repo that reads commit times from now.
 func New(now func() time.Time) Repo { return Repo{now: now} }
 
+// Root implements host.DirHistory. dir must exist.
+func (Repo) Root(ctx context.Context, dir string) (string, error) {
+	g, err := gitIn(dir)
+	if err != nil {
+		return "", err
+	}
+	return g.root(ctx)
+}
+
 // Commit implements host.DirHistory. dir must exist.
 func (r Repo) Commit(ctx context.Context, dir, message string) (host.Commit, error) {
-	if err := ctx.Err(); err != nil {
-		return host.Commit{}, err
-	}
-	repo, relDir, err := openOrInitRepo(dir)
+	g, err := gitIn(dir)
 	if err != nil {
 		return host.Commit{}, err
 	}
-	return commit(repo, relDir, message, r.now())
-}
-
-// fallbackIdentity signs a commit when git has no user configured, which a
-// machine that never ran git does not.
-var fallbackIdentity = object.Signature{Name: "Zamo", Email: "zamo@localhost"}
-
-// signature is who a commit is by: the user git is configured with, in the
-// repository or globally, or the fallback.
-func signature(repo *git.Repository, when time.Time) *object.Signature {
-	sig := fallbackIdentity
-	if cfg, err := repo.ConfigScoped(config.GlobalScope); err == nil && cfg.User.Name != "" && cfg.User.Email != "" {
-		sig.Name, sig.Email = cfg.User.Name, cfg.User.Email
-	}
-	sig.When = when
-	return &sig
-}
-
-// openOrInitRepo finds the repository that owns dir by walking up from it,
-// the equivalent of `git rev-parse --show-toplevel`, or creates one rooted
-// at dir itself when none is found. It reports dir's path relative to the
-// repository's worktree root — the only path commit is ever allowed to
-// touch, even when the repository root is an ancestor of dir.
-func openOrInitRepo(dir string) (repo *git.Repository, relDir string, err error) {
-	// Resolved up front: go-git reports the worktree root through the
-	// filesystem's real path (e.g. macOS resolves /var to /private/var), so
-	// comparing an unresolved dir against it would compute a garbage
-	// relative path and mis-scope every later operation.
-	dir, err = filepath.EvalSymlinks(dir)
+	root, err := g.root(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve %s: %w", dir, err)
-	}
-
-	repo, err = git.PlainOpenWithOptions(dir, &git.PlainOpenOptions{DetectDotGit: true})
-	switch {
-	case errors.Is(err, git.ErrRepositoryNotExists):
-		repo, err = git.PlainInit(dir, false)
-		if err != nil {
-			return nil, "", fmt.Errorf("start a repository at %s: %w", dir, err)
-		}
-	case err != nil:
-		return nil, "", fmt.Errorf("open the repository owning %s: %w", dir, err)
-	}
-
-	wt, err := repo.Worktree()
-	if err != nil {
-		return nil, "", fmt.Errorf("open the worktree: %w", err)
-	}
-	rel, err := filepath.Rel(wt.Filesystem.Root(), dir)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve %s relative to the repository root: %w", dir, err)
-	}
-	return repo, filepath.ToSlash(rel), nil
-}
-
-// isUnder reports whether path lies at or inside directory — the same rule
-// go-git's own Worktree.Add uses to scope a directory add, reimplemented
-// here because it is unexported.
-func isUnder(path, directory string) bool {
-	return directory == "." || path == directory || strings.HasPrefix(path, directory+"/")
-}
-
-// changedUnder reports whether anything at or inside relDir differs from
-// HEAD, in the working tree or the index. It never inspects paths outside
-// relDir, which is what keeps a no-op run from touching staging state at
-// all: changedUnder runs before anything is staged.
-func changedUnder(status git.Status, relDir string) bool {
-	for path, fs := range status {
-		if !isUnder(path, relDir) {
-			continue
-		}
-		if fs.Worktree != git.Unmodified || fs.Staging != git.Unmodified {
-			return true
-		}
-	}
-	return false
-}
-
-// stagedOutside lists paths outside relDir that are already staged. A
-// non-empty result means the index is not clean going in — committing now
-// would sweep someone else's separate staged work into our commit, so the
-// caller refuses instead.
-func stagedOutside(status git.Status, relDir string) []string {
-	var paths []string
-	for path, fs := range status {
-		if isUnder(path, relDir) {
-			continue
-		}
-		if fs.Staging != git.Unmodified {
-			paths = append(paths, path)
-		}
-	}
-	return paths
-}
-
-// commit stages only relDir and commits it when — and only when —
-// changedUnder reports a difference there, refusing outright if the index
-// already holds unrelated staged changes. The index is snapshotted before
-// Add and restored verbatim if anything after it fails, so a failed run
-// leaves the repository exactly as it found it.
-func commit(repo *git.Repository, relDir, message string, when time.Time) (host.Commit, error) {
-	wt, err := repo.Worktree()
-	if err != nil {
-		return host.Commit{}, fmt.Errorf("open the worktree: %w", err)
-	}
-	status, err := wt.Status()
-	if err != nil {
-		return host.Commit{}, fmt.Errorf("read the worktree status: %w", err)
-	}
-	if outside := stagedOutside(status, relDir); len(outside) > 0 {
-		return host.Commit{}, fmt.Errorf(
-			"refusing to commit: %d file(s) already staged outside the export directory", len(outside),
-		)
-	}
-	if !changedUnder(status, relDir) {
-		return host.Commit{}, nil
-	}
-
-	idx, err := repo.Storer.Index()
-	if err != nil {
-		return host.Commit{}, fmt.Errorf("read the index: %w", err)
-	}
-
-	result, err := stageAndCommit(repo, wt, relDir, message, when)
-	if err != nil {
-		if restoreErr := repo.Storer.SetIndex(idx); restoreErr != nil {
-			return host.Commit{}, fmt.Errorf("%w (and the index could not be restored: %w)", err, restoreErr)
-		}
 		return host.Commit{}, err
 	}
-	return result, nil
+	if root == "" {
+		if _, err := g.run(ctx, nil, "init", "--quiet"); err != nil {
+			return host.Commit{}, err
+		}
+	} else if ignored, err := g.ignored(ctx); err != nil {
+		return host.Commit{}, err
+	} else if ignored {
+		// Staging an ignored directory stages nothing, which would read as
+		// an export with no changes for ever.
+		return host.Commit{}, fmt.Errorf("the repository at %s ignores %s", root, dir)
+	}
+
+	if _, err := g.run(ctx, nil, "add", "--all", "--", "."); err != nil {
+		return host.Commit{}, err
+	}
+	changed, err := g.staged(ctx)
+	if err != nil || !changed {
+		return host.Commit{}, err
+	}
+	when := r.now()
+	if err := g.commit(ctx, message, when); err != nil {
+		// Unstaged again, so a failed run leaves no half-made commit for the
+		// owner's next one to sweep up.
+		_, _ = g.run(context.WithoutCancel(ctx), nil, "reset", "--quiet", "--", ".")
+		return host.Commit{}, err
+	}
+	hash, err := g.run(ctx, nil, "rev-parse", "HEAD")
+	if err != nil {
+		return host.Commit{}, err
+	}
+	return host.Commit{Hash: hash, Message: message, At: when}, nil
 }
 
-func stageAndCommit(
-	repo *git.Repository, wt *git.Worktree, relDir, message string, when time.Time,
-) (host.Commit, error) {
-	if _, err := wt.Add(relDir); err != nil {
-		return host.Commit{}, fmt.Errorf("stage %s: %w", relDir, err)
-	}
-	hash, err := wt.Commit(message, &git.CommitOptions{Author: signature(repo, when)})
+// fallbackName and fallbackEmail sign a commit when git has no user
+// configured, which a machine that never ran git does not.
+const (
+	fallbackName  = "Zamo"
+	fallbackEmail = "zamo@localhost"
+)
+
+// located are the variables that point git at a repository other than the
+// one owning its working directory. A process started from a git hook
+// inherits them.
+var located = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX",
+	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+}
+
+// git runs the machine's git in one directory.
+type git struct {
+	bin string
+	dir string
+}
+
+func gitIn(dir string) (git, error) {
+	bin, err := exec.LookPath("git")
 	if err != nil {
-		return host.Commit{}, fmt.Errorf("commit: %w", err)
+		return git{}, fmt.Errorf("%w: %w", host.ErrNoGit, err)
 	}
-	return host.Commit{Hash: hash.String(), Message: message, At: when}, nil
+	return git{bin: bin, dir: dir}, nil
+}
+
+// run answers git's trimmed output. A failure carries what git said.
+func (g git) run(ctx context.Context, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, g.bin, args...)
+	cmd.Dir = g.dir
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(located, name)
+	})
+	cmd.Env = append(cmd.Env, "LC_ALL=C", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(cmd.Env, env...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", &gitError{verb: args[0], said: strings.TrimSpace(stderr.String()), err: err}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// gitError is a git command that failed, with what it printed.
+type gitError struct {
+	verb string
+	said string
+	err  error
+}
+
+func (e *gitError) Error() string {
+	if e.said == "" {
+		return fmt.Sprintf("git %s: %v", e.verb, e.err)
+	}
+	return fmt.Sprintf("git %s: %s", e.verb, e.said)
+}
+
+func (e *gitError) Unwrap() error { return e.err }
+
+// exited reports whether err is git exiting with code.
+func exited(err error, code int) bool {
+	exit, ok := errors.AsType[*exec.ExitError](err)
+	return ok && exit.ExitCode() == code
+}
+
+// root is the worktree root of the repository owning the directory, or ""
+// when no repository does.
+func (g git) root(ctx context.Context) (string, error) {
+	root, err := g.run(ctx, nil, "rev-parse", "--show-toplevel")
+	if failed, ok := errors.AsType[*gitError](err); ok && strings.Contains(failed.said, "not a git repository") {
+		return "", nil
+	}
+	return root, err
+}
+
+// ignored reports whether the repository ignores the directory itself.
+func (g git) ignored(ctx context.Context) (bool, error) {
+	prefix, err := g.run(ctx, nil, "rev-parse", "--show-prefix")
+	if err != nil || prefix == "" {
+		return false, err
+	}
+	_, err = g.run(ctx, nil, "check-ignore", "--quiet", ".")
+	if exited(err, 1) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// staged reports whether the index differs from HEAD inside the directory.
+func (g git) staged(ctx context.Context) (bool, error) {
+	_, err := g.run(ctx, nil, "diff", "--cached", "--quiet", "--", ".")
+	if exited(err, 1) {
+		return true, nil
+	}
+	return false, err
+}
+
+// commit commits the directory and nothing else: --only leaves whatever the
+// owner staged elsewhere in the repository staged and out of the commit.
+// Hooks and signing are skipped, since a scheduled run has nobody to answer
+// a failed check or a passphrase prompt.
+func (g git) commit(ctx context.Context, message string, when time.Time) error {
+	var args []string
+	if !g.identified(ctx) {
+		args = append(args, "-c", "user.name="+fallbackName, "-c", "user.email="+fallbackEmail)
+	}
+	stamp := when.Format(time.RFC3339)
+	args = append(args,
+		"commit", "--quiet", "--only", "--no-verify", "--no-gpg-sign", "--cleanup=verbatim",
+		"--date", stamp, "--message", message, "--", ".",
+	)
+	_, err := g.run(ctx, []string{"GIT_COMMITTER_DATE=" + stamp}, args...)
+	return err
+}
+
+// identified reports whether git is configured with a user to commit as, in
+// the repository or globally.
+func (g git) identified(ctx context.Context) bool {
+	for _, key := range []string{"user.name", "user.email"} {
+		if v, err := g.run(ctx, nil, "config", "--get", key); err != nil || v == "" {
+			return false
+		}
+	}
+	return true
 }

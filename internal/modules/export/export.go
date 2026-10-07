@@ -55,16 +55,16 @@ func (e coded) Code() string  { return e.code }
 var (
 	ErrNoDestination error = coded{"export_no_destination", "no export destination is chosen"}
 	ErrBusy          error = coded{"export_busy", "an export is already in progress"}
+	ErrNoGit         error = coded{"export_no_git", "git is not installed, so the export was not committed"}
 )
 
 // Destination is the kept export destination as the settings screen shows
 // it. Dir is empty when none is chosen; the other fields are then defaults.
 type Destination struct {
-	Dir string `json:"dir"`
-	// Commit says whether each export is committed to git.
-	Commit bool `json:"commit"`
-	// Message is the commit message template in effect.
+	Dir       string    `json:"dir"`
+	Commit    bool      `json:"commit"`
 	Message   string    `json:"message"`
+	Repo      string    `json:"repo"`
 	Spec      string    `json:"spec"`
 	Scheduled bool      `json:"scheduled"`
 	Running   bool      `json:"running"`
@@ -93,15 +93,12 @@ type Result struct {
 // Module exports the base. Its exported methods are bound into the desktop
 // frontend as the export service.
 type Module struct {
-	base    host.BaseReader
-	files   host.FileWriter
-	history host.DirHistory
-	sched   host.Scheduler
-	now     func() time.Time
-	picker  host.FilePicker
-
-	// exporting keeps a scheduled export and one the owner asked for from
-	// writing the destination at once.
+	base      host.BaseReader
+	files     host.FileWriter
+	history   host.DirHistory
+	sched     host.Scheduler
+	now       func() time.Time
+	picker    host.FilePicker
 	exporting sync.Mutex
 }
 
@@ -131,6 +128,10 @@ func (m *Module) Export(ctx context.Context) (string, error) {
 	if err != nil || dir == "" {
 		return "", err
 	}
+	if !m.exporting.TryLock() {
+		return "", ErrBusy
+	}
+	defer m.exporting.Unlock()
 	if err := m.Markdown(ctx, dir); err != nil {
 		return "", err
 	}
@@ -170,7 +171,7 @@ func (m *Module) Destination(ctx context.Context) (Destination, error) {
 	if err != nil {
 		return Destination{}, err
 	}
-	return view(s, p), nil
+	return m.view(ctx, s, p), nil
 }
 
 // ChooseDestination asks for a directory and keeps it as the destination,
@@ -185,7 +186,7 @@ func (m *Module) ChooseDestination(ctx context.Context) (Destination, error) {
 		return Destination{}, err
 	}
 	if dir == "" {
-		return view(s, p), nil
+		return m.view(ctx, s, p), nil
 	}
 	p.Dir = dir
 	return m.save(ctx, s.Spec, s.Enabled, p)
@@ -271,7 +272,11 @@ func (m *Module) exportTo(ctx context.Context, p payload) (host.Commit, error) {
 	if err != nil {
 		return host.Commit{}, err
 	}
-	return m.history.Commit(ctx, p.Dir, message)
+	c, err := m.history.Commit(ctx, p.Dir, message)
+	if errors.Is(err, host.ErrNoGit) {
+		return host.Commit{}, ErrNoGit
+	}
+	return c, err
 }
 
 // load reads the destination's record. No record is a zero schedule and a
@@ -305,7 +310,7 @@ func (m *Module) save(ctx context.Context, spec string, enabled bool, p payload)
 	if err != nil {
 		return Destination{}, err
 	}
-	return view(s, p), nil
+	return m.view(ctx, s, p), nil
 }
 
 func decode(raw jsontext.Value) (payload, error) {
@@ -319,15 +324,22 @@ func decode(raw jsontext.Value) (payload, error) {
 	return p, nil
 }
 
-func view(s host.Schedule, p payload) Destination {
+func (m *Module) view(ctx context.Context, s host.Schedule, p payload) Destination {
 	message := p.Message
 	if message == "" {
 		message = DefaultMessage
+	}
+	var repo string
+	if p.Commit && p.Dir != "" {
+		// Unknown is shown as unknown: a destination that cannot be asked
+		// about now still has to open in the settings screen.
+		repo, _ = m.history.Root(ctx, p.Dir)
 	}
 	return Destination{
 		Dir:       p.Dir,
 		Commit:    p.Commit,
 		Message:   message,
+		Repo:      repo,
 		Spec:      s.Spec,
 		Scheduled: s.Enabled,
 		Running:   s.Running,

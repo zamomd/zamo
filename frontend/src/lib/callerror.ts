@@ -63,6 +63,7 @@ const readable: Record<string, string> = {
 	assistant_no_answer: "That answer is no longer available to save.",
 	export_no_destination: "Choose a directory for the kept export first.",
 	export_busy: "An export is already in progress — wait for it to finish.",
+	export_no_git: "Exported, but not committed: git is not installed, or Zamo cannot find it.",
 	export_bad_message:
 		'That commit message is not a valid template. Plain text works; the time is {{.Time.Format "2006-01-02 15:04"}}.',
 	import_unknown_format: "That folder is neither an Obsidian vault nor a Logseq graph.",

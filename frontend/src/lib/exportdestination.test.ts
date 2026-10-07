@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { Destination } from "../../bindings/github.com/zamomd/zamo/internal/modules/export/models"
-import { resultLine, scheduleChoices, scheduleLine } from "./exportdestination"
+import { repoLine, resultLine, scheduleChoices, scheduleLine } from "./exportdestination"
 
 const dest = (over: Partial<Destination> = {}): Destination => ({
 	dir: "/vault",
 	commit: false,
 	message: "",
+	repo: "",
 	spec: "@daily",
 	scheduled: false,
 	running: false,
@@ -19,6 +20,20 @@ describe("scheduleChoices", () => {
 
 	it("adds an expression that is none of them", () => {
 		expect(scheduleChoices("0 9 * * 1").at(-1)).toEqual({ spec: "0 9 * * 1", label: "0 9 * * 1" })
+	})
+})
+
+describe("repoLine", () => {
+	it("names a repository above the directory", () => {
+		expect(repoLine(dest({ dir: "/vault/notes", repo: "/vault" }))).toContain("the repository at /vault,")
+	})
+
+	it("does not repeat the directory when the repository is its own", () => {
+		expect(repoLine(dest({ repo: "/vault" }))).toBe("Commits go into the repository in this directory.")
+	})
+
+	it("promises nothing about a repository it does not know", () => {
+		expect(repoLine(dest())).toContain("or a new one")
 	})
 })
 

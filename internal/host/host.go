@@ -11,6 +11,7 @@ package host
 import (
 	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"time"
 
 	"github.com/zamomd/zamo/internal/agent"
@@ -45,13 +46,19 @@ type Commit struct {
 	At      time.Time `json:"at,omitzero"`
 }
 
+// ErrNoGit is DirHistory's failure on a machine with no git to run.
+var ErrNoGit = errors.New("git is not installed")
+
 // DirHistory keeps the history of a directory in a local git repository.
 type DirHistory interface {
+	// Root answers the root of the repository that owns dir, or "" when
+	// none does and Commit would start one at dir. It changes nothing.
+	Root(ctx context.Context, dir string) (string, error)
 	// Commit records what changed in dir since its last commit, in the
 	// repository that owns dir or a new one started at dir. Only dir is
-	// committed: changes elsewhere in the repository stay as they are, and
-	// ones already staged there make it refuse. A dir that has not changed
-	// yields the zero Commit. Nothing is ever pushed.
+	// committed: changes elsewhere in the repository stay as they are,
+	// staged ones included. A dir that has not changed yields the zero
+	// Commit. Nothing is ever pushed.
 	Commit(ctx context.Context, dir, message string) (Commit, error)
 }
 

@@ -1,52 +1,52 @@
 <script lang="ts">
-	import { onMount } from "svelte";
-	import { Module as Export } from "../../bindings/github.com/zamomd/zamo/internal/modules/export";
-	import type { Destination } from "../../bindings/github.com/zamomd/zamo/internal/modules/export/models";
-	import { messageFor } from "./callerror";
-	import { resultLine, scheduleChoices, scheduleLine } from "./exportdestination";
+	import { onMount } from "svelte"
+	import type { Destination } from "../../bindings/github.com/zamomd/zamo/internal/modules/export"
+	import { Module as Export } from "../../bindings/github.com/zamomd/zamo/internal/modules/export"
+	import { messageFor } from "./callerror"
+	import { repoLine, resultLine, scheduleChoices, scheduleLine } from "./exportdestination"
 
-	let dest = $state<Destination | null>(null);
-	let message = $state("");
-	let busy = $state(false);
-	let status = $state("");
-	let error = $state("");
-	let forgetting = $state(false);
-	const now = new Date();
+	let dest = $state<Destination | null>(null)
+	let message = $state("")
+	let busy = $state(false)
+	let status = $state("")
+	let error = $state("")
+	let forgetting = $state(false)
+	const now = new Date()
 
-	const chosen = $derived(dest !== null && dest.dir !== "");
+	const chosen = $derived(dest !== null && dest.dir !== "")
 
 	onMount(() => {
-		void run(async () => show(await Export.Destination()));
-	});
+		void run(async () => show(await Export.Destination()))
+	})
 
 	function show(d: Destination): void {
-		dest = d;
-		message = d.message;
+		dest = d
+		message = d.message
 	}
 
 	async function run(action: () => Promise<void>): Promise<void> {
-		busy = true;
-		status = "";
-		error = "";
+		busy = true
+		status = ""
+		error = ""
 		try {
-			await action();
+			await action()
 		} catch (err: unknown) {
-			error = messageFor(err);
+			error = messageFor(err)
 		} finally {
-			busy = false;
+			busy = false
 		}
 	}
 
 	function choose(): Promise<void> {
-		return run(async () => show(await Export.ChooseDestination()));
+		return run(async () => show(await Export.ChooseDestination()))
 	}
 
 	// A refused change leaves the stored destination as it was, so the form is
 	// put back to it rather than left showing what was not saved.
 	function configure(change: Partial<Destination>): Promise<void> {
-		const current = dest;
-		if (current === null) return Promise.resolve();
-		const next = { ...current, message, ...change };
+		const current = dest
+		if (current === null) return Promise.resolve()
+		const next = { ...current, message, ...change }
 		return run(async () => {
 			try {
 				show(
@@ -56,32 +56,32 @@
 						spec: next.spec,
 						scheduled: next.scheduled,
 					}),
-				);
+				)
 			} catch (err: unknown) {
-				show(await Export.Destination());
-				throw err;
+				show(await Export.Destination())
+				throw err
 			}
-		});
+		})
 	}
 
 	function reschedule(spec: string): Promise<void> {
-		return spec === "" ? configure({ scheduled: false }) : configure({ spec, scheduled: true });
+		return spec === "" ? configure({ scheduled: false }) : configure({ spec, scheduled: true })
 	}
 
 	function exportNow(): Promise<void> {
-		const commits = dest?.commit ?? false;
+		const commits = dest?.commit ?? false
 		return run(async () => {
-			const result = await Export.ExportNow();
-			status = resultLine(result, commits);
-		});
+			const result = await Export.ExportNow()
+			status = resultLine(result, commits)
+		})
 	}
 
 	function forget(): Promise<void> {
-		forgetting = false;
+		forgetting = false
 		return run(async () => {
-			await Export.ForgetDestination();
-			show(await Export.Destination());
-		});
+			await Export.ForgetDestination()
+			show(await Export.Destination())
+		})
 	}
 </script>
 
@@ -130,11 +130,10 @@
 		{#if dest.commit}
 			<label class="row">
 				<span class="name">Commit message</span>
-				<input type="text" bind:value={message} disabled={busy} spellcheck="false" onchange={() => configure({})} />
+				<input type="text" bind:value={message} disabled={busy} spellcheck="false"
+					   onchange={() => configure({})} />
 			</label>
-			<p class="note">
-				Only this directory is committed, into the repository it is in or a new one. Nothing is pushed.
-			</p>
+			<p class="note">{repoLine(dest)} Only this directory is committed, and nothing is pushed.</p>
 		{/if}
 		{#if scheduleLine(dest, now) !== ""}
 			<p class="note">{scheduleLine(dest, now)}</p>
@@ -147,7 +146,8 @@
 				<button type="button" onclick={forget} disabled={busy}>Forget it</button>
 				<button type="button" onclick={() => (forgetting = false)} disabled={busy}>Cancel</button>
 			{:else}
-				<button type="button" class="forget" onclick={() => (forgetting = true)} disabled={busy}>Forget…</button>
+				<button type="button" class="forget" onclick={() => (forgetting = true)} disabled={busy}>Forget…
+				</button>
 			{/if}
 		</div>
 	{/if}
@@ -162,25 +162,30 @@
 		border-top: 1px solid var(--hairline);
 		border-bottom: 1px solid var(--hairline);
 	}
+
 	.head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: calc(var(--unit) * 2);
 	}
+
 	.head button {
 		flex: none;
 	}
+
 	.note {
 		margin: calc(var(--unit) / 2) 0 0;
 		color: var(--text-dim);
 		font-size: var(--size-small);
 		line-height: 1.6;
 	}
+
 	.head .note,
 	.actions .note {
 		margin-top: 0;
 	}
+
 	.row {
 		display: grid;
 		grid-template-columns: 11rem minmax(0, 1fr) auto;
@@ -188,33 +193,40 @@
 		align-items: baseline;
 		padding: calc(var(--unit) / 2) 0;
 	}
+
 	.name {
 		color: var(--text-dim);
 	}
+
 	.dir {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+
 	.row input[type="checkbox"] {
 		justify-self: start;
 		margin: 0;
 		accent-color: var(--accent);
 	}
+
 	.actions {
 		display: flex;
 		align-items: center;
 		gap: var(--unit);
 		margin-top: var(--unit);
 	}
+
 	.forget {
 		margin-left: auto;
 	}
+
 	.status {
 		margin: var(--unit) 0 0;
 		color: var(--text-dim);
 		font-size: var(--size-small);
 	}
+
 	.status.error {
 		color: var(--danger);
 	}
