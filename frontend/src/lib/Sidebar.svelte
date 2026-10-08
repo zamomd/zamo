@@ -4,7 +4,7 @@
 	import { changes } from "../stores/changes.svelte";
 	import { search } from "../stores/search.svelte";
 	import { shell } from "../stores/shell.svelte";
-	import { jumpToBlock, openTopic } from "./navigate";
+	import { jumpToBlock, newTabGesture, openTopic } from "./navigate";
 	import { plainText } from "./plaintext";
 	import SearchBox from "./SearchBox.svelte";
 	import { SIDEBAR_MIN, SIDEBAR_STEP, sidebarMax, sidebarSize } from "./sidebarsize";
@@ -151,7 +151,7 @@
 				<ul>
 					{#each search.results as hit (hit.Block.ID)}
 						<li>
-							<button type="button" class="row hit" disabled={base.busy} onclick={() => jumpToBlock(hit.Block.ID)}>
+							<button type="button" class="row hit" disabled={base.busy} onclick={(e) => jumpToBlock(hit.Block.ID, { newTab: newTabGesture(e) })} onauxclick={(e) => jumpToBlock(hit.Block.ID, { newTab: newTabGesture(e) })}>
 								<span class="hit-title">{plainText(hit.Block.Content)}</span>
 								{#if hit.Snippet !== ""}
 									<span class="hit-snippet">{hit.Snippet}</span>
@@ -173,7 +173,8 @@
 							class:selected={row.selected}
 							aria-current={row.selected ? "true" : undefined}
 							disabled={base.busy}
-							onclick={() => openTopic(row.id)}
+							onclick={(e) => openTopic(row.id, { newTab: newTabGesture(e) })}
+							onauxclick={(e) => openTopic(row.id, { newTab: newTabGesture(e) })}
 						>
 							<span class="mode-icon" title={row.mode === Mode.ModeDoc ? "document" : "outline"} aria-hidden="true"
 								>{row.mode === Mode.ModeDoc ? "▤" : "☰"}</span
@@ -188,7 +189,8 @@
 											type="button"
 											class="row child"
 											disabled={base.busy}
-											onclick={() => jumpToBlock(child.id)}
+											onclick={(e) => jumpToBlock(child.id, { newTab: newTabGesture(e) })}
+											onauxclick={(e) => jumpToBlock(child.id, { newTab: newTabGesture(e) })}
 										>
 											{child.title}
 										</button>

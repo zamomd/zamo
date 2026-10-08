@@ -2,7 +2,7 @@
 	import { onMount } from "svelte";
 	import { graph } from "../stores/graph.svelte";
 	import { circleBox, clampPad, radiusOf, scaleFor, truncateLabel, viewBox } from "./graph";
-	import { openTopic } from "./navigate";
+	import { newTabGesture, openTopic } from "./navigate";
 
 	const PAD_PX = 24;
 	const LABEL_GAP = 12;
@@ -67,7 +67,7 @@
 					role="button"
 					tabindex="0"
 					aria-label={n.title}
-					onclick={() => openTopic(n.id)}
+					onclick={(e) => openTopic(n.id, { newTab: newTabGesture(e) })}
 					onkeydown={(e) => {
 						if (e.key === "Enter" || e.key === " ") {
 							e.preventDefault();

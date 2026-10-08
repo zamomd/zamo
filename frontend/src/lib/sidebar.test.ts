@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Author, Mode } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 import { base } from "../stores/base.svelte"
 import { shell } from "../stores/shell.svelte"
+import { tabs } from "../stores/tabs.svelte"
 import Sidebar from "./Sidebar.svelte"
 import { SIDEBAR_MIN } from "./sidebarsize"
 
@@ -143,5 +144,40 @@ describe("Sidebar tag filter", () => {
 		base.tags = new Map([["zig", ["languages"]]])
 		await Promise.resolve()
 		expect(topicTitles(container)).toEqual(["Go", "Zig", "SQLite"])
+	})
+})
+
+describe("Sidebar topics and tabs", () => {
+	beforeEach(() => {
+		tabs.load()
+		base.busy = false
+		base.forest = [topic("a", "Alpha"), topic("b", "Beta"), topic("c", "Gamma")]
+		base.selectedTopicID = "a"
+		base.loaded = true
+		tabs.reconcile()
+	})
+
+	function openTopics(): string[] {
+		return tabs.tabs.map((t) => t.topicID)
+	}
+
+	it("opens a topic in a new tab on a ⌘-click and on a middle click", async () => {
+		const { getByRole } = render(Sidebar)
+
+		await fireEvent.click(getByRole("button", { name: /Beta/ }), { metaKey: true })
+		await vi.waitFor(() => expect(openTopics()).toEqual(["a", "b"]))
+
+		await fireEvent(getByRole("button", { name: /Gamma/ }), new MouseEvent("auxclick", { bubbles: true, button: 1 }))
+		await vi.waitFor(() => expect(openTopics()).toEqual(["a", "b", "c"]))
+	})
+
+	it("opens a topic in the tab on screen on a plain click", async () => {
+		const { getByRole } = render(Sidebar)
+
+		await fireEvent.click(getByRole("button", { name: /Beta/ }))
+		await vi.waitFor(() => expect(base.selectedTopicID).toBe("b"))
+		tabs.reconcile()
+
+		expect(openTopics()).toEqual(["b"])
 	})
 })

@@ -9,6 +9,7 @@
 	import { renderedOffsetFromPoint, sourceOffset } from "./caret";
 	import HistoryPanel from "./HistoryPanel.svelte";
 	import { renderMarkdown } from "./markdown";
+	import { jumpToBlock, newTabGesture } from "./navigate";
 	import { makeResolver, refClick } from "./resolve";
 	import SchedulePanel from "./SchedulePanel.svelte";
 	import { hasUnreviewed, type TreeNodeData } from "./tree";
@@ -61,7 +62,7 @@
 	// [[Topic]] reference needs a real element rather than a blocking dialog.
 	let pendingTopic: { name: string } | null = $state(null);
 
-	function clickRef(el: HTMLElement): void {
+	function clickRef(el: HTMLElement, e: MouseEvent): void {
 		const action = refClick(base.forest, base.aliases, el);
 		if (action === null) {
 			return;
@@ -70,7 +71,7 @@
 			pendingTopic = { name: action.name };
 			return;
 		}
-		base.reveal(action.id);
+		void jumpToBlock(action.id, { newTab: newTabGesture(e) });
 	}
 
 	async function confirmCreateTopic(): Promise<void> {
@@ -94,7 +95,7 @@
 		const ref = (e.target as HTMLElement).closest<HTMLElement>(".ref[data-target]");
 		if (ref) {
 			e.preventDefault();
-			clickRef(ref);
+			clickRef(ref, e);
 			return;
 		}
 		const link = (e.target as HTMLElement).closest("a");

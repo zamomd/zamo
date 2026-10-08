@@ -8,7 +8,7 @@
 	import { ASSISTANT_MIN, ASSISTANT_STEP, assistantMax, assistantWidth } from "./assistantsize";
 	import { stepLabel } from "./assistantsteps";
 	import { renderMarkdown } from "./markdown";
-	import { jumpToBlock } from "./navigate";
+	import { jumpToBlock, newTabGesture } from "./navigate";
 	import { firstLine } from "./refs";
 	import { makeResolver, refClick } from "./resolve";
 	import { findBlock } from "./tree";
@@ -71,7 +71,7 @@
 			e.preventDefault();
 			const action = refClick(base.forest, base.aliases, ref);
 			if (action?.kind === "navigate") {
-				void jumpToBlock(action.id);
+				void jumpToBlock(action.id, { newTab: e instanceof MouseEvent && newTabGesture(e) });
 			}
 			return;
 		}

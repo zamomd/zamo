@@ -1,13 +1,32 @@
 <script lang="ts">
+	import { untrack } from 'svelte'
 	import Breadcrumbs from './lib/Breadcrumbs.svelte'
 	import DocView from './lib/DocView.svelte'
 	import StatusLine from './lib/StatusLine.svelte'
+	import TabStrip from './lib/TabStrip.svelte'
 	import TopicProps from './lib/TopicProps.svelte'
 	import TreeNode from './lib/TreeNode.svelte'
 	import { ai } from './stores/ai.svelte'
 	import { base } from './stores/base.svelte'
+	import { tabs } from './stores/tabs.svelte'
 
 	const tree = $derived(base.viewRoot)
+
+	let scroller: HTMLElement | undefined = $state()
+
+	$effect(() => {
+		const tab = tabs.active
+		if (scroller === undefined || tab === null || tab.topicID !== base.selectedTopicID) {
+			return
+		}
+		void tab.id
+		const el = scroller
+		untrack(() => {
+			if (base.highlightID === null) {
+				el.scrollTop = tab.scrollTop
+			}
+		})
+	})
 </script>
 
 <section>
@@ -20,21 +39,20 @@
 			{/if}
 		</p>
 	{:else}
+		<TabStrip />
 		<Breadcrumbs />
 		{#if base.focusID === null}
 			<TopicProps id={tree.block.ID} />
 		{/if}
-		{#if base.topicMode === "doc"}
-			<div class="tree">
+		<div class="tree" bind:this={scroller} onscroll={() => tabs.setScroll(scroller?.scrollTop ?? 0)}>
+			{#if base.topicMode === "doc"}
 				<DocView node={tree} />
-			</div>
-		{:else}
-			<div class="tree">
+			{:else}
 				<ul>
 					<TreeNode node={tree} title={true} />
 				</ul>
-			</div>
-		{/if}
+			{/if}
+		</div>
 	{/if}
 
 	<footer>

@@ -50,6 +50,9 @@ var assets embed.FS
 // -ldflags "-X main.version=..."; local builds keep "dev".
 var version = "dev"
 
+// closeTabEvent is the frontend event for the close-tab key.
+const closeTabEvent = "tab:close"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "zamo:", err)
@@ -209,6 +212,9 @@ func runGUI(
 		URL:    "/",
 	})
 	keepInTray(app, window, runs)
+	window.RegisterKeyBinding("CmdOrCtrl+W", func(application.Window) {
+		app.Event.Emit(closeTabEvent)
+	})
 
 	return app.Run()
 }

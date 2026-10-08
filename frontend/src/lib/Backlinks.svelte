@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Block } from "../../bindings/github.com/zamomd/zamo/internal/knowledge"
 	import { base } from "../stores/base.svelte"
-	import { jumpToBlock } from "./navigate"
+	import { jumpToBlock, newTabGesture } from "./navigate"
 
 	let { block }: { block: Block } = $props()
 
@@ -20,7 +20,8 @@
 						class:unreviewed={link.Block.Unreviewed}
 						title="jump to this block"
 						disabled={base.busy}
-						onclick={() => jumpToBlock(link.Block.ID)}
+						onclick={(e) => jumpToBlock(link.Block.ID, { newTab: newTabGesture(e) })}
+						onauxclick={(e) => jumpToBlock(link.Block.ID, { newTab: newTabGesture(e) })}
 					>
 						<code>{link.Excerpt}</code>
 						<span class="topic">{link.TopicTitle}</span>

@@ -67,6 +67,8 @@ class ShellStore {
 	assistantOpen = $state(false)
 	// null until the user drags the edge: the stylesheet's own width.
 	assistantWidth = $state<number | null>(null)
+	// searchFocusNonce changes each time the search field is asked to take the focus.
+	searchFocusNonce = $state(0)
 
 	constructor() {
 		const prefs = loadSidebar()
@@ -94,6 +96,11 @@ class ShellStore {
 		try {
 			localStorage.setItem(SIDEBAR_KEY, JSON.stringify(prefs))
 		} catch {}
+	}
+
+	focusSearch(): void {
+		this.sidebarHidden = false
+		this.searchFocusNonce++
 	}
 
 	async setMode(m: Mode): Promise<void> {
