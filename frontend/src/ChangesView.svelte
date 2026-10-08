@@ -2,6 +2,7 @@
 	import type { ID, UnreviewedBlock } from '../bindings/github.com/zamomd/zamo/internal/knowledge'
 	import { App } from '../bindings/github.com/zamomd/zamo/internal/wailsbind'
 	import { messageFor } from './lib/callerror'
+	import { newTabGesture, type OpenOptions } from './lib/navigate'
 	import ScheduledTab from './lib/ScheduledTab.svelte'
 	import StatusLine from './lib/StatusLine.svelte'
 	import { findBlock } from './lib/tree'
@@ -9,7 +10,7 @@
 	import { changes } from './stores/changes.svelte'
 	import { schedules } from './stores/schedules.svelte'
 
-	let { onjump }: { onjump: (id: ID) => void } = $props()
+	let { onjump }: { onjump: (id: ID, opts?: OpenOptions) => void } = $props()
 
 	let tab = $state<'review' | 'scheduled'>('review')
 	let onlyTopic = $state<ID | null>(null)
@@ -163,7 +164,7 @@
 										type="button"
 										title="jump to this block in the base"
 										disabled={base.busy}
-										onclick={() => onjump(b.Head.BlockID)}>show
+										onclick={(e) => onjump(b.Head.BlockID, { newTab: newTabGesture(e) })}>show
 									</button>
 									{#if b.Atomic}
 										<!-- Deciding on this block alone is refused below, so the

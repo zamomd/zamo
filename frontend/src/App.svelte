@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Events } from "@wailsio/runtime";
 	import { onMount } from "svelte";
 	import ChangesView from "./ChangesView.svelte";
 	import AssistantPanel from "./lib/AssistantPanel.svelte";
@@ -6,6 +7,7 @@
 	import ModeRail from "./lib/ModeRail.svelte";
 	import { jumpToBlock } from "./lib/navigate";
 	import Sidebar from "./lib/Sidebar.svelte";
+	import { closeActiveTab, handleTabKey } from "./lib/tabkeys";
 	import SettingsView from "./SettingsView.svelte";
 	import { ai } from "./stores/ai.svelte";
 	import { assistant } from "./stores/assistant.svelte";
@@ -13,6 +15,7 @@
 	import { changes } from "./stores/changes.svelte";
 	import { schedules } from "./stores/schedules.svelte";
 	import { shell } from "./stores/shell.svelte";
+	import { tabs } from "./stores/tabs.svelte";
 	import TopicView from "./TopicView.svelte";
 
 	onMount(() => {
@@ -21,10 +24,14 @@
 		const stopChanges = changes.start();
 		const stopSchedules = schedules.start();
 		const stopAssistant = assistant.start();
+		const stopTabs = tabs.start();
+		const stopCloseKey = Events.On("tab:close", closeActiveTab);
 		return () => {
 			stopChanges();
 			stopSchedules();
 			stopAssistant();
+			stopTabs();
+			stopCloseKey();
 		};
 	});
 
@@ -32,6 +39,10 @@
 		if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k" && ai.enabled) {
 			e.preventDefault();
 			shell.toggleAssistant();
+			return;
+		}
+		if (handleTabKey(e)) {
+			e.preventDefault();
 		}
 	}
 </script>

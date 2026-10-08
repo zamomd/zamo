@@ -54,6 +54,9 @@ class BaseStore {
 	// work the user can cancel.
 	generating = $state(false)
 	forest = $state<TreeNodeData[]>([])
+	// loaded is false until the first reload lands: an empty forest before it
+	// says nothing about which topics exist.
+	loaded = $state(false)
 
 	selectedTopicID = $state<string | null>(null)
 	aliases = $state<AliasIndex>(new Map())
@@ -188,6 +191,7 @@ class BaseStore {
 			this.selectedTopicID = trees.length > 0 ? trees[0].block.ID : null
 			this.focusID = null
 		}
+		this.loaded = true
 		this.backlinksById.clear()
 		await this.syncBacklinks()
 		this.dropStaleHistory()
