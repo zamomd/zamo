@@ -169,7 +169,7 @@ jobs:
           cat RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the macOS bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-darwin-arm64
           path: |
@@ -246,7 +246,7 @@ jobs:
           /usr/local/bin/zamo --version | grep -Fx "zamo ${VERSION}"
 
       - name: Upload the Linux packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-linux-${{ matrix.arch }}
           path: |
@@ -334,7 +334,7 @@ jobs:
           pwsh -NoProfile -Command "Compress-Archive -Path bin/zamo.exe, LICENSE -DestinationPath zamo-${VERSION}-windows-${ARCH}.zip"
 
       - name: Upload the Windows packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-windows-${{ matrix.arch }}
           path: |
@@ -371,7 +371,7 @@ jobs:
 
       - name: Upload the dry-run bundle
         if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zamo-dry-run
           path: |
