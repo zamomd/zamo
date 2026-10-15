@@ -8,7 +8,7 @@ Stack: Go 1.27, Wails v3 beta, Svelte 5 + TS + Vite, modernc.org/sqlite.
 ## Commands
 
 Always finish work with the full gate — CI runs exactly this, split into
-three parallel jobs (`check-static`, `test`, `check-web`):
+three parallel jobs (`check-static`, `test`, `check-web`), plus `go test` on Windows:
 
 ```
 just check          # lint + bindings drift + go mod tidy -diff, race tests, frontend

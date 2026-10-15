@@ -24,6 +24,7 @@ runs:
           ~/go/pkg/mod
           ~/.cache/go-build
           ~/Library/Caches/go-build
+          ~/AppData/Local/go-build
         key: go-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
         restore-keys: |
           go-${{ inputs.cache-name }}-${{ runner.os }}-${{ runner.arch }}-

@@ -49,6 +49,21 @@ jobs:
       - name: just test
         run: just test
 
+  # Without -race: on Windows it needs cgo, and the Windows build has none.
+  test-windows:
+    name: test (windows)
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-go-env
+        with:
+          cache-name: test
+
+      - name: go test
+        run: go test ./...
+
   web:
     name: web
     runs-on: ubuntu-latest

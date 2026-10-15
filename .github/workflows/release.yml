@@ -255,9 +255,96 @@ jobs:
             zamo-*.tar.gz
           retention-days: 3
 
+  windows:
+    name: Windows (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-2025
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-go-env
+        with:
+          cache-name: release
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: frontend/package.json
+
+      - uses: ./.github/actions/setup-wails3
+
+      - name: Put makensis on the PATH
+        run: |
+          [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ] || choco install nsis --no-progress -y
+          echo "C:\Program Files (x86)\NSIS" >> "$GITHUB_PATH"
+
+      - name: Derive the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # info.json feeds the exe's version resource, wails_tools.nsh the installer's.
+      - name: Stamp the version into the build assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        working-directory: build
+        run: |
+          wails3 update build-assets -name zamo -binaryname zamo -config config.yml \
+            -productversion "$VERSION" -dir .
+          grep -F "\"ProductVersion\": \"$VERSION\"" windows/info.json
+          grep -F "INFO_PRODUCTVERSION \"$VERSION\"" windows/nsis/wails_tools.nsh
+
+      - name: Build the installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: wails3 task windows:package VERSION="$VERSION"
+
+      - name: Install silently and run it
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          "./bin/zamo-${ARCH}-installer.exe" //S
+          "/c/Program Files/Zamo/Zamo/zamo.exe" --version | grep -Fx "zamo ${VERSION}"
+
+      - name: Name the artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mv "bin/zamo-${ARCH}-installer.exe" "zamo-${VERSION}-windows-${ARCH}-installer.exe"
+          pwsh -NoProfile -Command "Compress-Archive -Path bin/zamo.exe, LICENSE -DestinationPath zamo-${VERSION}-windows-${ARCH}.zip"
+
+      - name: Upload the Windows packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-windows-${{ matrix.arch }}
+          path: |
+            zamo-*.exe
+            zamo-*.zip
+          retention-days: 3
+
   publish:
     name: Publish
-    needs: [macos, linux]
+    needs: [macos, linux, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -270,6 +357,10 @@ jobs:
 
       - name: Write SHA256SUMS
         run: sha256sum zamo-* > SHA256SUMS
+
+      - name: Note the unsigned Windows build
+        run: |
+          printf '\n> The Windows build is not code-signed, so SmartScreen warns on first launch. Choose More info → Run anyway.\n' >> RELEASE_NOTES.md
 
       - name: Create the GitHub Release
         if: github.ref_type == 'tag'

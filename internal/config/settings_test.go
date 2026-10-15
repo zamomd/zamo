@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -153,7 +154,10 @@ func TestSaveOverridesRoundTripsAndIsPrivate(t *testing.T) {
 
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the file holds an API key")
+	// Windows keeps no Unix mode bits; the profile directory's ACL guards it.
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the file holds an API key")
+	}
 
 	got, err := LoadOverrides(path)
 	require.NoError(t, err)
