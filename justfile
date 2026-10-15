@@ -60,6 +60,12 @@ web-build:
 web-fmt:
     cd frontend && bun run lint:fix
 
+# refresh the flake's dependency pins after go.mod, go.sum or bun.lock changes
+nix-hashes:
+    nix run --inputs-from . bun2nix -- -l frontend/bun.lock -o frontend/bun.nix
+    nix run --inputs-from . nixpkgs#nix-update -- --flake --version=skip \
+        {{ if os() == "macos" { "--system " + arch() + "-linux" } else { "" } }} zamo
+
 # regenerate the frontend bindings after changing a bound Go service
 bindings:
     wails3 generate bindings -f '' -clean=true -ts -i

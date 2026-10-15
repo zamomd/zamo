@@ -18,9 +18,12 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
 - `just test` / `just lint` / `just cover` — pieces of the gate
 - `go test -race -run TestName ./internal/sqlite/` — a single test
 - `just dev` — GUI with hot reload; `just app` — build the app into bin/
-- Dev toolchain comes from `nix develop` (flake.nix); the `wails3` CLI is
-  installed separately (`go install github.com/wailsapp/wails/v3/cmd/wails3@<v>`)
-  and its version must match the wails/v3 version pinned in go.mod
+- Dev toolchain comes from `nix develop` (flake.nix, nix/). Its `wails3`
+  runs the CLI at the wails/v3 version go.mod pins; outside the dev shell
+  install that version (`go install github.com/wailsapp/wails/v3/cmd/wails3@<v>`)
+- After a change to go.mod, go.sum or frontend/bun.lock, `just nix-hashes`
+  refreshes the flake's pins (vendorHash, the generated frontend/bun.nix);
+  CI does it on Dependabot branches
 
 ## Conventions
 

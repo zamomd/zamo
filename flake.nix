@@ -1,39 +1,43 @@
 {
   description = "Zamo — living knowledge base";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    bun2nix = {
+      url = "github:nix-community/bun2nix/2.1.2";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      bun2nix,
+    }:
     let
+      inherit (nixpkgs) lib;
       systems = [
         "aarch64-darwin"
         "x86_64-linux"
         "aarch64-linux"
       ];
-      eachSystem = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      linuxSystems = lib.intersectLists lib.platforms.linux systems;
+      forSystems = systems: f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      version = "git-${self.shortRev or self.dirtyShortRev or "unknown"}";
     in
     {
-      devShells = eachSystem (pkgs: {
-        default = pkgs.mkShell {
-          packages =
-            with pkgs;
-            [
-              go_1_27
-              golangci-lint
-              just
-              bun
-              git-cliff
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-              pkg-config
-              gtk4
-              webkitgtk_6_0
-            ];
-
-          # The wails3 CLI is not in nixpkgs. Install the version go.mod pins:
-          # go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+      packages = forSystems linuxSystems (pkgs: rec {
+        zamo = pkgs.callPackage ./nix/package.nix {
+          inherit version;
+          bun2nix = bun2nix.packages.${pkgs.stdenv.hostPlatform.system}.default;
         };
+        default = zamo;
+      });
+
+      devShells = forSystems systems (pkgs: {
+        default = pkgs.callPackage ./nix/shell.nix { };
       });
     };
 }
