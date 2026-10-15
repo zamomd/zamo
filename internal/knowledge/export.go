@@ -33,6 +33,18 @@ const untitledName = "Untitled"
 // script — survives, because the filename carries the topic's name.
 const illegalInFilename = `/\:*?"<>|`
 
+// windowsReserved holds the device names Windows refuses as a filename
+// whatever the extension: "CON.md" and "nul.notes.md" both open a device.
+var windowsReserved = func() map[string]bool {
+	m := map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true}
+	for _, d := range []string{"COM", "LPT"} {
+		for _, n := range []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"} {
+			m[d+n] = true
+		}
+	}
+	return m
+}()
+
 // RenderMarkdown renders each topic subtree into a portable markdown document.
 // Every subtree is the pre-order block walk of one topic (root first, parents
 // before children), exactly as Repository.GetSubtree returns it. Blocks become
@@ -117,7 +129,8 @@ func bullet(content string, d int) string {
 //
 // Leading and trailing dots and spaces go too: Windows strips them silently and
 // POSIX hides a leading dot, either of which would turn a page into a file the
-// reader never sees. An empty result signals the caller to fall back.
+// reader never sees. A Windows device name gains a hyphen, since no extension
+// makes it a file. An empty result signals the caller to fall back.
 func topicFileBase(content string) string {
 	var b strings.Builder
 	for _, r := range TopicName(content) {
@@ -127,7 +140,12 @@ func topicFileBase(content string) string {
 		}
 		b.WriteRune(r)
 	}
-	return strings.Trim(b.String(), ". ")
+	base := strings.Trim(b.String(), ". ")
+	stem, _, _ := strings.Cut(base, ".")
+	if windowsReserved[strings.ToUpper(strings.TrimRight(stem, " "))] {
+		base += "-"
+	}
+	return base
 }
 
 // uniqueName appends the ".md" extension and disambiguates against names

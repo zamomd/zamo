@@ -45,6 +45,11 @@ func TestRenderMarkdownNamesFileAfterTopic(t *testing.T) {
 		// A leading dot would hide the page; a trailing one Windows drops.
 		{".hidden", "hidden.md"},
 		{"Etc.", "Etc.md"},
+		// Windows opens a device for these whatever the extension.
+		{"CON", "CON-.md"},
+		{"nul.notes", "nul.notes-.md"},
+		{"Com1", "Com1-.md"},
+		{"CONSOLE", "CONSOLE.md"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.content, func(t *testing.T) {
