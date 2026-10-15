@@ -1,0 +1,85 @@
+name: Nix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Only the dependency pins: the Go code is built and tested by CI, and a stale
+  # pin is what breaks the flake while CI stays green.
+  hashes:
+    name: nix hashes
+    # On a Dependabot branch fix-hashes does this: it repairs the pins first,
+    # and passes on the commit its own push triggers.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Check that frontend/bun.nix matches bun.lock
+        run: |
+          nix run --inputs-from . bun2nix -- -l frontend/bun.lock -o frontend/bun.nix
+          git diff --exit-code -- frontend/bun.nix || {
+            echo "error: frontend/bun.nix is stale; run 'just nix-hashes'" >&2
+            exit 1
+          }
+
+      - name: Check the Go modules against vendorHash
+        run: nix build --print-build-logs .#zamo.goModules
+
+  # Dependabot bumps go.mod, go.sum or bun.lock and leaves the flake's pins
+  # (vendorHash, frontend/bun.nix) stale; this writes new ones to the branch.
+  # The push uses a GitHub App token, since one made with GITHUB_TOKEN starts no
+  # workflow runs and CI would never check the repaired commit.
+  fix-hashes:
+    name: nix hashes (fix)
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Dependabot secrets: the workflows Dependabot triggers cannot read
+      # Actions secrets.
+      - name: Generate an App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.NIX_HASHES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.NIX_HASHES_APP_PRIVATE_KEY }}
+
+      # The branch itself: the default merge commit is a detached HEAD.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      # bun2nix and nix-update from the flake.lock pins; nix-update fetches the
+      # Go modules to compute vendorHash, so it checks it as well.
+      - name: Repair the hashes
+        run: |
+          nix run --inputs-from . bun2nix -- -l frontend/bun.lock -o frontend/bun.nix
+          nix run --inputs-from . nixpkgs#nix-update -- --flake --version=skip zamo
+
+      - name: Push the repaired hashes
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+        run: |
+          set -euo pipefail
+          git diff --quiet -- nix frontend/bun.nix && exit 0
+          git config user.name "$BOT"
+          git config user.email "$(gh api "users/$BOT" --jq .id)+$BOT@users.noreply.github.com"
+          git commit -m "chore(nix): update dependency hashes" -- nix frontend/bun.nix
+          git push
