@@ -157,8 +157,8 @@ jobs:
       - name: Generate release notes with git-cliff
         env:
           # Pinned by version + sha256 (no floating tags), matching the gitleaks job.
-          GIT_CLIFF_VERSION: "2.13.1"
-          GIT_CLIFF_SHA256: "21547ae4a0421164070ab75c2522864ea5565858a011fabc5f583061b20f1226"
+          GIT_CLIFF_VERSION: "2.14.1"
+          GIT_CLIFF_SHA256: "2e2d1f60963aa6a201dbd21df14d7f44025328b8bb33437695f15a516598615a"
         run: |
           set -euo pipefail
           asset="git-cliff-${GIT_CLIFF_VERSION}-aarch64-apple-darwin.tar.gz"

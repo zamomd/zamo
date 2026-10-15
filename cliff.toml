@@ -20,8 +20,8 @@ body = """
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits %}
 - {{ commit.message | upper_first }}\
-{% if commit.breaking %}
-  - **BREAKING:** {{ commit.breaking_description | trim | replace(from="\n", to=" ") | upper_first }}\
+{% if commit.breaking and commit.breaking_description != commit.message %}
+  - {{ commit.breaking_description | trim | replace(from="\n", to=" ") | upper_first }}\
 {% endif %}\
 {% endfor %}
 {% endfor %}
@@ -34,20 +34,20 @@ footer = ""
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
-# Grouped in the order listed; a commit takes the first parser it matches.
-commit_parsers = [
-    { message = "^feat", group = "<!-- 0 -->Features" },
-    { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
-    { message = "^perf", group = "<!-- 2 -->Performance" },
-    { message = "^refactor", group = "<!-- 3 -->Refactoring" },
-    { message = "^docs", group = "<!-- 4 -->Documentation" },
-    { message = "^test", group = "<!-- 5 -->Testing" },
-    { message = "^ci", group = "<!-- 6 -->CI & Build" },
-    { message = "^build", group = "<!-- 6 -->CI & Build" },
-    { message = "^chore", group = "<!-- 7 -->Miscellaneous" },
-    { message = ".*", group = "<!-- 7 -->Miscellaneous" },
+commit_preprocessors = [
+    { pattern = '\(#([0-9]+)\)', replace = "([#${1}](https://github.com/zamomd/zamo/pull/${1}))" },
 ]
-protect_breaking_commits = false
+commit_parsers = [
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^[a-z]+\\(deps\\)", skip = true },
+    { field = "author.name", pattern = "^dependabot", skip = true },
+    { field = "breaking", pattern = "true", group = "<!-- 0 -->Breaking Changes" },
+    { message = "^feat", group = "<!-- 1 -->Features" },
+    { message = "^fix", group = "<!-- 2 -->Bug Fixes" },
+    { message = "^perf", group = "<!-- 3 -->Performance" },
+    { message = ".*", group = "<!-- 4 -->Internal" },
+]
+protect_breaking_commits = true
 filter_commits = false
 tag_pattern = "v[0-9]*"
 topo_order = false

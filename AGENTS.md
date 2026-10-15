@@ -18,6 +18,10 @@ just check          # lint + bindings drift + go mod tidy -diff, race tests, fro
 - `just test` / `just lint` / `just cover` — pieces of the gate
 - `go test -race -run TestName ./internal/sqlite/` — a single test
 - `just dev` — GUI with hot reload; `just app` — build the app into bin/
+- `just release vX.Y.Z` — on a clean main, write CHANGELOG.md, commit and tag;
+  pushing the tag publishes the release. `just changelog` previews it. The
+  changelog comes from Conventional Commit subjects, and a squash merge makes
+  the PR title one, so write both as the changelog entry they become
 - Dev toolchain comes from `nix develop` (flake.nix, nix/). Its `wails3`
   runs the CLI at the wails/v3 version go.mod pins; outside the dev shell
   install that version (`go install github.com/wailsapp/wails/v3/cmd/wails3@<v>`)

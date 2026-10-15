@@ -83,9 +83,26 @@ bindings-check:
         exit 1
     fi
 
-# regenerate CHANGELOG.md from Conventional Commits (git-cliff comes from nix develop)
+# preview the changelog entries the next release will get
 changelog:
-    git-cliff -o CHANGELOG.md
+    git-cliff --unreleased --strip all
+
+# prepare a release on main: write the version into CHANGELOG.md, commit it and tag the commit
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! "{{ version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "error: the version must look like v1.2.3" >&2
+        exit 1
+    fi
+    if [ "$(git branch --show-current)" != main ] || [ -n "$(git status --porcelain)" ]; then
+        echo "error: release from a clean main" >&2
+        exit 1
+    fi
+    git-cliff --tag "{{ version }}" -o CHANGELOG.md
+    git commit -m "chore(release): prepare for {{ version }}" -- CHANGELOG.md
+    git tag -a "{{ version }}" -m "zamo {{ trim_start_match(version, 'v') }}"
+    echo "Push both: git push --atomic origin main {{ version }}"
 
 # everything CI checks; CI runs the three parts below as parallel jobs
 check: check-static check-web test
@@ -117,4 +134,4 @@ vuln:
 # The whole backend takes ~5 min; pass a package dir to narrow the run.
 mutation package='.':
     go clean -testcache
-    gremlins unleash --timeout-coefficient 8 {{package}}
+    gremlins unleash --timeout-coefficient 8 {{ package }}
