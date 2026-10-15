@@ -104,7 +104,7 @@ func TestResolvedAPIKeyPrecedence(t *testing.T) {
 [llm]
 provider = "anthropic"
 api_key = "from-config"
-api_key_file = "`+keyFile+`"
+api_key_file = '`+keyFile+`'
 `)
 	setPath := writeAt(t, "settings.toml", `
 [llm]
@@ -133,7 +133,7 @@ func TestAPIKeyValueIsReadLazily(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 
 	keyFile := writeAt(t, "key.txt", "old\n")
-	cfgPath := writeAt(t, "config.toml", "[llm]\napi_key_file = \""+keyFile+"\"\n")
+	cfgPath := writeAt(t, "config.toml", "[llm]\napi_key_file = '"+keyFile+"'\n")
 
 	r, err := ResolveFrom(cfgPath, filepath.Join(t.TempDir(), "absent.toml"))
 	require.NoError(t, err)

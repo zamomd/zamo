@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -154,14 +155,16 @@ func exited(err error, code int) bool {
 	return ok && exit.ExitCode() == code
 }
 
-// root is the worktree root of the repository owning the directory, or ""
-// when no repository does.
+// root is the worktree root of the repository owning the directory, or "" when no repository does.
 func (g git) root(ctx context.Context) (string, error) {
 	root, err := g.run(ctx, nil, "rev-parse", "--show-toplevel")
 	if failed, ok := errors.AsType[*gitError](err); ok && strings.Contains(failed.said, "not a git repository") {
 		return "", nil
 	}
-	return root, err
+	if err != nil {
+		return "", err
+	}
+	return filepath.FromSlash(root), nil
 }
 
 // ignored reports whether the repository ignores the directory itself.
