@@ -14,8 +14,13 @@ permissions:
   contents: read
 
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   macos:
     name: macOS (arm64)
+    needs: ci
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -184,6 +189,7 @@ jobs:
 
   linux:
     name: Linux (${{ matrix.arch }})
+    needs: ci
     strategy:
       matrix:
         include:
@@ -242,6 +248,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          sudo apt-get update -q
           sudo apt-get install -y "./zamo-${VERSION}-linux-${GOARCH}.deb"
           /usr/local/bin/zamo --version | grep -Fx "zamo ${VERSION}"
 
@@ -257,6 +264,7 @@ jobs:
 
   windows:
     name: Windows (${{ matrix.arch }})
+    needs: ci
     strategy:
       matrix:
         include:
@@ -363,14 +371,14 @@ jobs:
           printf '\n> The Windows build is not code-signed, so SmartScreen warns on first launch. Choose More info → Run anyway.\n' >> RELEASE_NOTES.md
 
       - name: Create the GitHub Release
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md ./zamo-* ./SHA256SUMS
 
       - name: Upload the dry-run bundle
-        if: github.ref_type != 'tag'
+        if: github.event_name != 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zamo-dry-run
