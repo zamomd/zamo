@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  profile: chill
+  path_filters:
+    - "!frontend/bindings/**"
+    - "!frontend/src/i18n/messages.gen.ts"
+    - "!frontend/bun.nix"
+    - "!CHANGELOG.md"
+  tools:
+    golangci-lint:
+      enabled: false
+    gitleaks:
+      enabled: false
