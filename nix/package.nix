@@ -76,7 +76,7 @@ buildGo127Module {
     preBuild = "";
   };
   # `just nix-hashes` refreshes it after go.mod or go.sum changes.
-  vendorHash = "sha256-D4icEZB+Rn9ZQ4eXHQoG7aG3unYSY6Yo2QIbFEhmeoA=";
+  vendorHash = "sha256-O5DXTrDj+QHEgwP50FgD2JamuqIqMi2xyggpAk+IKl0=";
 
   tags = [ "production" ];
   ldflags = [
